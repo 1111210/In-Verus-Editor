@@ -18,7 +18,7 @@ python -m venv .venv
 ## 2. 一键自检（不启动界面）
 
 ```bash
-python run_editor.py --make-demo        # 生成 charts/demo/demo.ivchart
+python run_editor.py --make-demo        # 生成 charts/demo/demo.json（普通 JSON）
 python tools/acceptance.py              # 需求到证据的清单
 ```
 
@@ -63,7 +63,7 @@ python -m unittest discover -s tests -t . -v
 ## 4. 人工验收（需要图形界面）
 
 ```bash
-python run_editor.py charts/demo/demo.ivchart
+python run_editor.py charts/demo/demo.json
 ```
 
 1. 滚轮滚动 —— 两个区域同步移动，判定线始终落在网格线上。
@@ -113,10 +113,10 @@ python tools/check_audio.py
 
 | 项目 | 命令 | 结果 |
 | --- | --- | --- |
-| 单元测试（含 Tk 画布冒烟测试与应用级测试） | `python -m unittest discover -s tests -t .` | Ran 176 tests — **OK** |
+| 单元测试（含 Tk 画布冒烟测试与应用级测试） | `python -m unittest discover -s tests -t .` | Ran 187 tests — **OK** |
 | 需求验收清单 | `python tools/acceptance.py` | 13 项全部 `[OK ]`，结论：全部通过 |
 | 音频后端 | `python tools/check_audio.py` | 9 项全部 `[OK ]`（pygame.mixer 真实播放，延迟补偿正确） |
-| 示例谱面生成 | `python run_editor.py --make-demo` | 生成 `charts/demo/demo.ivchart`（6K 32 / 区域 3 / 滑键 6 / 4 个速度组） |
+| 示例谱面生成 | `python run_editor.py --make-demo` | 生成 `charts/demo/demo.json`（6K 32 / 区域 3 / 滑键 6 / 4 个速度组） |
 | 界面截图 | `python tools/screenshot_editor.py docs/images` | 5 张窗口截图（分栏 / 放置 / 叠加演示 / 最大化 / 全屏） |
 | 依赖安装 | `python -m pip install -r requirements.txt` | 已安装 `pygame-ce 2.5.8` |
 | 菜单频闪 | `python tools/check_menu_flicker.py` | 4 项全部 `[OK ]`（展开期间帧数冻结、菜单项零改写、关闭后恢复） |
@@ -209,6 +209,8 @@ python tools/check_audio.py
 | `tests/test_sorted_cache.py`（7 条） | 排序缓存：复用同一列表、增删 / 编辑自动失效、显式失效、分类列表、快照后缓存重建 |
 | `tests/test_editor_smoke.py::test_note_layer_order_matches_readability_spec` | 六层绘制顺序（画布图元次序）符合规格 |
 | `tests/test_editor_smoke.py::test_hit_priority_follows_layer_order` | 命中优先级与图层一致（滑键 > 空域 > 单轨单键 > …） |
+| `tests/test_undo_records.py`（10 条） | 差量撤销：增删/粘贴/镜像/编辑/改组/改元数据与 BPM 的撤销重做等价性、记录量只随改动量增长、栈上限、选择还原 |
+| `tests/test_chart_io.py::test_legacy_ivchart_still_loads` | 旧版 `.ivchart` 仍可直接打开；默认保存为 `.json` |
 | `tests/test_app_flow.py::test_fullscreen_toggle` | 全屏开关切换 |
 | `tests/test_app_flow.py::test_maximized_by_default` | 默认最大化（`-fullscreen` 属性为 0），不是无边框全屏 |
 | `tests/test_app_flow.py::test_toggle_maximize_and_fullscreen` | 最大化 / 还原 / 全屏互斥切换 |

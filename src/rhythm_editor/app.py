@@ -476,7 +476,11 @@ class EditorApp:
             return
         path = filedialog.askopenfilename(
             title="打开谱面",
-            filetypes=[("In Verus 谱面", "*.ivchart"), ("JSON", "*.json"), ("全部文件", "*.*")],
+            filetypes=[
+                ("JSON 谱面", "*.json"),
+                ("旧版谱面 (.ivchart)", "*.ivchart"),
+                ("全部文件", "*.*"),
+            ],
         )
         if not path:
             return
@@ -500,9 +504,9 @@ class EditorApp:
         if save_as or not path:
             path = filedialog.asksaveasfilename(
                 title="保存谱面",
-                defaultextension=config.CHART_EXTENSIONS[0],
-                filetypes=[("In Verus 谱面", "*.ivchart"), ("JSON", "*.json")],
-                initialfile=(os.path.basename(self.document.path) if self.document.path else "chart.ivchart"),
+                defaultextension=config.CHART_EXTENSION,
+                filetypes=[("JSON 谱面", "*.json"), ("全部文件", "*.*")],
+                initialfile=(os.path.basename(self.document.path) if self.document.path else "chart.json"),
             )
             if not path:
                 return False

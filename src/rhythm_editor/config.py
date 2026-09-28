@@ -9,7 +9,9 @@ VERSION = "0.1.0"
 # 谱面文件格式
 CHART_FORMAT = "inverus.chart"
 CHART_FORMAT_VERSION = 1
-CHART_EXTENSIONS = (".ivchart", ".json")
+CHART_EXTENSION = ".json"          # 默认保存为普通 JSON 文件
+CHART_EXTENSIONS = (".json",)      # 保存时使用
+LEGACY_CHART_EXTENSIONS = (".ivchart",)   # 旧版扩展名：仍可打开
 AUDIO_EXTENSIONS = (".mp3", ".ogg", ".wav", ".flac", ".m4a", ".aac", ".opus")
 
 # 玩法布局

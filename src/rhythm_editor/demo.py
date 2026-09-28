@@ -1,7 +1,7 @@
 """示例谱面与自检：既作为 demo 数据，也作为无界面回归测试。
 
 * ``build_demo_chart()``  —— 用 Python 代码构造一张包含全部物件类型的示例谱面。
-* ``write_demo_chart()``  —— 把示例谱面写到 ``charts/demo/demo.ivchart``。
+* ``write_demo_chart()``  —— 把示例谱面写到 ``charts/demo/demo.json``。
 * ``selftest()``          —— 校验时间轴换算、速度组积分、编辑命令、存档往返。
 """
 
@@ -129,7 +129,7 @@ def build_demo_chart() -> Chart:
 def write_demo_chart(path: str | None = None) -> str:
     chart = build_demo_chart()
     if path is None:
-        path = os.path.join(project_root(), "charts", "demo", "demo.ivchart")
+        path = os.path.join(project_root(), "charts", "demo", "demo.json")
     written = save_chart(chart, path)
     return written
 
@@ -235,7 +235,7 @@ def selftest(verbose: bool = True) -> Tuple[bool, List[str]]:
 
     # ---- 存档往返 ----
     folder = os.path.join(project_root(), "charts", "demo")
-    path = os.path.join(folder, "_selftest.ivchart")
+    path = os.path.join(folder, "_selftest.json")
     os.makedirs(folder, exist_ok=True)
     written = save_chart(document.chart, path)
     reloaded, _raw = load_chart(written)

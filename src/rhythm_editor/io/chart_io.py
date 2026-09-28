@@ -17,9 +17,10 @@ from ..model.chart import Chart
 
 def ensure_chart_suffix(path: str) -> str:
     root, ext = os.path.splitext(path)
-    if ext.lower() in config.CHART_EXTENSIONS:
+    known = config.CHART_EXTENSIONS + config.LEGACY_CHART_EXTENSIONS
+    if ext.lower() in known:
         return path
-    return root + config.CHART_EXTENSIONS[0]
+    return root + config.CHART_EXTENSION
 
 
 def default_chart_dir(path: str) -> str:

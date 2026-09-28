@@ -113,12 +113,14 @@ def bench(count: int, frames: int = 20) -> dict:
         notes_at(chart, view, WIDTH / 2, 200 + i * 2, cache=state.hit_cache)
     hit_cached_ms = (time.perf_counter() - t0) * 1000 / 20
 
-    # 编辑一次的开销：撤销快照 = 整谱深拷贝
+    # 编辑一次的开销：差量撤销（记录被改动的物件，而不是整谱拷贝）
     document = Document(chart)
     t0 = time.perf_counter()
     for _ in range(3):
-        document.push_undo("bench")
-    undo_ms = (time.perf_counter() - t0) * 1000 / 3
+        note = LaneNote(f"BENCH{len(chart.all_notes())}", 0, 0, 20.0)
+        document.add_note(note)
+        document.undo()
+    edit_ms = (time.perf_counter() - t0) * 1000 / 3
 
     t0 = time.perf_counter()
     chart.beat_bounds()
@@ -132,7 +134,7 @@ def bench(count: int, frames: int = 20) -> dict:
         "draw_ms": draw_ms,
         "hit_ms": hit_ms,
         "hit_cached_ms": hit_cached_ms,
-        "undo_ms": undo_ms,
+        "edit_ms": edit_ms,
         "bounds_ms": bounds_ms,
         "per_frame": per_frame,
     }
@@ -148,7 +150,7 @@ def main() -> int:
     counts = [int(a) for a in sys.argv[1:]] or [500, 2000, 8000]
     print(
         f"{'物件数':>8} {'画布图元':>9} {'排序(缓存)':>11} {'排序(冷)':>10} {'整帧渲染':>10} {'命中(兜底)':>11} {'命中(缓存)':>11}"
-        f" {'beat_bounds':>12} {'撤销快照':>10}   (静态帧的建/移/改/删)"
+        f" {'beat_bounds':>12} {'编辑+撤销':>10}   (静态帧的建/移/改/删)"
     )
     for count in counts:
         stats = bench(count)
@@ -156,7 +158,7 @@ def main() -> int:
             f"{stats['notes']:>8} {stats['items']:>9} "
             f"{stats['sorted_ms']:>9.3f}ms {stats['sorted_cold_ms']:>8.2f}ms {stats['draw_ms']:>8.2f}ms "
             f"{stats['hit_ms']:>9.2f}ms {stats['hit_cached_ms']:>9.3f}ms"
-            f" {stats['bounds_ms']:>10.2f}ms {stats['undo_ms']:>8.2f}ms"
+            f" {stats['bounds_ms']:>10.2f}ms {stats['edit_ms']:>8.3f}ms"
             f"   {stats['per_frame']['created']}/{stats['per_frame']['moved']}"
             f"/{stats['per_frame']['configured']}/{stats['per_frame']['deleted']}"
         )

@@ -152,7 +152,8 @@ class SpeedGroup:
             "id": self.id,
             "name": self.name,
             "segments": [s.to_dict() for s in self.segments],
-            "note_ids": list(self.note_ids),
+            # 组内成员按 id 排序输出：成员关系是集合语义，排序后存档 / 撤销比较都可复现
+            "note_ids": sorted(self.note_ids),
         }
 
     @classmethod

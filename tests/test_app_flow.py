@@ -21,7 +21,7 @@ from rhythm_editor.app import EditorApp
 from rhythm_editor.io.chart_io import load_chart
 
 ROOT = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
-DEMO_CHART = os.path.join(ROOT, "charts", "demo", "demo.ivchart")
+DEMO_CHART = os.path.join(ROOT, "charts", "demo", "demo.json")
 
 
 class AppFlowTest(unittest.TestCase):
@@ -50,7 +50,7 @@ class AppFlowTest(unittest.TestCase):
     # -------------------------------------------------------------- 基本状态
     def test_app_boots_with_chart(self) -> None:
         self.assertEqual(len(self.app.document.chart.all_notes()), 41)
-        self.assertIn("demo.ivchart", self.app.root.title())
+        self.assertIn("demo.json", self.app.root.title())
         self.assertEqual(self.app.controller.tool, config.TOOL_SELECT)
         self.assertIn("音频后端", self.app.info_var.get())
         # 编辑器默认是左右分栏，不是叠加
@@ -512,7 +512,7 @@ class AppFlowTest(unittest.TestCase):
         self.app.set_horizontal_divisions("8")
 
         with tempfile.TemporaryDirectory() as tmp:
-            path = os.path.join(tmp, "saved.ivchart")
+            path = os.path.join(tmp, "saved.json")
             self.app.document.path = path
             self.assertTrue(self.app.save_chart(False))
             self.assertTrue(os.path.isfile(path))

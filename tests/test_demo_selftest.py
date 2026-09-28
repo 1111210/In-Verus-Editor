@@ -31,7 +31,7 @@ class DemoTests(unittest.TestCase):
 
     def test_committed_demo_chart_loads(self) -> None:
         root = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
-        path = os.path.join(root, "charts", "demo", "demo.ivchart")
+        path = os.path.join(root, "charts", "demo", "demo.json")
         if not os.path.isfile(path):
             self.skipTest("仓库内没有附带示例谱面")
         chart, _raw = load_chart(path)

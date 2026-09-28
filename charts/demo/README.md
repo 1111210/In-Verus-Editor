@@ -1,12 +1,12 @@
 # 示例谱面
 
-仓库内已经附带一份可直接打开的示例谱面 `demo.ivchart`；
+仓库内已经附带一份可直接打开的示例谱面 `demo.json`（普通 JSON 文件）；
 它也可以随时用 Python 代码重新生成（覆盖同名文件）：
 
 ```bash
-python run_editor.py --make-demo          # 生成 charts/demo/demo.ivchart
-python run_editor.py charts/demo/demo.ivchart        # 打开示例谱面
-python run_editor.py charts/demo/demo.ivchart --demo # 直接进入演示模式
+python run_editor.py --make-demo          # 生成 charts/demo/demo.json
+python run_editor.py charts/demo/demo.json        # 打开示例谱面
+python run_editor.py charts/demo/demo.json --demo # 直接进入演示模式
 ```
 
 示例谱面包含：

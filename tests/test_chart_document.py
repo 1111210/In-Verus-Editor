@@ -156,7 +156,7 @@ class DocumentTests(unittest.TestCase):
         self.assertIsNotNone(self.document.chart.find("M1"))
 
     def test_title_marks_dirty(self) -> None:
-        self.document.path = os.path.join("tmp", "song.ivchart")
+        self.document.path = os.path.join("tmp", "song.json")
         self.document.dirty = False
         self.assertNotIn("*", self.document.title)
         self.document.dirty = True

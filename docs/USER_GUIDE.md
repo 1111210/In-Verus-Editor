@@ -4,10 +4,10 @@
 
 ```bash
 python run_editor.py                                        # 空白谱面（默认最大化）
-python run_editor.py charts/demo/demo.ivchart               # 打开示例谱面
-python run_editor.py charts/demo/demo.ivchart --demo        # 直接进入叠加演示模式
-python run_editor.py charts/demo/demo.ivchart --windowed    # 普通窗口（F10 最大化 / F11 全屏）
-python run_editor.py charts/demo/demo.ivchart --fullscreen  # 无边框全屏
+python run_editor.py charts/demo/demo.json               # 打开示例谱面
+python run_editor.py charts/demo/demo.json --demo        # 直接进入叠加演示模式
+python run_editor.py charts/demo/demo.json --windowed    # 普通窗口（F10 最大化 / F11 全屏）
+python run_editor.py charts/demo/demo.json --fullscreen  # 无边框全屏
 ```
 
 ## 2. 界面
@@ -69,7 +69,7 @@ python run_editor.py charts/demo/demo.ivchart --fullscreen  # 无边框全屏
    播放后听准再微调（例如 +20 / −20 毫秒）。
 3. 「编辑器设置」调缩放与音频延迟；网格密度改到「视图 → 时间网格细分 / 横向辅助网格」
    （两个子菜单末尾都有「自定义…」）。
-4. `Ctrl+S` 保存为 `.ivchart`。
+4. `Ctrl+S` 保存为普通的 `.json` 文件（旧版 `.ivchart` 仍可直接打开）。
 
 ### 3.2 打谱
 

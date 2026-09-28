@@ -20,17 +20,26 @@ from test_chart_document import make_chart  # noqa: E402
 
 
 class ChartIoTests(unittest.TestCase):
+
+    def test_legacy_ivchart_still_loads(self) -> None:
+        """旧版 .ivchart 文件仍是 JSON，可以直接打开。"""
+        path = os.path.join(self.tmp.name, "legacy.ivchart")
+        save_chart(self.chart, path)
+        chart, _raw = load_chart(path)
+        self.assertEqual(chart.to_dict(), self.chart.to_dict())
     def setUp(self) -> None:
         self.tmp = tempfile.TemporaryDirectory()
         self.addCleanup(self.tmp.cleanup)
         self.chart = make_chart()
 
     def test_suffix(self) -> None:
-        self.assertTrue(ensure_chart_suffix("song").endswith(".ivchart"))
+        self.assertTrue(ensure_chart_suffix("song").endswith(".json"))
         self.assertTrue(ensure_chart_suffix("song.json").endswith(".json"))
+        # 旧版 .ivchart 仍然识别（打开旧文件不会再加后缀）
+        self.assertTrue(ensure_chart_suffix("song.ivchart").endswith(".ivchart"))
 
     def test_save_load_roundtrip(self) -> None:
-        path = os.path.join(self.tmp.name, "chart.ivchart")
+        path = os.path.join(self.tmp.name, "chart.json")
         written = save_chart(self.chart, path)
         self.assertTrue(os.path.isfile(written))
         chart, raw = load_chart(written)
@@ -41,7 +50,7 @@ class ChartIoTests(unittest.TestCase):
         audio_src = os.path.join(self.tmp.name, "song.mp3")
         with open(audio_src, "wb") as handle:
             handle.write(b"ID3fake")
-        chart_path = os.path.join(self.tmp.name, "level", "chart.ivchart")
+        chart_path = os.path.join(self.tmp.name, "level", "chart.json")
         os.makedirs(os.path.dirname(chart_path), exist_ok=True)
         relative = copy_audio_into_chart_dir(audio_src, chart_path)
         self.assertEqual(relative, "song.mp3")
@@ -52,7 +61,7 @@ class ChartIoTests(unittest.TestCase):
         self.assertEqual(os.path.abspath(resolved), os.path.abspath(copied))
 
     def test_audio_lookup_supports_subfolder_layout(self) -> None:
-        chart_path = os.path.join(self.tmp.name, "level", "chart.ivchart")
+        chart_path = os.path.join(self.tmp.name, "level", "chart.json")
         sub_dir = os.path.join(self.tmp.name, "level", "audio")
         os.makedirs(sub_dir, exist_ok=True)
         legacy = os.path.join(sub_dir, "old.mp3")
@@ -64,7 +73,7 @@ class ChartIoTests(unittest.TestCase):
 
     def test_audio_missing_returns_none(self) -> None:
         self.chart.metadata.audio_file = "audio/none.mp3"
-        self.assertIsNone(chart_audio_path(os.path.join(self.tmp.name, "c.ivchart"), self.chart))
+        self.assertIsNone(chart_audio_path(os.path.join(self.tmp.name, "c.json"), self.chart))
 
 
 if __name__ == "__main__":

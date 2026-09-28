@@ -17,8 +17,8 @@ pip install -r requirements.txt
 
 # 3) 生成示例谱面并启动编辑器
 python run_editor.py --make-demo
-python run_editor.py charts/demo/demo.ivchart             # 默认最大化启动
-python run_editor.py charts/demo/demo.ivchart --windowed  # 普通窗口（F10 最大化 / F11 全屏）
+python run_editor.py charts/demo/demo.json             # 默认最大化启动
+python run_editor.py charts/demo/demo.json --windowed  # 普通窗口（F10 最大化 / F11 全屏）
 
 # 或者双击 run_editor.bat（会自动优先使用 .venv）
 ```
@@ -26,7 +26,7 @@ python run_editor.py charts/demo/demo.ivchart --windowed  # 普通窗口（F10 �
 演示模式（两个平面叠加、只读、可滚动/缩放/播放）：
 
 ```bash
-python run_editor.py charts/demo/demo.ivchart --demo
+python run_editor.py charts/demo/demo.json --demo
 ```
 
 自检（无需界面，校验时间轴换算 / 速度组积分 / 编辑命令 / 存档往返）：
@@ -117,7 +117,7 @@ run_editor.py            便捷启动脚本（无需安装）
 run_editor.bat           Windows 启动脚本（优先使用 .venv）
 requirements.txt         可选依赖说明（核心零依赖）
 pyproject.toml           打包元数据（pip install -e . 可用）
-charts/demo/demo.ivchart 示例谱面（由 python run_editor.py --make-demo 生成）
+charts/demo/demo.json    示例谱面（普通 JSON，由 python run_editor.py --make-demo 生成）
 docs/                    规格、设计、格式与操作文档
 src/rhythm_editor/
     app.py               主窗口、工具栏、事件、播放循环
