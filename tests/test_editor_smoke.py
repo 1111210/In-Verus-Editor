@@ -184,6 +184,27 @@ class EditorSmokeTest(unittest.TestCase):
         self.assertAlmostEqual(self.view.norm_to_x(0.0), layout.mouse_left, places=6)
         self.assertAlmostEqual(self.view.norm_to_x(1.0), layout.mouse_right, places=6)
 
+    def test_region_draws_only_left_and_right_edges(self) -> None:
+        """蓝色停留区域只绘制左右两条边界线，不画上下封口横线。"""
+        note = MouseRegion("M1", 4.0, 8.0, BoundaryCurve(0.2, 0.1), BoundaryCurve(0.8, 0.9))
+        self.chart.add(note)
+        self.view.set_beat(4.0)
+        self.draw()
+        self.assertIn("region:M1", self.scene._items)
+        self.assertIn("region-left:M1", self.scene._items)
+        self.assertIn("region-right:M1", self.scene._items)
+        for cap in ("region-cap0:M1", "region-cap1:M1"):
+            self.assertNotIn(cap, self.scene._items)
+
+    def test_region_pending_preview_has_only_side_edges(self) -> None:
+        """放置预览同样只画左右边界线。"""
+        self.controller.set_tool(config.TOOL_MOUSE_REGION)
+        self.click(self.view.norm_to_x(0.5), self.y_of_beat(2.0))
+        self.draw()
+        self.assertIn("pending:region", self.scene._items)
+        self.assertIn("pending:region-left", self.scene._items)
+        self.assertIn("pending:region-right", self.scene._items)
+
     def test_overlay_layout_puts_mouse_area_on_middle_lanes(self) -> None:
         self.view.set_layout_mode(config.LAYOUT_OVERLAY)
         layout = self.view.layout

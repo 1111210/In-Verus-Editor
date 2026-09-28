@@ -572,26 +572,9 @@ class Renderer:
         half = len(points) // 2
         left_edge = points[:half]
         right_edge = list(reversed(points[half:]))
+        # 按需求：蓝色停留区域只绘制**左右两条边界线**，不画上下封口横线
         self.scene.polyline(f"region-left:{note.id}", left_edge, fill=theme.region_edge, width=3)
         self.scene.polyline(f"region-right:{note.id}", right_edge, fill=theme.region_edge, width=3)
-        self.scene.line(
-            f"region-cap0:{note.id}",
-            left_edge[0][0],
-            left_edge[0][1],
-            right_edge[0][0],
-            right_edge[0][1],
-            fill=theme.region_edge,
-            width=2,
-        )
-        self.scene.line(
-            f"region-cap1:{note.id}",
-            left_edge[-1][0],
-            left_edge[-1][1],
-            right_edge[-1][0],
-            right_edge[-1][1],
-            fill=theme.region_edge,
-            width=2,
-        )
         if selected:
             self.scene.rect(
                 f"sel:{note.id}",
@@ -773,24 +756,27 @@ class Renderer:
             end = pending.beat_end if pending.beat_end is not None else pending.beat_start
             left = pending.left or BoundaryCurve(0.0, 0.0)
             right = pending.right or BoundaryCurve(1.0, 1.0)
-            points: List[Tuple[float, float]] = []
+            left_points: List[Tuple[float, float]] = []
+            right_points: List[Tuple[float, float]] = []
             for i in range(21):
                 p = i / 20
                 beat = pending.beat_start + (end - pending.beat_start) * p
                 y = view.note_y(beat)
-                points.append((view.norm_to_x(left.value_at(p)), y))
-            for i in range(20, -1, -1):
-                p = i / 20
-                beat = pending.beat_start + (end - pending.beat_start) * p
-                y = view.note_y(beat)
-                points.append((view.norm_to_x(right.value_at(p)), y))
+                left_points.append((view.norm_to_x(left.value_at(p)), y))
+                right_points.append((view.norm_to_x(right.value_at(p)), y))
             self.scene.polygon(
                 "pending:region",
-                points,
+                left_points + list(reversed(right_points)),
                 fill=theme.region_fill,
-                outline=theme.pending,
-                width=2,
+                outline="",
                 stipple=theme.stipple_soft,
+            )
+            # 预览同样只画左右两条边界线
+            self.scene.polyline(
+                "pending:region-left", left_points, fill=theme.pending, width=2, dash=(4, 3)
+            )
+            self.scene.polyline(
+                "pending:region-right", right_points, fill=theme.pending, width=2, dash=(4, 3)
             )
         elif pending.tool == config.TOOL_MOUSE_SLIDE and pending.x_start is not None and pending.beat_start is not None:
             y = view.note_y(pending.beat_start)
