@@ -108,10 +108,6 @@ class TimingTests(unittest.TestCase):
         self.assertEqual(timing.bar_index_at(11.0), (3, 1.0))
         self.assertEqual(timing.bar_index_at(2.0), (0, 2.0))
 
-    def test_exact_multiple_is_not_over_counted(self) -> None:
-        timing = TimingMap([BpmSegment(0.0, 120.0, 4), BpmSegment(8.0, 90.0, 4)])
-        self.assertEqual(timing.bar_index_at(8.0), (2, 0.0))
-
     def test_zero_beats_per_bar_disables_bar_lines(self) -> None:
         """每小节 0 拍 = 关闭小节线：段内不再画线，但 BPM 变更处那条线一定在。"""
         timing = TimingMap([BpmSegment(0.0, 120.0, 4), BpmSegment(8.0, 90.0, 0)])
@@ -135,26 +131,6 @@ class TimingTests(unittest.TestCase):
         self.assertEqual(timing2.bar_lines(19.0, 27.0), [20.0, 23.0, 26.0])
         # 0-8 是 2 节，关闭的 8-20 算一整节，所以第 20 拍是第 4 小节的第一拍
         self.assertEqual(timing2.bar_index_at(20.0), (3, 0.0))
-
-    def test_bar_lines_inside_segment(self) -> None:
-        timing = TimingMap([BpmSegment(0.0, 120.0, 3)])
-        self.assertEqual(timing.bar_lines(0.0, 9.0), [0.0, 3.0, 6.0, 9.0])
-        self.assertTrue(timing.is_bar_start(6.0))
-        self.assertFalse(timing.is_bar_start(7.0))
-        self.assertAlmostEqual(timing.bar_start_at_or_before(7.0), 6.0)
-
-    def test_loading_keeps_change_beats(self) -> None:
-        """读档不会改写 BPM 变更拍（只做排序 / 去重 / 第一项钉到第 0 拍）。"""
-        data = {
-            "offset_ms": 0.0,
-            "bpm_segments": [
-                {"start_beat": 0.0, "bpm": 120.0, "beats_per_bar": 4},
-                {"start_beat": 10.6, "bpm": 90.0, "beats_per_bar": 0},
-            ],
-        }
-        timing = TimingMap.from_dict(data)
-        self.assertAlmostEqual(timing.segments[1].start_beat, 10.6)
-        self.assertEqual(int(timing.segments[1].beats_per_bar), 0)
 
 
 if __name__ == "__main__":

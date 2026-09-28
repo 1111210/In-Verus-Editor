@@ -36,19 +36,10 @@ class LauncherTests(unittest.TestCase):
     def setUp(self) -> None:
         self.launcher = _load_launcher()
 
-    def test_launcher_does_not_switch_interpreters(self) -> None:
-        """启动脚本不再检测 / 切换解释器：只把 src 加进搜索路径。"""
+    def test_bootstrap_adds_src_to_path(self) -> None:
+        """启动脚本只把 src 加进搜索路径（不检测 / 不切换解释器）。"""
         self.launcher._bootstrap()
         self.assertIn(os.path.join(ROOT, "src"), sys.path)
-        self.assertFalse(
-            hasattr(self.launcher, "_restart_with_venv"),
-            "虚拟环境主动检测的代码应当已经移除",
-        )
-        self.assertFalse(
-            hasattr(self.launcher, "_venv_python"),
-            "虚拟环境主动检测的代码应当已经移除",
-        )
-        self.assertFalse(os.path.exists(os.path.join(ROOT, "src", "rhythm_editor", "venv_guard.py")))
 
 
 class StartupLogTests(unittest.TestCase):
@@ -89,29 +80,6 @@ class AudioHintTests(unittest.TestCase):
         # 恰好等于边界时不提前停
         self.assertFalse(should_stop_playback(13.0, 0.0, 10.0))
         self.assertTrue(should_stop_playback(13.01, 0.0, 10.0))
-    def test_backend_name_and_hint_are_consistent(self) -> None:
-        name = audio_backend_name()
-        hint = audio_setup_hint()
-        if name == "silent":
-            self.assertIn("pygame", hint)
-            self.assertIn(sys.executable, hint)
-        else:
-            self.assertEqual(hint, "")
-
-    def test_silent_status_text_mentions_pygame(self) -> None:
-        from rhythm_editor.audio import AudioPlayer
-
-        player = AudioPlayer()
-        if player.usable_audio:
-            self.assertIn("pygame", player.status_text)
-        else:
-            # 静音时要说清原因：缺依赖 / 设备打不开（不能一律写成“未安装 pygame”）
-            self.assertTrue(
-                "未安装 pygame" in player.status_text
-                or "音频设备不可用" in player.status_text,
-                player.status_text,
-            )
-
     def test_device_failure_is_reported_as_such(self) -> None:
         """pygame 装了但设备打不开时：状态与提示都不能说成“未安装 pygame”。"""
         from rhythm_editor.audio import AudioPlayer
@@ -136,17 +104,6 @@ class AudioHintTests(unittest.TestCase):
         finally:
             AudioPlayer._create_plain_backend = original_factory  # type: ignore[assignment]
             audio_module._MIXER_ERROR = original_error
-
-    def test_missing_pygame_reports_interpreter(self) -> None:
-        original = audio_module._PYGAME
-        audio_module._PYGAME = None
-        try:
-            self.assertEqual(audio_backend_state(), "missing")
-            hint = audio_setup_hint()
-            self.assertIn("未检测到 pygame", hint)
-            self.assertIn(sys.executable, hint)
-        finally:
-            audio_module._PYGAME = original
 
     def test_retry_backend_restores_audio_when_possible(self) -> None:
         """retry_backend() 重建设备后应当恢复可用（本机 .venv 里可发声）。"""

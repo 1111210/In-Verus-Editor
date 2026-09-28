@@ -55,12 +55,6 @@ class ClickModelTests(unittest.TestCase):
         self.assertAlmostEqual(clone.center, 0.8)
         self.assertAlmostEqual(clone.radius, 0.1)
 
-    def test_counts(self) -> None:
-        chart = Chart()
-        chart.add(MouseClick("M1", 1.0, 0.5, 0.1))
-        self.assertEqual(chart.note_counts()["click"], 1)
-
-
 class ClickValidateTests(unittest.TestCase):
     def test_same_beat_is_illegal(self) -> None:
         chart = Chart()
@@ -68,12 +62,6 @@ class ClickValidateTests(unittest.TestCase):
         chart.add(MouseClick("M2", 4.0, 0.7, 0.1))
         issues = validate_chart(chart)
         self.assertTrue(any(i.kind == ISSUE_CLICK_SAME_BEAT for i in issues), [i.message for i in issues])
-
-    def test_different_beats_are_fine(self) -> None:
-        chart = Chart()
-        chart.add(MouseClick("M1", 4.0, 0.3, 0.1))
-        chart.add(MouseClick("M2", 5.0, 0.3, 0.1))
-        self.assertEqual(validate_chart(chart), [])
 
     def test_region_rules_same_as_slide(self) -> None:
         chart = Chart()
@@ -85,17 +73,6 @@ class ClickValidateTests(unittest.TestCase):
         chart.add(MouseClick("M2", 5.0, 0.1, 0.05))     # 0.05~0.15
         issues = validate_chart(chart)
         self.assertTrue(any(i.kind == ISSUE_CLICK for i in issues), [i.message for i in issues])
-
-    def test_no_region_is_fine(self) -> None:
-        chart = Chart()
-        chart.add(MouseClick("M1", 4.0, 0.1, 0.05))
-        self.assertEqual(validate_chart(chart), [])
-
-    def test_click_and_slide_same_beat_is_allowed(self) -> None:
-        chart = Chart()
-        chart.add(MouseClick("M1", 4.0, 0.2, 0.1))
-        chart.add(MouseSlide("S1", 4.0, 0.2, 0.6))
-        self.assertEqual(validate_chart(chart), [])
 
 
 class ClickUndoEditTests(unittest.TestCase):

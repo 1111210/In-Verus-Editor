@@ -166,8 +166,6 @@ class Toolbar(ttk.Frame):
             Entry("时间网格细分", options=grid_options),
             Entry("横向辅助网格", options=hgrid_options),
             Entry(separator=True),
-            Entry("重置分栏比例（1:3）", app.reset_split_ratio,
-                  enabled=lambda: not app.demo_mode),
             Entry("跳到开头", lambda: app.jump(0.0), "Home"),
             Entry("跳到结尾", lambda: app.jump(app.document.chart.beat_bounds()[1]), "End"),
             Entry(separator=True),
