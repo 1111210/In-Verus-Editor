@@ -95,6 +95,8 @@ class Document:
         """带撤销记录地修改谱面。"""
         self.push_undo(label)
         result = func()
+        # 物件可能被就地修改（镜像 / 平移 / 改时间），统一让排序缓存失效
+        self.chart.invalidate_order()
         self.dirty = True
         return result
 

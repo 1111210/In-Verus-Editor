@@ -129,19 +129,33 @@ class Chart:
         self.mouse_notes: List[MouseNote] = []
         self.speed_groups: List[SpeedGroup] = [SpeedGroup.default()]
         self._id_counters: Dict[str, int] = {"L": 0, "M": 0}
+        # 按判定时刻排好序的物件列表缓存：只在增删 / 编辑后重建，避免每帧排序
+        self._sorted_cache: Optional[List[Note]] = None
 
     # ------------------------------------------------------------------ 物件
     def all_notes(self) -> List[Note]:
         return [*self.lane_notes, *self.mouse_notes]
 
     def lane_notes_sorted(self) -> List[LaneNote]:
-        return sorted(self.lane_notes, key=sort_key)
+        return [n for n in self.sorted_notes() if isinstance(n, LaneNote)]
 
     def mouse_notes_sorted(self) -> List[MouseNote]:
-        return sorted(self.mouse_notes, key=sort_key)
+        return [n for n in self.sorted_notes() if isinstance(n, MouseNote)]
 
     def sorted_notes(self) -> List[Note]:
-        return sorted(self.all_notes(), key=sort_key)
+        """按 ``(判定时刻, 结束时刻, id)`` 排序的物件列表（带缓存）。
+
+        调用方**不要修改**返回的列表。缓存会在 ``add`` / ``remove`` /
+        ``invalidate_order()`` 之后自动重建；``Document.apply`` 每次编辑也会调用它，
+        所以就地修改物件（镜像 / 平移 / 改时间）后同样会刷新。
+        """
+        if self._sorted_cache is None:
+            self._sorted_cache = sorted(self.all_notes(), key=sort_key)
+        return self._sorted_cache
+
+    def invalidate_order(self) -> None:
+        """标记排序缓存失效（增删物件、修改物件时间后调用）。"""
+        self._sorted_cache = None
 
     def notes_by_id(self) -> Dict[str, Note]:
         return {n.id: n for n in self.all_notes()}
@@ -191,6 +205,7 @@ class Chart:
         self.register_note_id(note.id)
         group_obj = self.group_by_id(note.group)
         group_obj.add_notes([note.id])
+        self.invalidate_order()
         return note
 
     def add_many(self, notes: Iterable[Note], group: int | None = None) -> List[Note]:
@@ -215,6 +230,8 @@ class Chart:
         self.mouse_notes = keep_mouse
         for group in self.speed_groups:
             group.remove_notes(drop)
+        if removed:
+            self.invalidate_order()
         return removed
 
     def group_ids_of(self, note_ids: Iterable[str]) -> Set[int]:
