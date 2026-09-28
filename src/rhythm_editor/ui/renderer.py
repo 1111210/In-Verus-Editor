@@ -218,11 +218,30 @@ class Renderer:
         self.scene.text(
             "panem:title",
             layout.pane_mouse[0] + 6,
-            layout.play_top + 4,
-            "鼠标平面 · 合法区域 0 .. 1",
+            layout.play_top + 24,
+            f"鼠标平面 · 合法区域 0 .. 1（显示 {layout.norm_min:.2f} .. {layout.norm_max:.2f}）",
             fill=theme.legal_border,
             font=theme.font(theme.font_small, bold=True),
             anchor="nw",
+        )
+        # 两侧溢出余量的边界标注：合法区域之外也画得出来
+        self.scene.text(
+            "panem:edge-left",
+            layout.pane_mouse[0] + 4,
+            layout.judgment_y - 32,
+            f"{layout.norm_min:.2f}",
+            fill=theme.text_dim,
+            font=theme.font(theme.font_small),
+            anchor="nw",
+        )
+        self.scene.text(
+            "panem:edge-right",
+            layout.pane_mouse[1] - 4,
+            layout.judgment_y - 32,
+            f"{layout.norm_max:.2f}",
+            fill=theme.text_dim,
+            font=theme.font(theme.font_small),
+            anchor="ne",
         )
 
     # ------------------------------------------------------------------ 轨道

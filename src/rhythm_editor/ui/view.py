@@ -68,18 +68,26 @@ class Layout:
             self.pane_mouse = (mouse_left, mouse_right)
             self.mouse_left = mouse_left
             self.mouse_right = mouse_right
+            self.norm_min = 0.0
+            self.norm_max = 1.0
         else:
             usable = max(120.0, self.play_width - config.PANE_GAP)
             k6_width = max(120.0, usable * self.split_ratio)
             self.pane_6k = (float(self.play_left), float(self.play_left + k6_width))
             self.pane_mouse = (float(self.play_left + k6_width + config.PANE_GAP), float(self.play_right))
             self.lane_rects = _column_rects(self.pane_6k, config.LANE_COUNT)
+            # 鼠标平面显示范围 = 合法区域 0..1 + 两侧各 MOUSE_OVERFLOW_NORM 的溢出余量：
+            # 区域边界允许超出 0..1，多出来的部分也要看得见。
             pane_w = max(20.0, self.pane_mouse[1] - self.pane_mouse[0])
-            inset = max(10.0, pane_w * config.PANE_INSET_RATIO)
-            self.mouse_left = self.pane_mouse[0] + inset
-            self.mouse_right = self.pane_mouse[1] - inset
+            self.norm_min = -float(config.MOUSE_OVERFLOW_NORM)
+            self.norm_max = 1.0 + float(config.MOUSE_OVERFLOW_NORM)
+            scale = pane_w / (self.norm_max - self.norm_min)
+            self.mouse_left = self.pane_mouse[0] - self.norm_min * scale
+            self.mouse_right = self.pane_mouse[0] + (1.0 - self.norm_min) * scale
 
         self.mouse_width = self.mouse_right - self.mouse_left
+        # 1 个归一化单位对应多少像素（鼠标平面的显示范围内插用）
+        self.norm_scale = self.mouse_width / max(1e-6, self.norm_max - self.norm_min)
         self.divider_x = (self.pane_6k[1] + self.pane_mouse[0]) / 2.0
 
     # -------------------------------------------------------------- 区域判断
@@ -215,8 +223,9 @@ class ViewState:
 
     # ------------------------------------------------------------------ 横向
     def norm_to_x(self, value: float) -> float:
-        """0..1 的规范化横坐标 -> 鼠标平面像素坐标。"""
-        return self.layout.mouse_left + float(value) * self.layout.mouse_width
+        """0..1 的规范化横坐标 -> 鼠标平面像素坐标（超出显示范围的部分在边界截断）。"""
+        x = self.layout.mouse_left + float(value) * self.layout.mouse_width
+        return min(max(x, self.layout.pane_mouse[0]), self.layout.pane_mouse[1])
 
     def x_to_norm(self, x: float) -> float:
         return (float(x) - self.layout.mouse_left) / max(1e-6, self.layout.mouse_width)

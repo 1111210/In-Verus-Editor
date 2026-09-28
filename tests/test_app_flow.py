@@ -63,8 +63,11 @@ class AppFlowTest(unittest.TestCase):
         layout = view.layout
         # 两个区域不重叠，鼠标区域在右侧
         self.assertLess(layout.pane_6k[1], layout.pane_mouse[0])
-        self.assertLess(layout.pane_mouse[0], layout.mouse_left)
-        self.assertLessEqual(layout.mouse_right, layout.pane_mouse[1])
+        # 6K 占约四分之一，剩下给鼠标平面；鼠标平面在合法区域外还留有显示余量
+        usable = layout.play_right - layout.play_left - config.PANE_GAP
+        self.assertAlmostEqual(layout.pane_6k[1] - layout.pane_6k[0], usable * 0.25, delta=1.0)
+        self.assertGreater(layout.mouse_left, layout.pane_mouse[0])
+        self.assertLess(layout.mouse_right, layout.pane_mouse[1])
         # 在鼠标区域里点不到 6K 轨道
         self.assertIsNone(layout.lane_at(view.norm_to_x(0.5)))
         self.assertTrue(layout.in_6k_pane(layout.lane_center(0)))

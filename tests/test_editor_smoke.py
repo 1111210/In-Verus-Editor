@@ -127,6 +127,15 @@ class EditorSmokeTest(unittest.TestCase):
         layout = self.view.layout
         self.assertTrue(self.view.split_layout)
         self.assertLess(layout.pane_6k[1], layout.pane_mouse[0])
+        # 6K 只占约四分之一（扣掉中间间隔），其余给鼠标平面
+        usable = layout.play_right - layout.play_left - config.PANE_GAP
+        self.assertAlmostEqual(layout.pane_6k[1] - layout.pane_6k[0], usable * 0.25, delta=1.0)
+        self.assertGreater(layout.pane_mouse[1] - layout.pane_mouse[0], usable * 0.7)
+        # 鼠标平面在合法区域之外还有余量（0..1 之外也看得到）
+        self.assertGreater(layout.mouse_left, layout.pane_mouse[0] + 5)
+        self.assertLess(layout.mouse_right, layout.pane_mouse[1] - 5)
+        self.assertAlmostEqual(self.view.norm_to_x(layout.norm_min), layout.pane_mouse[0], delta=1.0)
+        self.assertAlmostEqual(self.view.norm_to_x(layout.norm_max), layout.pane_mouse[1], delta=1.0)
         self.assertIsNone(layout.lane_at(self.view.norm_to_x(0.5)))
         self.assertFalse(layout.in_6k_pane(self.view.norm_to_x(0.5)))
         self.assertTrue(layout.in_mouse_pane(self.view.norm_to_x(0.5)))
@@ -138,6 +147,28 @@ class EditorSmokeTest(unittest.TestCase):
         self.assertAlmostEqual(judge[1], judge_mouse[1], places=6)
         self.assertLessEqual(judge[2], layout.pane_6k[1] + 1)
         self.assertGreaterEqual(judge_mouse[0], layout.pane_mouse[0] - 1)
+
+    def test_region_outside_legal_area_still_visible(self) -> None:
+        """超出 0..1 的区域边界要画得出来（鼠标平面留了溢出余量）。"""
+        note = MouseRegion(
+            "M1",
+            0.0,
+            4.0,
+            BoundaryCurve(-0.3, -0.2, config.EASE_LINEAR),
+            BoundaryCurve(1.4, 1.3, config.EASE_LINEAR),
+        )
+        self.chart.add(note)
+        self.view.set_beat(0.0)
+        self.draw()
+        self.assertIn("region:M1", self.scene._items)
+        coords = self.scene._items["region:M1"][2][0]
+        xs = coords[0::2]
+        layout = self.view.layout
+        self.assertGreaterEqual(min(xs), layout.pane_mouse[0] - 1)
+        self.assertLessEqual(max(xs), layout.pane_mouse[1] + 1)
+        # 合法区域左右界仍在 0 / 1 对应的位置上
+        self.assertAlmostEqual(self.view.norm_to_x(0.0), layout.mouse_left, places=6)
+        self.assertAlmostEqual(self.view.norm_to_x(1.0), layout.mouse_right, places=6)
 
     def test_overlay_layout_puts_mouse_area_on_middle_lanes(self) -> None:
         self.view.set_layout_mode(config.LAYOUT_OVERLAY)
