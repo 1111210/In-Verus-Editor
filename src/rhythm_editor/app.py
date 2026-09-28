@@ -504,7 +504,7 @@ class EditorApp:
 
     def edit_timing(self) -> None:
         timing: Optional[TimingMap] = run_dialog(
-            BpmDialog, self.root, self.theme, self.document.chart.timing
+            BpmDialog, self.root, self.theme, self.document.chart.timing, self._beat_hint()
         )
         if timing is None:
             return
@@ -536,9 +536,21 @@ class EditorApp:
         )
 
     def edit_speed_groups(self) -> None:
-        changed = run_dialog(SpeedGroupDialog, self.root, self.theme, self.document)
+        changed = run_dialog(
+            SpeedGroupDialog, self.root, self.theme, self.document, self._beat_hint()
+        )
         if changed:
             self.status("速度组已更新")
+
+    def _beat_hint(self) -> str:
+        """给数据面板用的提示：当前判定线在第几拍（便于照着填数据）。"""
+        timing = self.document.chart.timing
+        beat = self.view.current_beat
+        bar, in_bar = timing.bar_index_at(beat)
+        return (
+            f"当前判定线：第 {beat:.3f} 拍"
+            f"（小节 {bar + 1} 第 {in_bar + 1:.2f} 拍 · {self.view.time_label(beat)}）"
+        )
 
     def show_guide(self) -> None:
         """操作指南（与快捷键拆成两个独立窗口）。"""
@@ -554,14 +566,14 @@ class EditorApp:
     def _region_editor(self, beat_start: float, beat_end: float) -> Optional[Dict]:
         """停留区域：先取时间，再用对话框设置两条边界的首尾位置与线型。"""
         template = MouseRegion("temp", beat_start, beat_end, BoundaryCurve(0.0, 0.0), BoundaryCurve(1.0, 1.0))
-        return run_dialog(NoteEditDialog, self.root, self.theme, template)
+        return run_dialog(NoteEditDialog, self.root, self.theme, template, self._beat_hint())
 
     def edit_selected(self) -> None:
         note = self.document.single_selected()
         if note is None:
             self.status("编辑功能需要只选择 1 个物件")
             return
-        data = run_dialog(NoteEditDialog, self.root, self.theme, note)
+        data = run_dialog(NoteEditDialog, self.root, self.theme, note, self._beat_hint())
         if not data:
             return
         self.document.replace_note(note.id, data)

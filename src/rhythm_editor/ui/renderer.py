@@ -341,6 +341,7 @@ class Renderer:
         key_prefix: str = "grid",
         bar_labels: bool = True,
         time_labels: bool = True,
+        beat_labels: bool = True,
     ) -> None:
         theme = self.theme
         layout = view.layout
@@ -349,6 +350,9 @@ class Renderer:
         sub_step = 1.0 / division
         draw_sub = (ppb / division) >= 7.0
         draw_beat = ppb >= 9.0
+        # 拍号标注：方便用户照着网格填写“第几拍”的数据
+        show_beat_labels = beat_labels and ppb >= 24.0
+        show_sub_labels = beat_labels and (ppb / division) >= 44.0
         # 密度自适应：太密时只画拍线，再密时只画小节线
         if draw_sub:
             base_step = sub_step
@@ -385,7 +389,7 @@ class Renderer:
                         f"{key_prefix}-label:{i}",
                         x0 + 4,
                         y + 2,
-                        f"小节 {bar_index + 1}",
+                        f"小节 {bar_index + 1} · 第 {beat:g} 拍",
                         fill=theme.grid_label,
                         font=theme.font(theme.font_small),
                         anchor="nw",
@@ -400,6 +404,26 @@ class Renderer:
                         font=theme.font(theme.font_small),
                         anchor="ne",
                     )
+            elif show_beat_labels and is_beat:
+                self.scene.text(
+                    f"{key_prefix}-beat:{i}",
+                    x0 + 4,
+                    y + 2,
+                    f"第 {beat:g} 拍",
+                    fill=theme.text_dim,
+                    font=theme.font(theme.font_small),
+                    anchor="nw",
+                )
+            elif show_sub_labels and not is_beat:
+                self.scene.text(
+                    f"{key_prefix}-sub:{i}",
+                    x0 + 4,
+                    y + 2,
+                    f"第 {beat:g} 拍",
+                    fill=theme.text_dim,
+                    font=theme.font(theme.font_small),
+                    anchor="nw",
+                )
 
     # ------------------------------------------------------------------ 物件
     def _group(self, chart: Chart, note: Note) -> SpeedGroup:

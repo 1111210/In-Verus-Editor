@@ -112,6 +112,20 @@ class EditorSmokeTest(unittest.TestCase):
         self.draw()
         self.assertNotIn("hgrid:0", self.scene._items)
 
+    def test_grid_labels_show_bar_and_beat_numbers(self) -> None:
+        """网格旁要同时标注小节号与绝对拍号（方便照抄填写数据）。"""
+        self.view.set_beat(8.0)
+        self.draw()
+        texts = [
+            dict(options).get("text", "")
+            for _item_id, _kind, spec in self.scene._items.values()
+            for options in (spec[1],)
+        ]
+        bar_labels = [t for t in texts if t.startswith("小节 ")]
+        self.assertTrue(bar_labels, "应该有小节标注")
+        self.assertTrue(any("第 8 拍" in t for t in bar_labels), f"小节标注要带拍号：{bar_labels}")
+        self.assertTrue(any(t == "第 9 拍" or t == "第 7 拍" for t in texts), "拍线旁应有绝对拍号")
+
     def test_judgment_line_is_grid_aligned(self) -> None:
         self.chart.settings.grid_division = 4
         self.view.set_beat(3.4)

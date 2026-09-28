@@ -196,8 +196,10 @@ class MetadataDialog(BaseDialog):
 class BpmDialog(BaseDialog):
     title_text = "BPM 与偏移设定"
 
-    def __init__(self, parent: tk.Misc, theme: Theme, timing: TimingMap) -> None:
+    def __init__(self, parent: tk.Misc, theme: Theme, timing: TimingMap,
+                 beat_hint: str = "") -> None:
         self.timing = timing
+        self.beat_hint = beat_hint
         self.segments: List[BpmSegment] = [
             BpmSegment(s.start_beat, s.bpm, s.beats_per_bar) for s in timing.segments
         ]
@@ -249,6 +251,8 @@ class BpmDialog(BaseDialog):
             text="从第 0 拍开始的一项不允许删除，只能修改；BPM 列表不影响物件运动速度。",
             style="Warn.TLabel",
         ).pack(anchor="w", pady=(6, 0))
+        if self.beat_hint:
+            ttk.Label(body, text=self.beat_hint, style="Dim.TLabel").pack(anchor="w", pady=(2, 0))
         self._refresh()
 
     # ---------------------------------------------------------- 表格逻辑
@@ -464,8 +468,10 @@ class SpeedGroupDialog(BaseDialog):
     title_text = "速度组"
     ok_text = "关闭"
 
-    def __init__(self, parent: tk.Misc, theme: Theme, document: Document) -> None:
+    def __init__(self, parent: tk.Misc, theme: Theme, document: Document,
+                 beat_hint: str = "") -> None:
         self.document = document
+        self.beat_hint = beat_hint
         self.changed = False
         super().__init__(parent, theme)
 
@@ -523,6 +529,10 @@ class SpeedGroupDialog(BaseDialog):
             style="Dim.TLabel",
             justify="left",
         ).pack(anchor="w", pady=(6, 0))
+        if self.beat_hint:
+            ttk.Label(right, text=self.beat_hint, style="Dim.TLabel", justify="left").pack(
+                anchor="w", pady=(2, 0)
+            )
         self._refresh_groups()
 
     # -------------------------------------------------------------- 组
@@ -662,8 +672,9 @@ class SpeedGroupDialog(BaseDialog):
 class NoteEditDialog(BaseDialog):
     title_text = "编辑物件"
 
-    def __init__(self, parent: tk.Misc, theme: Theme, note: Note) -> None:
+    def __init__(self, parent: tk.Misc, theme: Theme, note: Note, beat_hint: str = "") -> None:
         self.note = note
+        self.beat_hint = beat_hint
         super().__init__(parent, theme)
 
     def _build(self) -> None:
@@ -726,6 +737,10 @@ class NoteEditDialog(BaseDialog):
             ).grid(row=4, column=0, columnspan=2, sticky="w", pady=(4, 0))
         else:  # pragma: no cover
             ttk.Label(body, text="未知物件类型").grid(row=0, column=0)
+        if self.beat_hint:
+            ttk.Label(body, text=self.beat_hint, style="Dim.TLabel").grid(
+                row=30, column=0, columnspan=4, sticky="w", pady=(8, 0)
+            )
 
     def _ok(self) -> None:
         note = self.note
