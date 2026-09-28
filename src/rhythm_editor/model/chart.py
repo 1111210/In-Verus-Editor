@@ -8,10 +8,12 @@ from typing import Any, Dict, Iterable, List, Optional, Sequence, Set
 from .. import config
 from .notes import (
     LaneNote,
+    MouseClick,
     MouseNote,
     MouseRegion,
     MouseSlide,
     NOTE_LANE,
+    NOTE_CLICK,
     NOTE_REGION,
     NOTE_SLIDE,
     Note,
@@ -299,6 +301,7 @@ class Chart:
             NOTE_LANE: len(self.lane_notes),
             NOTE_REGION: sum(1 for n in self.mouse_notes if isinstance(n, MouseRegion)),
             NOTE_SLIDE: sum(1 for n in self.mouse_notes if isinstance(n, MouseSlide)),
+            NOTE_CLICK: sum(1 for n in self.mouse_notes if isinstance(n, MouseClick)),
         }
 
     # ------------------------------------------------------------------ 序列化

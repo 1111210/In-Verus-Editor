@@ -26,13 +26,15 @@ from typing import Dict, Iterable, List, Sequence, Tuple
 
 from .. import config
 from .chart import Chart
-from .notes import LaneNote, MouseRegion, MouseSlide, Note
+from .notes import LaneNote, MouseClick, MouseRegion, MouseSlide, Note
 
 EPS = 1e-7
 REGION_BUCKET_BEATS = 4.0   # 空域按 4 拍分桶，避免大谱面上滑键检查退化成 O(n·m)
 
 ISSUE_LANE = "lane_overlap"
 ISSUE_SLIDE = "slide_region"
+ISSUE_CLICK = "click_region"
+ISSUE_CLICK_SAME_BEAT = "click_same_beat"
 
 
 @dataclass
@@ -170,9 +172,75 @@ def check_slides(chart: Chart) -> List[Issue]:
     return issues
 
 
+def check_clicks(chart: Chart) -> List[Issue]:
+    """鼠标点击按键：
+
+    * 与滑键相同的规则 —— 所在时刻要么没有空域，要么与空域相交 / 紧贴；
+    * 额外限制 —— **同一时刻不能出现两个鼠标点击按键**。
+    """
+    issues: List[Issue] = []
+    clicks = [n for n in chart.mouse_notes if isinstance(n, MouseClick)]
+    if not clicks:
+        return issues
+    regions = [n for n in chart.mouse_notes if isinstance(n, MouseRegion)]
+    buckets = _build_region_buckets(regions) if regions else {}
+
+    # 1) 同一时刻只能有一个点击按键
+    ordered = sorted(clicks, key=lambda n: n.beat)
+    for index, first in enumerate(ordered):
+        for second in ordered[index + 1:]:
+            if second.beat - first.beat > EPS:
+                break
+            if abs(second.beat - first.beat) <= EPS:
+                issues.append(
+                    Issue(
+                        ISSUE_CLICK_SAME_BEAT,
+                        f"{first.id} 与 {second.id} 都位于{_beat_text(first)}："
+                        f"同一时刻不能出现两个鼠标点击按键",
+                        (first.id, second.id),
+                    )
+                )
+
+    # 2) 与滑键一致：该时刻有空域时必须相交 / 紧贴
+    for click in clicks:
+        cell = int(click.beat // REGION_BUCKET_BEATS)
+        active = [
+            region
+            for region in buckets.get(cell, ())
+            if region.beat_start - EPS <= click.beat <= region.beat_end + EPS
+        ]
+        if not active:
+            continue
+        x_lo, x_hi = click.x_range()
+        hit = False
+        for region in active:
+            left = region.left_at(click.beat)
+            right = region.right_at(click.beat)
+            if ranges_touch_or_overlap(x_lo, x_hi, min(left, right), max(left, right)):
+                hit = True
+                break
+        if hit:
+            continue
+        detail = "；".join(
+            f"{region.id}（{_beat_text(region)}，横向 "
+            f"{min(region.left_at(click.beat), region.right_at(click.beat)):g} → "
+            f"{max(region.left_at(click.beat), region.right_at(click.beat)):g}）"
+            for region in active
+        )
+        issues.append(
+            Issue(
+                ISSUE_CLICK,
+                f"{click.id}（{_beat_text(click)}，横向 {x_lo:g} → {x_hi:g}）："
+                f"该时刻存在空域 {detail}，但点击按键范围与空域不相交也不紧贴",
+                (click.id, *(region.id for region in active)),
+            )
+        )
+    return issues
+
+
 def validate_chart(chart: Chart) -> List[Issue]:
     """执行全部检查，返回问题列表（空列表 = 通过）。"""
-    return check_lane_notes(chart) + check_slides(chart)
+    return check_lane_notes(chart) + check_slides(chart) + check_clicks(chart)
 
 
 # ------------------------------------------------------------------ 报告
@@ -182,16 +250,21 @@ def format_report(chart: Chart, issues: Sequence[Issue]) -> str:
     lines = [
         "自动检查范围：",
         f"  · 6K 下落式：{counts['lane']} 个物件（单轨 / 多轨 / 长按）",
-        f"  · 空域：{counts['region']} 个   滑键：{counts['slide']} 个（鼠标部分只检查滑键）",
+        f"  · 空域：{counts['region']} 个   滑键：{counts['slide']} 个   "
+        f"点击按键：{counts['click']} 个",
         "",
         "检查规则：",
         "  · 任意轨道在任意时刻只能存在一个按键；长按 / 多轨按键与其它按键重叠都算冲突",
         "    （端点相接的“紧贴”不算冲突，但瞬时按键落在长按内部算冲突）",
         "  · 滑键所在时刻若存在空域，则滑键横向范围必须与该空域相交或紧贴",
+        "  · 鼠标点击按键与滑键规则相同，且同一时刻不能出现两个点击按键",
         "",
     ]
     lane_issues = [i for i in issues if i.kind == ISSUE_LANE]
     slide_issues = [i for i in issues if i.kind == ISSUE_SLIDE]
+    click_issues = [
+        i for i in issues if i.kind in (ISSUE_CLICK, ISSUE_CLICK_SAME_BEAT)
+    ]
     if not issues:
         lines.append("检查结果：未发现问题 ✓")
         return "\n".join(lines)
@@ -205,6 +278,11 @@ def format_report(chart: Chart, issues: Sequence[Issue]) -> str:
     if slide_issues:
         lines.append(f"【滑键与空域】共 {len(slide_issues)} 处")
         for index, issue in enumerate(slide_issues, 1):
+            lines.append(f"  {index}. {issue.message}")
+        lines.append("")
+    if click_issues:
+        lines.append(f"【鼠标点击按键】共 {len(click_issues)} 处")
+        for index, issue in enumerate(click_issues, 1):
             lines.append(f"  {index}. {issue.message}")
         lines.append("")
     return "\n".join(lines)

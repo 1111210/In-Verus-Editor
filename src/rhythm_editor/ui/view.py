@@ -269,6 +269,10 @@ class ViewState:
         """是否位于鼠标平面的合法区域内（0..1 的范围）。"""
         return self.layout.in_legal_area(x)
 
+    def in_mouse_pane(self, x: float) -> bool:
+        """是否位于鼠标平面这块画布区域内（比合法区域更宽，含溢出余量）。"""
+        return self.layout.in_mouse_pane(x)
+
     def in_play_area(self, x: float, y: float) -> bool:
         return (
             self.layout.play_left - 2 <= x <= self.layout.play_right + 2

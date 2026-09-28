@@ -13,6 +13,7 @@ from ..model.document import Document
 from ..model.notes import (
     BoundaryCurve,
     LaneNote,
+    MouseClick,
     MouseRegion,
     MouseSlide,
     Note,
@@ -126,6 +127,8 @@ class ToolController:
             self._place_region(x, y)
         elif tool == config.TOOL_MOUSE_SLIDE:
             self._place_slide(x, y)
+        elif tool == config.TOOL_MOUSE_CLICK:
+            self._place_mouse_click(x, y)
 
     def on_motion(self, x: float, y: float) -> None:
         self.hover = (x, y)
@@ -314,10 +317,10 @@ class ToolController:
             self.status(self.state.pending.hint)
             return
 
-        if not self.view.in_mouse_area(x):
-            self.status("空域边界请点击鼠标平面的合法区域（右侧区域）")
-            return
         value = self._norm_x(x)
+        if value is None:
+            self.status("空域边界请点击鼠标平面区域（横向辅助网格关闭时允许超出合法区域）")
+            return
         if self._stage == 2:
             self._region_left_start = value
             self._set_hint("空域：请点击左边界终点位置（未放置的左边界点按 0 显示）")
@@ -369,30 +372,78 @@ class ToolController:
         self.document.add_note(note, "放置空域")
         self.status(f"已放置空域 {note.id}：第 {note.beat_start:g} → {note.beat_end:g} 拍")
 
-    def _norm_x(self, x: float) -> float:
-        """鼠标平面像素横坐标 -> 归一化位置（开启横向网格时吸附到网格线）。"""
-        return self.view.snap_norm(self.view.x_to_norm(x))
+    def _norm_x(self, x: float) -> Optional[float]:
+        """鼠标平面像素横坐标 -> 归一化位置。
 
-    def _slide_x(self, x: float) -> float:
+        * **启用横向辅助网格**时：吸附到最近的网格线，并夹进 ``0..1`` 合法区域内；
+        * **未启用**时：保留鼠标的真实位置 —— 即使超出合法区域（出界）也照常放置。
+        * 只有当点击落在鼠标平面区域之外（例如点在 6K 区域里）才返回 ``None``。
+        """
+        if not self.view.in_mouse_pane(x):
+            return None
+        value = self.view.x_to_norm(x)
+        if self.view.chart.settings.horizontal_divisions > 0:
+            value = self.view.snap_norm(value)
+            value = min(1.0, max(0.0, value))
+        return float(value)
+
+    def _slide_x(self, x: float) -> Optional[float]:
         return self._norm_x(x)
+
+    def _place_mouse_click(self, x: float, y: float) -> None:
+        """放置鼠标点击按键：第一次点击定中心位置，第二次点击旁边确定大小。"""
+        if not self._in_play(x, y):
+            self.status("请在游玩区域内点击")
+            return
+        center = self._norm_x(x)
+        if center is None:
+            self.status("点击按键请点击鼠标平面区域（横向辅助网格关闭时允许超出合法区域）")
+            return
+        if self._stage == 0:
+            self._stage = 1
+            self._first_beat = self.view.snap_beat(self.view.y_to_beat(y))
+            self._first_x = center
+            hint = "鼠标点击按键：请点击旁边确定按键大小（Esc 取消）"
+            self._set_hint(hint)
+            self.status(hint)
+            return
+        base = self._first_x if self._first_x is not None else center
+        radius = max(abs(center - base), config.MIN_CLICK_RADIUS)
+        note = MouseClick(
+            self.document.chart.new_note_id("M"),
+            self._first_beat or 0.0,
+            base,
+            radius,
+        )
+        self.document.add_note(note, "放置鼠标点击按键")
+        self.status(
+            f"已放置点击按键 {note.id}：第 {note.beat:g} 拍，中心 {note.center:g}，"
+            f"范围 {note.x_start:g} → {note.x_end:g}"
+        )
+        self.cancel_pending()
 
     def _place_slide(self, x: float, y: float) -> None:
         if not self._in_play(x, y):
             self.status("请在游玩区域内点击")
             return
-        if not self.view.in_mouse_area(x):
-            self.status("滑键需要放在鼠标平面的合法区域内（右侧区域）")
-            return
         if self._stage == 0:
+            value = self._slide_x(x)
+            if value is None:
+                self.status("滑键请点击鼠标平面区域（横向辅助网格关闭时允许超出合法区域）")
+                return
             self._stage = 1
             self._first_beat = self.view.snap_beat(self.view.y_to_beat(y))
-            self._first_x = self._slide_x(x)
+            self._first_x = value
             hint = "滑键：请点击第二次确定滑动方向与终点（Esc 取消）"
             self._set_hint(hint)
             self.status(hint)
             return
-        x_start = self._first_x if self._first_x is not None else self._slide_x(x)
-        x_end = self._slide_x(x)
+        x_end_value = self._slide_x(x)
+        if x_end_value is None:
+            self.status("滑键请点击鼠标平面区域（横向辅助网格关闭时允许超出合法区域）")
+            return
+        x_start = self._first_x if self._first_x is not None else x_end_value
+        x_end = x_end_value
         step = 1.0 / self.view.chart.settings.horizontal_divisions if (
             self.view.chart.settings.horizontal_divisions > 0
         ) else config.MIN_SLIDE_SPAN
@@ -510,7 +561,7 @@ class ToolController:
             else:
                 end = self._region_end_beat
             pending.beat_end = end
-            cursor = self._norm_x(x) if self.view.in_mouse_area(x) else None
+            cursor = self._norm_x(x)
             left_start = self._region_left_start
             left_end = self._region_left_end
             right_start = self._region_right_start
@@ -540,19 +591,44 @@ class ToolController:
                 5: "空域：点击右边界终点，之后选择线型",
             }.get(self._stage, "")
         elif tool == config.TOOL_MOUSE_SLIDE:
-            if not in_play or not self.view.in_mouse_area(x):
+            if not in_play:
                 pending.tool = ""
-                pending.hint = "滑键请在鼠标平面的合法区域内点击" if in_play else ""
+                pending.hint = ""
+                return
+            cursor = self._slide_x(x)
+            if cursor is None:
+                pending.tool = ""
+                pending.hint = "滑键请点击鼠标平面区域（网格关闭时允许超出合法区域）"
                 return
             if self._stage == 0:
                 pending.beat_start = beat
-                pending.x_start = self._slide_x(x)
+                pending.x_start = cursor
                 pending.x_end = pending.x_start
                 pending.hint = "滑键：点击时间与起始位置"
             else:
                 pending.beat_start = self._first_beat
                 pending.x_start = self._first_x
-                pending.x_end = self._slide_x(x)
+                pending.x_end = cursor
+        elif tool == config.TOOL_MOUSE_CLICK:
+            if not in_play:
+                pending.tool = ""
+                pending.hint = ""
+                return
+            cursor = self._norm_x(x)
+            if cursor is None:
+                pending.tool = ""
+                pending.hint = "点击按键请点击鼠标平面区域（网格关闭时允许超出合法区域）"
+                return
+            if self._stage == 0:
+                pending.beat_start = beat
+                pending.x_start = cursor
+                pending.x_end = cursor
+                pending.hint = "鼠标点击按键：点击中心位置"
+            else:
+                pending.beat_start = self._first_beat
+                pending.x_start = self._first_x
+                pending.x_end = cursor
+                pending.hint = "鼠标点击按键：点击旁边确定大小"
         else:
             pending.tool = ""
             pending.hint = ""

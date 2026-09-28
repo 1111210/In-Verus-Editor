@@ -49,7 +49,9 @@ class AppFlowTest(unittest.TestCase):
 
     # -------------------------------------------------------------- 基本状态
     def test_app_boots_with_chart(self) -> None:
-        self.assertEqual(len(self.app.document.chart.all_notes()), 41)
+        # 示例谱面：32 个 6K 物件 + 3 个空域 + 6 个滑键 + 4 个鼠标点击按键
+        self.assertEqual(len(self.app.document.chart.all_notes()), 45)
+        self.assertEqual(self.app.document.chart.note_counts()["click"], 4)
         self.assertIn("demo.json", self.app.root.title())
         self.assertEqual(self.app.controller.tool, config.TOOL_SELECT)
         self.assertIn("音频后端", self.app.info_var.get())

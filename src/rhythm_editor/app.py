@@ -248,6 +248,7 @@ class EditorApp:
             f"布局：{layout_name}"
             f"　|　倍速 {self.audio.rate:.1f}x"
             f"　|　物件：6K {counts['lane']} · 区域 {counts['region']} · 滑键 {counts['slide']}"
+            f" · 点击 {counts['click']}"
             f"　|　判定线：第 {self.view.current_beat:.3f} 拍"
             f"　|　{self.controller.selection_summary()}"
             f"　|　{self.audio.status_text}"

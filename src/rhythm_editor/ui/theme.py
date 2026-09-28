@@ -48,6 +48,11 @@ class Theme:
     slide_left_fill: str = "#e8c24a"
     slide_left_edge: str = "#ffd666"
 
+    # 鼠标点击按键：半透明红色长方形（与 6K 按键同款）+ 中央白色实心菱形
+    click_fill: str = "#e2483d"
+    click_edge: str = "#ff6b5e"
+    click_diamond: str = "#ffffff"
+
     select: str = "#ffd166"
     pending: str = config.PENDING_COLOR
     rubber: str = "#8fb4ff"

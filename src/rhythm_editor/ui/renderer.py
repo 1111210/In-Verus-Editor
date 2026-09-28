@@ -8,10 +8,10 @@
 
 渲染顺序（自下而上）：
 背景 -> 区域底色 / 轨道 -> 时间网格 -> 合法区域边界 -> 横向辅助网格
--> 物件（多轨长按 -> 单轨长按 -> 多轨单键 -> 单轨单键 -> 空域 -> 滑键）
+-> 物件（多轨长按 -> 单轨长按 -> 多轨单键 -> 单轨单键 -> 空域 -> 点击按键 -> 滑键）
 -> 判定线 -> 区域标题 -> 预览幽灵 / 橡皮筋 -> HUD
 
-物件的六层顺序刻意“从大到小”摆放：即使谱面故意写成非法重叠，
+物件的七层顺序刻意“从大到小”摆放：即使谱面故意写成非法重叠，
 小按键也压在长按之上、半透明空域与滑键再压在 6K 物件之上，交叠处依然可读。
 
 时间轴导航由右侧朴素的竖向滚动条负责（不在画布上画总览条）。
@@ -29,6 +29,7 @@ from ..model.chart import Chart
 from ..model.notes import (
     BoundaryCurve,
     LaneNote,
+    MouseClick,
     MouseNote,
     MouseRegion,
     MouseSlide,
@@ -490,7 +491,9 @@ class Renderer:
             (7, single_tap, lambda n, s: self._draw_lane_note(n, chart, view, s, y_min, y_max)),
             (8, lambda n: isinstance(n, MouseRegion),
                 lambda n, s: self._draw_region(n, chart, view, s, y_min, y_max, region_samples)),
-            (9, lambda n: isinstance(n, MouseSlide),
+            (9, lambda n: isinstance(n, MouseClick),
+                lambda n, s: self._draw_click(n, chart, view, s, y_min, y_max)),
+            (10, lambda n: isinstance(n, MouseSlide),
                 lambda n, s: self._draw_slide(n, chart, view, s, y_min, y_max)),
         )
         for layer, matches, draw in layers:
@@ -596,6 +599,92 @@ class Renderer:
                 x0,
                 top - 14,
                 label,
+                fill=theme.select,
+                font=theme.font(theme.font_small),
+                anchor="nw",
+            )
+
+    def _draw_click(
+        self,
+        note: MouseClick,
+        chart: Chart,
+        view: ViewState,
+        selected: bool,
+        y_min: float = -1e9,
+        y_max: float = 1e9,
+    ) -> None:
+        """鼠标点击按键：与 6K 按键同款的长方形（半透明红）+ 中央固定大小的实心菱形。"""
+        theme = self.theme
+        group = self._group(chart, note)
+        y = view.note_y(note.beat, group)
+        if y < y_min or y > y_max:
+            return
+        x = view.norm_to_x(note.center)
+        radius_px = max(1.0, float(note.radius) * view.layout.mouse_width)
+        # 与 6K 单键一致：底边贴在判定时刻上，高度固定
+        top, bottom = y - TAP_MIN_PX, y
+        x0, x1 = x - radius_px, x + radius_px
+        self._hit_entries.append(
+            (note, (x0, top, x1, bottom), None)
+        )
+        # 外侧白边 + 内侧亮红环（与 6K 单键的“白边 + 蓝环”同构）
+        self.scene.rect(
+            f"click:{note.id}",
+            x0,
+            top,
+            x1,
+            bottom,
+            fill=theme.click_fill,
+            outline=theme.note_white,
+            width=2,
+            stipple=theme.stipple_fill,
+        )
+        self.scene.rect(
+            f"click-ring:{note.id}",
+            x0 + 2,
+            top + 2,
+            x1 - 2,
+            bottom - 2,
+            fill="",
+            outline=theme.click_edge,
+            width=3,
+        )
+        # 中间的白色横线：与 6K 单键一致
+        middle = (top + bottom) / 2.0
+        self.scene.line(
+            f"click-line:{note.id}",
+            x0 + 2,
+            middle,
+            x1 - 2,
+            middle,
+            fill=theme.note_white,
+            width=theme.note_line_width,
+        )
+        # 中央实心菱形：尺寸固定，不随按键大小变化
+        d = float(config.CLICK_DIAMOND_RADIUS_PX)
+        self.scene.polygon(
+            f"click-diamond:{note.id}",
+            [(x - d, middle), (x, middle - d), (x + d, middle), (x, middle + d)],
+            fill=theme.click_diamond,
+            outline="",
+        )
+        if selected:
+            self.scene.rect(
+                f"sel:{note.id}",
+                x0 - 4,
+                top - 4,
+                x1 + 4,
+                bottom + 4,
+                fill="",
+                outline=theme.select,
+                width=2,
+                dash=(4, 3),
+            )
+            self.scene.text(
+                f"lbl:{note.id}",
+                x0,
+                top - 18,
+                f"{note.id} · 点击按键 · 组{note.group}",
                 fill=theme.select,
                 font=theme.font(theme.font_small),
                 anchor="nw",
@@ -975,6 +1064,56 @@ class Renderer:
                     arrow="last",
                     arrowshape=(12, 14, 5),
                 )
+        elif pending.tool == config.TOOL_MOUSE_CLICK and pending.x_start is not None and pending.beat_start is not None:
+            # 点击按键预览：选中心时给一根竖直虚线；选大小时给半透明红圆盘 + 实心菱形
+            y = view.note_y(pending.beat_start)
+            x = view.norm_to_x(pending.x_start)
+            d = float(config.CLICK_DIAMOND_RADIUS_PX)
+            top, bottom = y - TAP_MIN_PX, y
+            if pending.step == 0:
+                self.scene.line(
+                    "pending:click-guide",
+                    x,
+                    layout.play_top,
+                    x,
+                    layout.play_bottom,
+                    fill=theme.pending,
+                    width=2,
+                    dash=(6, 4),
+                )
+            else:
+                end = pending.x_end if pending.x_end is not None else pending.x_start
+                # 与真实放置保持一致：半径不小于 MIN_CLICK_RADIUS
+                radius_px = max(
+                    config.MIN_CLICK_RADIUS, abs(end - pending.x_start)
+                ) * layout.mouse_width
+                self.scene.rect(
+                    "pending:click",
+                    x - radius_px,
+                    top,
+                    x + radius_px,
+                    bottom,
+                    fill=theme.click_fill,
+                    outline=theme.pending,
+                    width=2,
+                    stipple=theme.stipple_soft,
+                )
+                self.scene.line(
+                    "pending:click-line",
+                    x - radius_px,
+                    (top + bottom) / 2.0,
+                    x + radius_px,
+                    (top + bottom) / 2.0,
+                    fill=theme.note_white,
+                    width=theme.note_line_width,
+                )
+            self.scene.polygon(
+                "pending:click-diamond",
+                [(x - d, (top + bottom) / 2.0), (x, (top + bottom) / 2.0 - d),
+                 (x + d, (top + bottom) / 2.0), (x, (top + bottom) / 2.0 + d)],
+                fill=theme.pending,
+                outline="",
+            )
         if pending.hint:
             self.scene.text(
                 "pending:hint",

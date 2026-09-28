@@ -79,8 +79,12 @@ python -m unittest discover -s tests -t . -v
 | --- | --- | --- |
 | 空域（原“停留区域”） | 出现期间鼠标必须留在空域内 | 半透明蓝色填充 + 只画左右两条不透明边界线 |
 | 左右滑键 | 到达判定线时鼠标在滑键范围内朝指定方向滑动（滑动长度任意） | 半透明绿色填充 + 箭头 |
+| 鼠标点击按键 | 到达判定线时鼠标在它的横向范围内点击（左键 / 右键均可） | 与 6K 按键同款的长方形（半透明红 + 白边 + 中间白横线）+ 中央固定大小的实心菱形 |
 
 两个平面共用同一条判定线、同样的时间网格，滚动与缩放完全同步。
+
+完整的判定语义（判定窗口、长按持续、空域逐帧检查、滑键最小位移、非法谱面降级策略）
+写在 [`docs/GAMEPLAY.md`](docs/GAMEPLAY.md)，供下一步实现播放器使用。
 
 ---
 
@@ -93,7 +97,8 @@ python -m unittest discover -s tests -t . -v
 | 2-2 BPM 列表 + 偏移 | `ui/dialogs.py::BpmDialog`、`model/timing.py` | 每项：起始拍 / BPM / 每小节拍数；第 0 拍项不可删除；BPM **不影响**物件运动速度 |
 | 3 单轨 / 多轨 / 长按 | `ui/interactions.py` | 多轨以第一次点击时间轴为准；长按结束时刻可滚动缩放、可在任意位置（含鼠标区域）点击 |
 | 4 空域 | `ui/interactions.py` + `NoteEditDialog` | 两次点击定开始/结束时间 → 依次点击左边界首尾、右边界首尾（未点击的点按左 0 / 右 1 预览）→ 弹窗选线型（线性 / 缓入 / 缓出），位置允许超出 0..1 |
-| 5 左右滑键 | `ui/interactions.py` | 开启横向辅助网格时吸附到网格线，否则取点击横坐标；第二次点击决定方向 |
+| 5 左右滑键 | `ui/interactions.py` | 开启横向辅助网格时吸附到网格线并夹进 0..1，否则按鼠标真实位置（出界也照常放置）；第二次点击决定方向 |
+| 5-2 鼠标点击按键 | `ui/interactions.py`、`ui/renderer.py` | 第一次点中心、第二次点旁边定大小；渲染成与 6K 按键同款的长方形 + 固定大小菱形；判定时左键 / 右键点击范围内即可；同一时刻只能有一个 |
 | 6 编辑器设置 | `ui/dialogs.py::SettingsDialog` | 缩放（可视时长）、时间网格（一拍细分 n 份）、横向辅助（0..1 几等分，0=关闭）、系统音频延迟（ms） |
 | 8 选择 / 复制 / 粘贴 / 镜像 / 编辑 | `model/document.py`、`ui/interactions.py` | 框选、Ctrl 对称差选择、粘贴保持轨道与横向位置、镜像沿游玩区中轴线、单选可编辑（`NoteEditDialog`） |
 | 9 速度组 | `model/speed.py`、`ui/dialogs.py::SpeedGroupDialog` | 每条流速记录（起始拍 + 倍率，支持 0/负数反向）；物件与组双向记录；删除组时物件回到默认组；位置由“判定时刻在判定线上”反推 |
@@ -105,7 +110,8 @@ python -m unittest discover -s tests -t . -v
 > 共用同一套几何 —— 详见 [`docs/DESIGN.md`](docs/DESIGN.md) 的“非单调速度”一节与
 > [`docs/VERIFICATION.md`](docs/VERIFICATION.md) 的专项验证。
 
-完整逐条规格见 [`docs/SPEC.md`](docs/SPEC.md)，数据结构见 [`docs/CHART_FORMAT.md`](docs/CHART_FORMAT.md)，
+完整逐条规格见 [`docs/SPEC.md`](docs/SPEC.md)，玩法与判定规则见 [`docs/GAMEPLAY.md`](docs/GAMEPLAY.md)，
+数据结构见 [`docs/CHART_FORMAT.md`](docs/CHART_FORMAT.md)，
 操作说明见 [`docs/USER_GUIDE.md`](docs/USER_GUIDE.md)，架构设计见 [`docs/DESIGN.md`](docs/DESIGN.md)。
 
 ---

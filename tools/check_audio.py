@@ -25,6 +25,13 @@ import wave
 ROOT = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
 sys.path.insert(0, os.path.join(ROOT, "src"))
 
+# 输出里带有 − (U+2212) 等符号，Windows 控制台默认 GBK 会直接抛 UnicodeEncodeError
+for _stream in (sys.stdout, sys.stderr):
+    try:
+        _stream.reconfigure(encoding="utf-8", errors="replace")
+    except (AttributeError, OSError):  # pragma: no cover - 极老的 Python / 非文本流
+        pass
+
 from rhythm_editor.audio import AudioPlayer, audio_backend_name  # noqa: E402
 
 
@@ -58,6 +65,9 @@ def main() -> int:
               "真实播放" if player.usable_audio else "无可用音频设备/pygame，退化为静音时钟")
 
         loaded = player.load(wav)
+        # 这个检查会真的发声（2 秒 440Hz 测试音）：默认音量压到很低，避免调试时吵到人。
+        # 想听清楚可以设环境变量 VERUS_AUDIO_CHECK_VOLUME=0.6
+        player.set_volume(float(os.environ.get("VERUS_AUDIO_CHECK_VOLUME", "0.08")))
         check("载入 WAV", loaded, os.path.basename(wav))
 
         player.play(200.0)

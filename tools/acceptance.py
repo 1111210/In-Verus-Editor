@@ -18,7 +18,7 @@ from rhythm_editor.audio import audio_backend_available, audio_backend_name  # n
 from rhythm_editor.demo import build_demo_chart, selftest, write_demo_chart  # noqa: E402
 from rhythm_editor.io.chart_io import load_chart  # noqa: E402
 from rhythm_editor.model.document import Document  # noqa: E402
-from rhythm_editor.model.notes import LaneNote, MouseRegion, MouseSlide  # noqa: E402
+from rhythm_editor.model.notes import LaneNote, MouseClick, MouseRegion, MouseSlide  # noqa: E402
 
 
 def report() -> int:
@@ -52,6 +52,16 @@ def report() -> int:
         "鼠标滑键（方向由首尾位置决定）",
         any(isinstance(n, MouseSlide) and n.direction in (-1, 1) for n in chart.mouse_notes),
         f"{counts['slide']} 个",
+    )
+    item(
+        "鼠标点击按键（半透明红长方形，与 6K 按键同款；中央菱形固定大小且不可编辑）",
+        any(
+            isinstance(n, MouseClick)
+            and n.radius >= config.MIN_CLICK_RADIUS
+            and abs(n.x_end - n.x_start - 2 * n.radius) < 1e-9
+            for n in chart.mouse_notes
+        ),
+        f"{counts['click']} 个",
     )
     item(
         "BPM 列表（第 0 拍项存在，含每小节拍数）",

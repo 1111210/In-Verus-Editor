@@ -113,10 +113,10 @@ python tools/check_audio.py
 
 | 项目 | 命令 | 结果 |
 | --- | --- | --- |
-| 单元测试（含 Tk 画布冒烟测试与应用级测试） | `python -m unittest discover -s tests -t .` | Ran 189 tests — **OK** |
-| 需求验收清单 | `python tools/acceptance.py` | 13 项全部 `[OK ]`，结论：全部通过 |
+| 单元测试（含 Tk 画布冒烟测试与应用级测试） | `python -m unittest discover -s tests -t .` | Ran 207 tests — **OK** |
+| 需求验收清单 | `python tools/acceptance.py` | 14 项全部 `[OK ]`，结论：全部通过 |
 | 音频后端 | `python tools/check_audio.py` | 9 项全部 `[OK ]`（pygame.mixer 真实播放，延迟补偿正确） |
-| 示例谱面生成 | `python run_editor.py --make-demo` | 生成 `charts/demo/demo.json`（6K 32 / 区域 3 / 滑键 6 / 4 个速度组） |
+| 示例谱面生成 | `python run_editor.py --make-demo` | 生成 `charts/demo/demo.json`（6K 32 / 区域 3 / 滑键 6 / 点击按键 4 / 4 个速度组） |
 | 界面截图 | `python tools/screenshot_editor.py docs/images` | 5 张窗口截图（分栏 / 放置 / 叠加演示 / 最大化 / 全屏） |
 | 依赖安装 | `python -m pip install -r requirements.txt` | 已安装 `pygame-ce 2.5.8` |
 | 菜单频闪 | `python tools/check_menu_flicker.py` | 4 项全部 `[OK ]`（展开期间帧数冻结、菜单项零改写、关闭后恢复） |
@@ -207,7 +207,7 @@ python tools/check_audio.py
 | `tests/test_editor_smoke.py::test_region_samples_adapt_to_screen_height` | 空域采样点数随屏幕高度自适应 |
 | `tests/test_perf_hit.py`（6 条） | 命中缓存：只含可见物件、命中测试不再触碰整张谱面、视图变化回退全量、框选复用缓存、签名随视图/谱面变化 |
 | `tests/test_sorted_cache.py`（7 条） | 排序缓存：复用同一列表、增删 / 编辑自动失效、显式失效、分类列表、快照后缓存重建 |
-| `tests/test_editor_smoke.py::test_note_layer_order_matches_readability_spec` | 六层绘制顺序（画布图元次序）符合规格 |
+| `tests/test_editor_smoke.py::test_note_layer_order_matches_readability_spec` | 七层绘制顺序（画布图元次序）符合规格 |
 | `tests/test_editor_smoke.py::test_hit_priority_follows_layer_order` | 命中优先级与图层一致（滑键 > 空域 > 单轨单键 > …） |
 | `tests/test_undo_records.py`（10 条） | 差量撤销：增删/粘贴/镜像/编辑/改组/改元数据与 BPM 的撤销重做等价性、记录量只随改动量增长、栈上限、选择还原 |
 | `tests/test_editor_smoke.py::test_tap_note_style` | 单键图案：白边 + 亮蓝环 + 中间白横线（位置居中） |
@@ -219,6 +219,8 @@ python tools/check_audio.py
 | `tests/test_app_flow.py::test_toggle_maximize_and_fullscreen` | 最大化 / 还原 / 全屏互斥切换 |
 | `tests/test_app_flow.py::test_menu_not_reconfigured_every_frame` | 菜单项只在状态变化时写入（频闪根因之一） |
 | `tests/test_app_flow.py::test_tick_skips_redraw_while_menu_is_posted` | 菜单展开期间不重绘画布（频闪根因之二） |
+| `tests/test_mouse_click.py`（18 条） | 鼠标点击按键：模型 / 序列化 / 镜像 / 复制粘贴 / 编辑撤销、与滑键同规则 + 同拍唯一、两次点击创建（中心 → 大小）、**启用横向网格才吸附并夹进 0..1、未启用时出界也照常放置**（滑键同样）、渲染为与 6K 按键同款的长方形 + 固定大小菱形、兜底命中 / 框选路径 |
+| `tests/test_app_flow.py::test_app_boots_with_chart` | 示例谱面物件总数与分类计数（含 4 个鼠标点击按键） |
 
 人工确认：`docs/images/editor_overview.png`（分栏 + 分组工具栏）、
 `docs/images/maximized_editor.png`（默认启动状态）、`docs/images/fullscreen_editor.png`（全屏）、

@@ -88,6 +88,7 @@ TOOL_LANE_MULTI = "lane_multi"
 TOOL_LANE_HOLD = "lane_hold"
 TOOL_MOUSE_REGION = "mouse_region"
 TOOL_MOUSE_SLIDE = "mouse_slide"
+TOOL_MOUSE_CLICK = "mouse_click"
 
 TOOL_LABELS = {
     TOOL_SELECT: "选择/区域选择",
@@ -97,6 +98,7 @@ TOOL_LABELS = {
     TOOL_LANE_HOLD: "长按（含多轨）",
     TOOL_MOUSE_REGION: "空域",
     TOOL_MOUSE_SLIDE: "左右滑键",
+    TOOL_MOUSE_CLICK: "鼠标点击按键",
 }
 
 TOOL_ORDER = (
@@ -106,11 +108,16 @@ TOOL_ORDER = (
     TOOL_LANE_HOLD,
     TOOL_MOUSE_REGION,
     TOOL_MOUSE_SLIDE,
+    TOOL_MOUSE_CLICK,
 )
 
 # 空域放置过程中：尚未点击的边界点按默认值渲染（左边界 0、右边界 1）
 REGION_PENDING_LEFT_DEFAULT = 0.0
 REGION_PENDING_RIGHT_DEFAULT = 1.0
+
+# 鼠标点击按键：半宽（归一化）最小值与中心菱形的固定半径（像素）
+MIN_CLICK_RADIUS = 0.04
+CLICK_DIAMOND_RADIUS_PX = 9.0
 
 # 数值容差
 EPS = 1e-7

@@ -18,6 +18,7 @@ from ..model.document import Document
 from ..model.notes import (
     BoundaryCurve,
     LaneNote,
+    MouseClick,
     MouseRegion,
     MouseSlide,
     Note,
@@ -727,6 +728,21 @@ class NoteEditDialog(BaseDialog):
                 text="结束位置大于起始位置表示向右滑动，小于表示向左滑动。",
                 style="Dim.TLabel",
             ).grid(row=4, column=0, columnspan=2, sticky="w", pady=(4, 0))
+        elif isinstance(note, MouseClick):
+            ttk.Label(body, text=f"{note.id} · 鼠标点击按键", style="Head.TLabel").grid(
+                row=0, column=0, columnspan=2, sticky="w", pady=(0, 6)
+            )
+            self.e_beat = labeled_entry(body, 1, "判定拍", f"{note.beat:g}", width=14)
+            self.e_center = labeled_entry(body, 2, "中心位置", f"{note.center:g}", width=14)
+            self.e_radius = labeled_entry(body, 3, "半宽（大小）", f"{note.radius:g}", width=14)
+            ttk.Label(
+                body,
+                text=f"范围 = 中心 ± 半宽（最小半宽 {config.MIN_CLICK_RADIUS:g}）；"
+                     "位置以合法区域最左侧为 0、最右侧为 1，允许超出。"
+                     "按键渲染为长方形（宽度 = 2×半宽，高度固定），中央菱形大小固定、不可编辑。",
+                style="Dim.TLabel",
+                wraplength=380,
+            ).grid(row=4, column=0, columnspan=2, sticky="w", pady=(4, 0))
         else:  # pragma: no cover
             ttk.Label(body, text="未知物件类型").grid(row=0, column=0)
         if self.beat_hint:
@@ -773,7 +789,7 @@ class NoteEditDialog(BaseDialog):
                 ).to_dict(),
                 "group": note.group,
             }
-        else:
+        elif isinstance(note, MouseSlide):
             x_start = parse_float(self.e_x_start.get(), note.x_start)
             x_end = parse_float(self.e_x_end.get(), note.x_end)
             if abs(x_end - x_start) < 1e-6:
@@ -784,6 +800,18 @@ class NoteEditDialog(BaseDialog):
                 "beat": parse_float(self.e_beat.get(), note.beat),
                 "x_start": x_start,
                 "x_end": x_end,
+                "group": note.group,
+            }
+        else:
+            self.result = {
+                "id": note.id,
+                "type": note.kind,
+                "beat": parse_float(self.e_beat.get(), note.beat),
+                "center": parse_float(self.e_center.get(), note.center),
+                "radius": max(
+                    config.MIN_CLICK_RADIUS,
+                    parse_float(self.e_radius.get(), note.radius),
+                ),
                 "group": note.group,
             }
         self.destroy()
@@ -835,18 +863,24 @@ GUIDE_TEXT = """【界面】
 （同一个时间刻度）与同一套时间网格，所以滚动 / 缩放永远同步。
 按 Tab 进入演示模式后，两个平面叠加显示（鼠标平面压在中四条轨道上）并且不可编辑。
 
-【放置工具】（顶栏「放置 ▾」菜单，或按数字键 1-7 切换）
-1 单轨按键：点击 6K 区域 -> 在对应轨道放置按键，时间自动吸附网格。
-2 多轨按键：先点击一条轨道，再点击另一条轨道 -> 生成跨越这两条轨道的多轨按键；
+【工具】（顶栏「放置 ▾」菜单，或按数字键 1-7 切换；下面的序号就是数字键）
+1 选择 / 区域选择（数字键 1）：拖动框选、点击选中，用于后续的复制 / 镜像 / 编辑 / 删除。
+2 单轨按键（数字键 2）：点击 6K 区域 -> 在对应轨道放置按键，时间自动吸附网格。
+3 多轨按键（数字键 3）：先点击一条轨道，再点击另一条轨道 -> 生成跨越这两条轨道的多轨按键；
    时间以第一次点击为准。
-3 长按（含多轨）：先点击起点（轨道 + 时间），再点击终点 —— 第二次点击的横坐标决定
+4 长按（含多轨）（数字键 4）：先点击起点（轨道 + 时间），再点击终点 —— 第二次点击的横坐标决定
    结束轨道、纵坐标决定结束时间；点在鼠标区域内则只改时间、轨道不变。
    可以滚动 / 缩放后再点终点，时间自动吸附网格。
-4 空域（鼠标停留区域）：先点击开始时间、结束时间；再依次点击「左边界起点 / 左边界终点 /
+5 空域（数字键 5）：先点击开始时间、结束时间；再依次点击「左边界起点 / 左边界终点 /
    右边界起点 / 右边界终点」四个位置（未点击的点按默认值预览：左边界 0、右边界 1）；
    最后在弹出的对话框里选择两条边界的线型（线性 / 缓入 / 缓出），也可以微调位置。
-5 左右滑键：先点击设定时间与横向位置，再点击第二次决定滑动方向；
+6 左右滑键（数字键 6）：先点击设定时间与横向位置，再点击第二次决定滑动方向；
    开启横向辅助网格时会吸附到网格线上。
+7 鼠标点击按键（数字键 7）：先点击设定中心位置（时间同时吸附网格），再点击旁边确定按键大小；
+   物件到达判定线时需要在它的横向范围内点击（左键 / 右键都可以）。
+   显示成与 6K 按键同款的长方形（半透明红 + 白边 + 中间白横线），中央有一个固定大小的实心菱形。
+   —— 鼠标部分的横向位置：启用横向辅助网格时吸附到网格线并夹进 0..1 合法区域；
+   未启用时按鼠标真实位置放置，即使超出合法区域（出界）也照常放置。
 Esc 取消当前放置流程；切换工具同样会放弃未完成的操作。放置过程中会显示幽灵预览。
 
 【选择与编辑】
@@ -882,6 +916,7 @@ SHORTCUTS_TEXT = """【工具切换】
 4  长按（含多轨）
 5  空域
 6  左右滑键
+7  鼠标点击按键
 Esc  取消当前放置流程（演示模式下为退出演示）
 Tab  进入 / 退出演示模式
 

@@ -10,7 +10,7 @@ from typing import List, Optional, Sequence, Tuple
 
 from .. import config
 from ..model.chart import Chart
-from ..model.notes import LaneNote, MouseNote, MouseRegion, MouseSlide, Note
+from ..model.notes import LaneNote, MouseClick, MouseNote, MouseRegion, MouseSlide, Note
 from ..model.speed import SpeedGroup
 from .view import ViewState
 
@@ -40,9 +40,11 @@ def hit_signature(view: ViewState) -> tuple:
 def _depth(note: Note) -> int:
     """命中优先级 = 渲染图层顺序（越大越靠上）：
 
-    滑键 > 空域 > 单轨单键 > 多轨单键 > 单轨长按 > 多轨长按。
+    滑键 > 点击按键 > 空域 > 单轨单键 > 多轨单键 > 单轨长按 > 多轨长按。
     """
     if isinstance(note, MouseSlide):
+        return 7
+    if isinstance(note, MouseClick):
         return 6
     if isinstance(note, MouseRegion):
         return 5
@@ -129,6 +131,15 @@ def slide_bounds(note: MouseSlide, chart: Chart, view: ViewState) -> Bounds:
     return min(x0, x1) - 4, y - SLIDE_MIN_PX / 2, max(x0, x1) + 4, y + SLIDE_MIN_PX / 2
 
 
+def click_bounds(note: MouseClick, chart: Chart, view: ViewState) -> Bounds:
+    """鼠标点击按键的命中框：与渲染一致的长方形（宽度 = 2×半宽，高度固定）。"""
+    group = chart.group_by_id(note.group)
+    y = view.note_y(note.beat, group)
+    half = max(1.0, float(note.radius) * view.layout.mouse_width)
+    x = view.norm_to_x(note.center)
+    return x - half, y - TAP_MIN_PX, x + half, y
+
+
 def region_polygon(note: MouseRegion, chart: Chart, view: ViewState, samples: int = REGION_SAMPLES) -> List[Point]:
     group = chart.group_by_id(note.group)
     left_edge: List[Point] = []
@@ -178,6 +189,8 @@ def note_bounds(note: Note, chart: Chart, view: ViewState) -> Bounds:
         return lane_note_bounds(note, chart, view)
     if isinstance(note, MouseRegion):
         return region_bounds(note, chart, view)
+    if isinstance(note, MouseClick):
+        return click_bounds(note, chart, view)
     if isinstance(note, MouseSlide):
         return slide_bounds(note, chart, view)
     return 0.0, 0.0, 0.0, 0.0

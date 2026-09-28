@@ -19,6 +19,7 @@ from .. import config
 NOTE_LANE = "lane"
 NOTE_REGION = "region"
 NOTE_SLIDE = "slide"
+NOTE_CLICK = "click"
 
 
 def ease_value(ease: str, progress: float) -> float:
@@ -334,6 +335,67 @@ class MouseSlide(MouseNote):
         }
 
 
+class MouseClick(MouseNote):
+    """鼠标点击按键：到达判定线时需要在它的横向范围内点击（左键 / 右键均可）。
+
+    * ``center`` —— 中心横坐标（0..1 归一化，允许超出）
+    * ``radius`` —— 横向半宽（归一化）；范围即 ``center ± radius``。
+      渲染成与 6K 按键同款的长方形：宽度 = 2×radius，高度固定。
+    """
+
+    kind = NOTE_CLICK
+
+    def __init__(
+        self,
+        note_id: str,
+        beat: float,
+        center: float,
+        radius: float = config.MIN_CLICK_RADIUS,
+        group: int = config.DEFAULT_GROUP_ID,
+    ) -> None:
+        super().__init__(note_id, group)
+        self.beat = float(beat)
+        self.center = float(center)
+        self.radius = max(float(config.MIN_CLICK_RADIUS), float(radius))
+
+    @property
+    def x_start(self) -> float:
+        return self.center - self.radius
+
+    @property
+    def x_end(self) -> float:
+        return self.center + self.radius
+
+    @property
+    def head_beat(self) -> float:
+        return self.beat
+
+    def x_range(self) -> Tuple[float, float]:
+        return self.x_start, self.x_end
+
+    def contains_x(self, value: float) -> bool:
+        return self.x_start - config.EPS <= value <= self.x_end + config.EPS
+
+    def shift(self, delta_beats: float) -> None:
+        self.beat += delta_beats
+
+    def clone(self, new_id: str, delta_beats: float = 0.0) -> "MouseClick":
+        return MouseClick(new_id, self.beat + delta_beats, self.center, self.radius, self.group)
+
+    def mirrored(self) -> None:
+        self.center = 1.0 - self.center
+
+    def to_dict(self) -> Dict[str, Any]:
+        return {
+            "id": self.id,
+            "type": NOTE_CLICK,
+            "beat": round(self.beat, 9),
+            "center": round(self.center, 6),
+            "radius": round(self.radius, 6),
+            "group": self.group,
+        }
+
+
 def note_from_dict(data: Dict[str, Any]) -> Note:
     """由字典构造物件（用于读档与撤销快照）。"""
     kind = data.get("type")
@@ -363,6 +425,14 @@ def note_from_dict(data: Dict[str, Any]) -> Note:
             float(data.get("beat", 0.0)),
             float(data.get("x_start", 0.0)),
             float(data.get("x_end", data.get("x_start", 0.0))),
+            group,
+        )
+    if kind == NOTE_CLICK:
+        return MouseClick(
+            note_id,
+            float(data.get("beat", 0.0)),
+            float(data.get("center", 0.5)),
+            float(data.get("radius", config.MIN_CLICK_RADIUS)),
             group,
         )
     raise ValueError(f"unknown note type: {kind!r}")
