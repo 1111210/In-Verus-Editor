@@ -113,7 +113,7 @@ python tools/check_audio.py
 
 | 项目 | 命令 | 结果 |
 | --- | --- | --- |
-| 单元测试（含 Tk 画布冒烟测试与应用级测试） | `python -m unittest discover -s tests -t .` | Ran 143 tests — **OK** |
+| 单元测试（含 Tk 画布冒烟测试与应用级测试） | `python -m unittest discover -s tests -t .` | Ran 147 tests — **OK** |
 | 需求验收清单 | `python tools/acceptance.py` | 13 项全部 `[OK ]`，结论：全部通过 |
 | 音频后端 | `python tools/check_audio.py` | 9 项全部 `[OK ]`（pygame.mixer 真实播放，延迟补偿正确） |
 | 示例谱面生成 | `python run_editor.py --make-demo` | 生成 `charts/demo/demo.ivchart`（6K 32 / 区域 3 / 滑键 6 / 4 个速度组） |
@@ -195,6 +195,10 @@ python tools/check_audio.py
 | `tests/test_editor_smoke.py::test_slide_box_uses_actual_length_but_arrow_keeps_min_length` | 方框按实际长度、箭头仍有最小长度 |
 | `tests/test_editor_smoke.py::test_slide_pending_start_is_single_yellow_line` | 选起点预览：只有一根黄色虚线 |
 | `tests/test_editor_smoke.py::test_slide_pending_end_colors_follow_direction` | 选终点预览：向左黄色、向右绿色 |
+| `tests/test_app_flow.py::test_blocking_popup_resets_state_after_close` | 阻塞式原生菜单：弹出返回后状态复位 |
+| `tests/test_app_flow.py::test_grid_settings_live_in_view_menu_only` | 网格设置只在视图菜单（含自定义项），设置面板已无网格字段 |
+| `tests/test_app_flow.py::test_horizontal_grid_has_no_separate_switch` | 横向辅助网格无独立开关，设置了等分就必然显示 |
+| `tests/test_app_flow.py::test_toolbar_buttons_share_same_height_style` | 直执按钮与菜单按钮样式一致（高度相同） |
 | `tests/test_app_flow.py::test_fullscreen_toggle` | 全屏开关切换 |
 | `tests/test_app_flow.py::test_maximized_by_default` | 默认最大化（`-fullscreen` 属性为 0），不是无边框全屏 |
 | `tests/test_app_flow.py::test_toggle_maximize_and_fullscreen` | 最大化 / 还原 / 全屏互斥切换 |

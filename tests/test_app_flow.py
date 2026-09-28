@@ -332,6 +332,18 @@ class AppFlowTest(unittest.TestCase):
         self.assertTrue(toolbar.close_if_open())           # Esc -> 收起
         self.assertFalse(toolbar.close_if_open())
 
+    def test_blocking_popup_resets_state_after_close(self) -> None:
+        """阻塞式原生菜单：tk_popup 返回时菜单已被“再次点击”关掉，状态应复位。"""
+        toolbar = self.app.toolbar
+        toolbar._post_menu = lambda menu, button: None      # type: ignore[assignment]
+        toolbar._menu_is_posted = lambda menu: False        # type: ignore[assignment]
+        toolbar.toggle_menu("编辑")
+        self.assertIsNone(toolbar._open_group)
+        self.assertFalse(toolbar.is_menu_posted())
+        # 再次点击就是重新打开，而不是“关掉不存在的菜单”
+        toolbar.toggle_menu("编辑")
+        self.assertIsNone(toolbar._open_group)
+
     def test_fullscreen_toggle(self) -> None:
         before = self.app.fullscreen
         self.app.toggle_fullscreen()
@@ -486,7 +498,69 @@ class AppFlowTest(unittest.TestCase):
             self.assertTrue(os.path.isfile(path))
             reloaded, _raw = load_chart(path)
             self.assertEqual(reloaded.to_dict(), self.app.document.chart.to_dict())
-            self.assertFalse(self.app.document.dirty)
+        self.assertFalse(self.app.document.dirty)
+
+    def test_grid_settings_live_in_view_menu_only(self) -> None:
+        """网格设置从「编辑器设置」移到「视图」子菜单，并且带“自定义…”项。"""
+        from rhythm_editor.ui.dialogs import SettingsDialog
+
+        # 编辑器设置面板里不再有网格字段
+        dialog = SettingsDialog(self.app.root, self.app.theme, self.app.document.chart)
+        try:
+            self.assertFalse(hasattr(dialog, "e_division"))
+            self.assertFalse(hasattr(dialog, "e_horizontal"))
+        finally:
+            dialog.destroy()
+        # 视图菜单里带自定义项
+        view_menu = self.app.toolbar._menus["视图"]
+        labels = [
+            view_menu.entrycget(i, "label")
+            for i in range(view_menu.index("end") + 1)
+            if view_menu.type(i) == "cascade"
+        ]
+        self.assertIn("时间网格细分", labels)
+        self.assertIn("横向辅助网格", labels)
+        for name in ("时间网格细分", "横向辅助网格"):
+            index = next(
+                i
+                for i in range(view_menu.index("end") + 1)
+                if view_menu.type(i) == "cascade" and view_menu.entrycget(i, "label") == name
+            )
+            sub = self.app.root.nametowidget(view_menu.entrycget(index, "menu"))
+            sub_labels = [
+                sub.entrycget(j, "label")
+                for j in range(sub.index("end") + 1)
+                if sub.type(j) == "command"
+            ]
+            self.assertTrue(
+                any("自定义" in label for label in sub_labels),
+                f"{name} 子菜单应有自定义项：{sub_labels}",
+            )
+
+    def test_horizontal_grid_has_no_separate_switch(self) -> None:
+        """横向辅助网格只要设置了等分就必然显示（没有单独的显示开关）。"""
+        self.assertFalse(hasattr(self.app.view, "show_horizontal_grid"))
+        self.assertFalse(hasattr(self.app, "toggle_horizontal_grid"))
+        view_menu = self.app.toolbar._menus["视图"]
+        labels = [
+            view_menu.entrycget(i, "label")
+            for i in range(view_menu.index("end") + 1)
+            if view_menu.type(i) == "command"
+        ]
+        self.assertNotIn("显示横向辅助网格", labels)
+        # 设置等分后画布上必然出现 hgrid 图元
+        self.app.set_horizontal_divisions("6")
+        self.app._tick()
+        hgrid = [k for k in self.app.scene._items if k.startswith("hgrid:")]
+        self.assertTrue(hgrid, "设置了等分就应该画出横向辅助网格")
+
+    def test_toolbar_buttons_share_same_height_style(self) -> None:
+        """编辑物件 / 速度组 / 编辑器设置与能展开菜单的按钮同样高（同一套样式）。"""
+        toolbar = self.app.toolbar
+        styles = {button.cget("style") for button, _ in toolbar._direct_buttons}
+        self.assertEqual(styles, {"Tool.TButton"})
+        for button in toolbar._group_buttons.values():
+            self.assertEqual(str(button.cget("style")), "Tool.TButton")
 
 
 if __name__ == "__main__":

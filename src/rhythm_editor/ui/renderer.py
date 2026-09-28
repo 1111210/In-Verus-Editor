@@ -301,7 +301,8 @@ class Renderer:
             )
 
     def _draw_horizontal_grid(self, chart: Chart, view: ViewState) -> None:
-        if not chart.settings.horizontal_grid_enabled or not view.show_horizontal_grid:
+        # 只要设置了横向等分就必然显示（没有单独的开关）
+        if not chart.settings.horizontal_grid_enabled:
             return
         theme = self.theme
         layout = view.layout

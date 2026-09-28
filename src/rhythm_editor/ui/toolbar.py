@@ -135,6 +135,12 @@ class Toolbar(ttk.Frame):
                 checked=(lambda v=value: app.document.chart.settings.grid_division == v),
             )
             for value in (1, 2, 3, 4, 6, 8, 12, 16, 24, 32, 48, 64)
+        ] + [
+            Entry(separator=True),
+            Entry(
+                f"自定义…（当前 1/{app.document.chart.settings.grid_division}）",
+                app.set_grid_division_custom,
+            ),
         ]
         hgrid_options = [Entry("关闭", lambda: app.set_horizontal_divisions("0"),
                                checked=lambda: app.document.chart.settings.horizontal_divisions == 0)]
@@ -146,13 +152,18 @@ class Toolbar(ttk.Frame):
             )
             for value in (2, 3, 4, 6, 8, 10, 12, 16)
         ]
+        hgrid_options += [
+            Entry(separator=True),
+            Entry(
+                "自定义…",
+                app.set_horizontal_divisions_custom,
+            ),
+        ]
         view_group = Group("视图", [
             Entry("缩放", options=zoom_options),
             Entry(separator=True),
             Entry("时间网格细分", options=grid_options),
             Entry("横向辅助网格", options=hgrid_options),
-            Entry("显示横向辅助网格", app.toggle_horizontal_grid, "G",
-                  checked=lambda: app.view.show_horizontal_grid),
             Entry(separator=True),
             Entry("跳到开头", lambda: app.jump(0.0), "Home"),
             Entry("跳到结尾", lambda: app.jump(app.document.chart.beat_bounds()[1]), "End"),
@@ -229,7 +240,13 @@ class Toolbar(ttk.Frame):
 
         for group in self._groups[:-1]:
             if group.direct_command is not None:
-                button = ttk.Button(self._strip, text=group.label, command=group.direct_command)
+                # 与能展开菜单的按钮用同一套样式，保证高度一致
+                button = ttk.Button(
+                    self._strip,
+                    text=group.label,
+                    style="Tool.TButton",
+                    command=group.direct_command,
+                )
                 self._direct_buttons.append((button, group.enabled))
             else:
                 button = self._make_menubutton(self._strip, group)
@@ -390,16 +407,12 @@ class Toolbar(ttk.Frame):
         self.mark_menu_open()
         self._post_menu(menu, button)
         if not self._menu_is_posted(menu):
-            # 阻塞式平台（Windows 原生菜单）在 tk_popup 返回时菜单已经关闭；
-            # 非阻塞平台这里仍然处于展开状态，保持开合状态以便“再次点击收起”。
-            if self._open_group == label:
-                self._open_group = None
+            # 阻塞式平台（Windows 原生菜单）在 tk_popup 返回时菜单已经被关闭
+            # （那次“再次点击”被菜单自己吞掉了），这里把状态复位即可。
+            self._open_group = None
             self.mark_menu_closed()
-        # 释放 grab，让“点击同一个按钮”能正常送达按钮本身（实现再次点击收起）
-        try:
-            menu.grab_release()
-        except tk.TclError:  # pragma: no cover
-            pass
+        # 注意：**不要**释放 grab。tk_popup 自带的 grab 会让“再次点击同一个按钮”
+        # 由菜单自己接收并收起；一旦释放，这次点击会落到按钮上，反而把菜单重新打开。
 
     def _menu_is_posted(self, menu: tk.Menu) -> bool:
         """菜单当前是否仍处于展开状态（原生菜单下不可靠，见 toggle_menu 的说明）。"""

@@ -161,7 +161,6 @@ class EditorApp:
         root.bind("<ButtonPress-1>", lambda e: self.toolbar.handle_outside_click(e.widget), add="+")
         root.bind("m", lambda e: self._shortcut(self.mirror_selection))
         root.bind("e", lambda e: self._shortcut(self.edit_selected))
-        root.bind("g", lambda e: self._shortcut(self.toggle_horizontal_grid))
         for index, tool in enumerate(config.TOOL_ORDER, start=1):
             root.bind(str(index), lambda e, t=tool: self._shortcut(lambda: self.set_tool(t)))
         root.protocol("WM_DELETE_WINDOW", self.on_close)
@@ -592,8 +591,6 @@ class EditorApp:
         def _apply() -> None:
             settings = self.document.chart.settings
             settings.zoom_seconds = float(result["zoom_seconds"])
-            settings.grid_division = int(result["grid_division"])
-            settings.horizontal_divisions = int(result["horizontal_divisions"])
             settings.audio_latency_ms = float(result["audio_latency_ms"])
             settings.normalize()
 
@@ -602,10 +599,44 @@ class EditorApp:
         self.view.set_beat(self.view.current_beat)
         self.status(
             f"设置已更新：可视 {self.document.chart.settings.zoom_seconds:g} 秒 · "
-            f"网格 1/{self.document.chart.settings.grid_division} 拍 · "
-            f"横向 {self.document.chart.settings.horizontal_divisions} 等分 · "
             f"延迟 {self.document.chart.settings.audio_latency_ms:g} ms"
         )
+
+    def set_grid_division_custom(self) -> None:
+        """视图菜单「时间网格细分 → 自定义…」：输入一拍细分多少份。"""
+        from tkinter import simpledialog
+
+        settings = self.document.chart.settings
+        value = simpledialog.askinteger(
+            "自定义时间网格",
+            f"一拍细分为多少个音（{config.GRID_DIVISION_MIN} ~ {config.GRID_DIVISION_MAX}）：",
+            initialvalue=settings.grid_division,
+            minvalue=config.GRID_DIVISION_MIN,
+            maxvalue=config.GRID_DIVISION_MAX,
+            parent=self.root,
+        )
+        if value:
+            self.set_grid_division(str(value))
+        else:
+            self.status("已取消自定义时间网格")
+
+    def set_horizontal_divisions_custom(self) -> None:
+        """视图菜单「横向辅助网格 → 自定义…」：输入 0..1 合法区域几等分。"""
+        from tkinter import simpledialog
+
+        settings = self.document.chart.settings
+        value = simpledialog.askinteger(
+            "自定义横向辅助网格",
+            f"0..1 合法区域几等分（0 = 关闭，最大 {config.HORIZONTAL_DIVISION_MAX}）：",
+            initialvalue=settings.horizontal_divisions,
+            minvalue=0,
+            maxvalue=config.HORIZONTAL_DIVISION_MAX,
+            parent=self.root,
+        )
+        if value is None:
+            self.status("已取消自定义横向辅助网格")
+            return
+        self.set_horizontal_divisions(str(value))
 
     def edit_speed_groups(self) -> None:
         changed = run_dialog(
@@ -747,10 +778,6 @@ class EditorApp:
             if settings.horizontal_divisions == 0
             else f"横向辅助网格：0..1 合法区域 {settings.horizontal_divisions} 等分（滑键吸附到网格线）"
         )
-
-    def toggle_horizontal_grid(self) -> None:
-        self.view.show_horizontal_grid = not self.view.show_horizontal_grid
-        self.status("显示横向辅助网格" if self.view.show_horizontal_grid else "隐藏横向辅助网格")
 
     # ------------------------------------------------------------------ 演示
     def set_demo_mode(self, enabled: bool) -> None:

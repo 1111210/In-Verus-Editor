@@ -129,7 +129,6 @@ class ViewState:
         self.chart = chart
         self.layout = layout or Layout()
         self.current_beat = 0.0
-        self.show_horizontal_grid = True
         self.playing = False
 
     # ------------------------------------------------------------------ 绑定

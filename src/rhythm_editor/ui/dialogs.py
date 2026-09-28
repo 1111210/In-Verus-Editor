@@ -386,23 +386,12 @@ class SettingsDialog(BaseDialog):
         self.e_zoom.bind("<Return>", lambda _e: self._apply_zoom_entry())
         self.e_zoom.bind("<FocusOut>", lambda _e: self._apply_zoom_entry())
 
-        grid = ttk.LabelFrame(body, text="网格设置", padding=8)
-        grid.pack(fill="x", pady=(8, 0))
-        self.e_division = labeled_spin(
-            grid, 0, "时间网格：一拍细分为", self.settings.grid_division,
-            config.GRID_DIVISION_MIN, config.GRID_DIVISION_MAX,
-        )
-        ttk.Label(grid, text="个音").grid(row=0, column=2, sticky="w")
-        self.e_horizontal = labeled_spin(
-            grid, 1, "鼠标横向辅助网格：0..1 合法区域", self.settings.horizontal_divisions,
-            0, config.HORIZONTAL_DIVISION_MAX,
-        )
-        ttk.Label(grid, text="等分（0 = 不启用）").grid(row=1, column=2, sticky="w")
         ttk.Label(
-            grid,
-            text="启用横向辅助网格后，滑键会被放置在网格线上（而不是两条网格线中间）。",
+            body,
+            text="网格设置已移到「视图」菜单：时间网格细分 / 横向辅助网格 → 自定义…",
             style="Dim.TLabel",
-        ).grid(row=2, column=0, columnspan=3, sticky="w", pady=(4, 0))
+            wraplength=420,
+        ).pack(anchor="w", pady=(8, 0))
 
         latency = ttk.LabelFrame(body, text="系统音频延迟", padding=8)
         latency.pack(fill="x", pady=(8, 0))
@@ -456,8 +445,6 @@ class SettingsDialog(BaseDialog):
         self._apply_zoom_entry()
         self.result = {
             "zoom_seconds": self.settings.zoom_seconds,
-            "grid_division": parse_int(self.e_division.get(), config.DEFAULT_GRID_DIVISION),
-            "horizontal_divisions": parse_int(self.e_horizontal.get(), 0),
             "audio_latency_ms": parse_float(self.e_latency.get(), 0.0),
         }
         self.destroy()
@@ -903,7 +890,6 @@ Ctrl+A  全选
 M  沿游玩区域中轴线镜像
 E  编辑选中物件（仅单选时可用）
 Delete / Backspace  删除选中物件
-G  显示 / 隐藏横向辅助网格
 
 【文件】
 Ctrl+N  新建谱面
