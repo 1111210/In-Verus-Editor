@@ -19,6 +19,7 @@ from rhythm_editor.model.chart import Chart
 from rhythm_editor.model.document import Document
 from rhythm_editor.model.notes import BoundaryCurve, LaneNote, MouseRegion, MouseSlide
 from rhythm_editor.ui.interactions import ToolController
+from rhythm_editor.ui.geometry import notes_at
 from rhythm_editor.ui.renderer import RenderState, Renderer
 from rhythm_editor.ui.scene import Scene
 from rhythm_editor.ui.theme import DARK
@@ -280,6 +281,56 @@ class EditorSmokeTest(unittest.TestCase):
         pane_bg = self.scene._items["pane6:bg"][0]
         note_item = self.scene._items[f"note:{note_id}"][0]
         self.assertGreater(order.index(note_item), order.index(pane_bg), "物件必须画在区域底色之上")
+
+    def test_note_layer_order_matches_readability_spec(self) -> None:
+        """图层自下而上：多轨长按 → 单轨长按 → 多轨单键 → 单轨单键 → 空域 → 滑键。"""
+        notes = [
+            LaneNote("MH", 1, 4, 0.0, 4.0),          # 多轨长按
+            LaneNote("SH", 2, 2, 0.0, 4.0),          # 单轨长按
+            LaneNote("MT", 1, 3, 2.0),               # 多轨单键
+            LaneNote("ST", 2, 2, 2.0),               # 单轨单键
+            MouseRegion("RG", 0.0, 4.0, BoundaryCurve(0.0, 0.0), BoundaryCurve(1.0, 1.0)),
+            MouseSlide("SL", 2.0, 0.2, 0.8),
+        ]
+        for note in notes:
+            self.chart.add(note)
+        self.view.set_beat(0.0)
+        self.draw()
+        order = list(self.canvas.find_all())
+
+        def index(key: str) -> int:
+            return order.index(self.scene._items[key][0])
+
+        self.assertLess(index("note:MH"), index("note:SH"))
+        self.assertLess(index("note:SH"), index("note:MT"))
+        self.assertLess(index("note:MT"), index("note:ST"))
+        self.assertLess(index("note:ST"), index("region:RG"))
+        self.assertLess(index("region:RG"), index("slide:SL"))
+
+    def test_hit_priority_follows_layer_order(self) -> None:
+        """点击命中的优先顺序与图层一致：滑键 > 空域 > 单轨单键 > 多轨单键 > 单轨长按 > 多轨长按。"""
+        hold_multi = LaneNote("MH", 1, 4, 0.0, 4.0)
+        hold_single = LaneNote("SH", 2, 2, 0.0, 4.0)
+        tap_multi = LaneNote("MT", 1, 3, 2.0)
+        tap_single = LaneNote("ST", 2, 2, 2.0)
+        region = MouseRegion("RG", 0.0, 4.0, BoundaryCurve(0.0, 0.0), BoundaryCurve(1.0, 1.0))
+        slide = MouseSlide("SL", 2.0, 0.2, 0.8)
+        for note in (hold_multi, hold_single, tap_multi, tap_single, region, slide):
+            self.chart.add(note)
+        self.view.set_beat(0.0)
+        # 6K 区域：单轨单键最靠上
+        lane_x = self.view.layout.lane_center(2)
+        lane_hits = notes_at(self.chart, self.view, lane_x, self.y_of_beat(2.0))
+        ids = [note.id for note in lane_hits]
+        self.assertIn("ST", ids[:2])
+        self.assertLess(ids.index("ST"), ids.index("SH"))
+        self.assertLess(ids.index("ST"), ids.index("MH"))
+        # 鼠标平面：滑键最靠上，其次空域
+        mouse_hits = notes_at(
+            self.chart, self.view, self.view.norm_to_x(0.2), self.y_of_beat(2.0)
+        )
+        mouse_ids = [note.id for note in mouse_hits]
+        self.assertEqual(mouse_ids[:2], ["SL", "RG"])
 
     def test_notes_hidden_after_judgment_time(self) -> None:
         """显示规则：判定线越过判定时刻后不再显示（长按 / 区域按结束时刻）。"""

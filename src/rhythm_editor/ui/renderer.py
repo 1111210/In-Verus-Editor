@@ -7,8 +7,12 @@
 * 演示模式（``LAYOUT_OVERLAY``）：只有一个区域，鼠标平面叠加在 6K 的中间四条轨道上。
 
 渲染顺序（自下而上）：
-背景 -> 区域底色 / 轨道 -> 时间网格 -> 合法区域边界 -> 横向辅助网格 -> 物件
+背景 -> 区域底色 / 轨道 -> 时间网格 -> 合法区域边界 -> 横向辅助网格
+-> 物件（多轨长按 -> 单轨长按 -> 多轨单键 -> 单轨单键 -> 空域 -> 滑键）
 -> 判定线 -> 区域标题 -> 预览幽灵 / 橡皮筋 -> HUD
+
+物件的六层顺序刻意“从大到小”摆放：即使谱面故意写成非法重叠，
+小按键也压在长按之上、半透明空域与滑键再压在 6K 物件之上，交叠处依然可读。
 
 时间轴导航由右侧朴素的竖向滚动条负责（不在画布上画总览条）。
 """
@@ -116,7 +120,7 @@ class Renderer:
             self._draw_split_view(chart, view, state, beat_low, beat_high)
         else:
             self._draw_overlay_view(chart, view, state, beat_low, beat_high)
-        scene.set_layer(11)
+        scene.set_layer(13)
         self._draw_hud(chart, view, state)
         scene.end()
 
@@ -169,16 +173,16 @@ class Renderer:
         self._draw_horizontal_grid(chart, view)
         self.scene.set_layer(4)
         self._draw_notes(chart, view, state)
-        self.scene.set_layer(7)
+        self.scene.set_layer(10)
         self._draw_judgment_line(view, state, *layout.pane_6k, "judge", accent=False, label="判定线")
         self._draw_judgment_line(
             view, state, *layout.pane_mouse, "judge-mouse", accent=True, label="鼠标判定线"
         )
         self._draw_pane_titles(view)
         if not state.demo:
-            self.scene.set_layer(8)
+            self.scene.set_layer(11)
             self._draw_pending(chart, view, state)
-            self.scene.set_layer(9)
+            self.scene.set_layer(12)
             self._draw_rubber_band(state)
 
     def _draw_overlay_view(
@@ -198,7 +202,7 @@ class Renderer:
         self._draw_horizontal_grid(chart, view)
         self.scene.set_layer(4)
         self._draw_notes(chart, view, state)
-        self.scene.set_layer(7)
+        self.scene.set_layer(10)
         self._draw_judgment_line(
             view, state, layout.play_left, layout.play_right, "judge", accent=False, label="判定线"
         )
@@ -206,9 +210,9 @@ class Renderer:
             view, state, layout.mouse_left, layout.mouse_right, "judge-mouse", accent=True
         )
         if not state.demo:
-            self.scene.set_layer(8)
+            self.scene.set_layer(11)
             self._draw_pending(chart, view, state)
-            self.scene.set_layer(9)
+            self.scene.set_layer(12)
             self._draw_rubber_band(state)
 
     def _draw_pane_titles(self, view: ViewState) -> None:
@@ -465,16 +469,34 @@ class Renderer:
         self._hit_entries = cache.entries
         self._hit_entries.clear()
         cache.signature = hit_signature(view)
-        # 绘制顺序：停留区域（半透明，最底层）→ 6K 物件 → 滑键（最上层）
+        # 图层顺序（自下而上）：多轨长按 → 单轨长按 → 多轨单键 → 单轨单键 → 空域 → 滑键
+        # 这样即使谱面故意写成非法重叠，小按键也压在长按之上、空域与滑键再压在最上面，交叠处依然可读。
+        def multi_hold(note: Note) -> bool:
+            return isinstance(note, LaneNote) and note.is_hold and note.is_multi
+
+        def single_hold(note: Note) -> bool:
+            return isinstance(note, LaneNote) and note.is_hold and not note.is_multi
+
+        def multi_tap(note: Note) -> bool:
+            return isinstance(note, LaneNote) and not note.is_hold and note.is_multi
+
+        def single_tap(note: Note) -> bool:
+            return isinstance(note, LaneNote) and not note.is_hold and not note.is_multi
+
         layers = (
-            (MouseRegion, 4, lambda n, s: self._draw_region(n, chart, view, s, y_min, y_max, region_samples)),
-            (LaneNote, 5, lambda n, s: self._draw_lane_note(n, chart, view, s, y_min, y_max)),
-            (MouseSlide, 6, lambda n, s: self._draw_slide(n, chart, view, s, y_min, y_max)),
+            (4, multi_hold, lambda n, s: self._draw_lane_note(n, chart, view, s, y_min, y_max)),
+            (5, single_hold, lambda n, s: self._draw_lane_note(n, chart, view, s, y_min, y_max)),
+            (6, multi_tap, lambda n, s: self._draw_lane_note(n, chart, view, s, y_min, y_max)),
+            (7, single_tap, lambda n, s: self._draw_lane_note(n, chart, view, s, y_min, y_max)),
+            (8, lambda n: isinstance(n, MouseRegion),
+                lambda n, s: self._draw_region(n, chart, view, s, y_min, y_max, region_samples)),
+            (9, lambda n: isinstance(n, MouseSlide),
+                lambda n, s: self._draw_slide(n, chart, view, s, y_min, y_max)),
         )
-        for note_type, layer, draw in layers:
+        for layer, matches, draw in layers:
             self.scene.set_layer(layer)
             for note in notes:
-                if not isinstance(note, note_type):
+                if not matches(note):
                     continue
                 if not note_in_time(note, view.current_beat):
                     continue  # 判定时间已过 -> 不再显示

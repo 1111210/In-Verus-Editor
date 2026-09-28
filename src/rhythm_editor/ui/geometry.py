@@ -38,12 +38,23 @@ def hit_signature(view: ViewState) -> tuple:
 
 
 def _depth(note: Note) -> int:
-    """命中优先级（与渲染层一致）：滑键 > 6K 物件 > 空域。"""
+    """命中优先级 = 渲染图层顺序（越大越靠上）：
+
+    滑键 > 空域 > 单轨单键 > 多轨单键 > 单轨长按 > 多轨长按。
+    """
     if isinstance(note, MouseSlide):
-        return 3
+        return 6
+    if isinstance(note, MouseRegion):
+        return 5
     if isinstance(note, LaneNote):
-        return 2
-    return 1
+        if not note.is_hold and not note.is_multi:
+            return 4
+        if not note.is_hold and note.is_multi:
+            return 3
+        if note.is_hold and not note.is_multi:
+            return 2
+        return 1
+    return 0
 
 
 @dataclass
