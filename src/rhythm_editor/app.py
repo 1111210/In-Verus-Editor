@@ -49,6 +49,28 @@ CTRL_MASK = 0x0004
 SHIFT_MASK = 0x0001
 
 
+def should_stop_playback(
+    now_seconds: float,
+    chart_end_seconds: float,
+    music_end_seconds: Optional[float],
+    margin: float = config.PLAY_END_MARGIN_SECONDS,
+) -> bool:
+    """自动停止判据：**音乐与谱面都播完 ``margin`` 秒** 才停。
+
+    * ``music_end_seconds`` 是音乐播完时的播放位置（秒；还没有音乐结束时为 ``None``）；
+      ``None`` 表示音乐永远不会结束 —— 例如没有载入歌曲时的静音时钟，
+      这时不会自动停止，可以一直放着当“节拍器”用。
+    * 谱面结束时刻取最后一个物件的判定时刻（空谱面取第 1 拍）换算成的秒数。
+    * 两者都超出 ``margin`` 秒才真正停下，所以短的那一边不会提前把播放掐掉。
+    """
+    if music_end_seconds is None:
+        return False
+    return (
+        now_seconds > music_end_seconds + margin
+        and now_seconds > chart_end_seconds + margin
+    )
+
+
 class EditorApp:
     def __init__(self, chart_path: Optional[str] = None, demo: bool = False,
                  width: int = 1360, height: int = 860,
@@ -74,6 +96,8 @@ class EditorApp:
         self._pending_frames = 0
         self._closed = False
         self._tick_id: Optional[str] = None
+        # 音乐播完时的播放位置（秒；None = 还没播完 / 没有音乐）
+        self._music_end_seconds: Optional[float] = None
 
         # 画布区容器（右侧放竖向滚动条），画布是它的子控件
         self.body = ttk.Frame(self.root)
@@ -245,12 +269,20 @@ class EditorApp:
         song_ms = self.audio.heard_position_ms()
         beat = timing.song_ms_to_beat(song_ms)
         self.view.current_beat = beat
-        _, high = self.document.chart.beat_bounds()
         backend = getattr(self.audio, "backend", None)
-        ended = backend is not None and not getattr(backend, "is_playing", True)
-        if ended or beat > high + 8.0:
+        if backend is not None and not getattr(backend, "is_playing", True):
+            # 音乐刚播完：记下此刻的播放位置（秒），之后还要再走 margin 秒才考虑停止
+            if self._music_end_seconds is None:
+                self._music_end_seconds = song_ms / 1000.0
+        _, chart_end_beat = self.document.chart.beat_bounds()
+        chart_end_seconds = timing.beat_to_song_ms(chart_end_beat) / 1000.0
+        if should_stop_playback(
+            song_ms / 1000.0, chart_end_seconds, self._music_end_seconds
+        ):
             self.pause()
-            self.status("播放结束")
+            self.status(
+                f"播放结束（音乐与谱面都已播完 {config.PLAY_END_MARGIN_SECONDS:g} 秒）"
+            )
 
     def _sync_ui(self) -> None:
         self.toolbar.sync()
@@ -568,12 +600,19 @@ class EditorApp:
     def play(self) -> None:
         if self.audio.path is None:
             self._load_audio()
+        # 重新开始播放：清掉上一轮的“音乐结束位置”
+        self._music_end_seconds = None
         timing = self.document.chart.timing
         self.audio.latency_ms = self.document.chart.settings.audio_latency_ms
         song_ms = timing.beat_to_song_ms(self.view.current_beat)
         self.audio.play(song_ms)
         reason = audio_silent_reason()
-        note = f"（静音播放：{reason}）" if reason else ""
+        notes = []
+        if self.audio.path is None:
+            notes.append("未载入歌曲：静音时钟推进，不会自动停止")
+        if reason:
+            notes.append(f"静音播放：{reason}")
+        note = f"（{'；'.join(notes)}）" if notes else ""
         self.status(f"从第 {self.view.current_beat:.3f} 拍开始播放{note}")
 
     def pause(self) -> None:
@@ -872,6 +911,11 @@ class EditorApp:
 
 def main(argv: Optional[list] = None) -> int:  # pragma: no cover - GUI 入口
     import argparse
+
+    # IDE / python -m 等入口也强制跑在项目 .venv 里（音频依赖装在那里）
+    from .venv_guard import ensure_project_venv
+
+    ensure_project_venv(argv=argv if argv is not None else sys.argv[1:])
 
     parser = argparse.ArgumentParser(description=f"{config.APP_TITLE} {config.VERSION}")
     parser.add_argument("chart", nargs="?", help="要打开的谱面文件（JSON，.json）")

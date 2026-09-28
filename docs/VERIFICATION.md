@@ -113,7 +113,7 @@ python tools/check_audio.py
 
 | 项目 | 命令 | 结果 |
 | --- | --- | --- |
-| 单元测试（含 Tk 画布冒烟测试与应用级测试） | `python -m unittest discover -s tests -t .` | Ran 235 tests — **OK** |
+| 单元测试（含 Tk 画布冒烟测试与应用级测试） | `python -m unittest discover -s tests -t .` | Ran 237 tests — **OK** |
 | 需求验收清单 | `python tools/acceptance.py` | 14 项全部 `[OK ]`，结论：全部通过 |
 | 音频后端 | `python tools/check_audio.py` | 9 项全部 `[OK ]`（pygame.mixer 真实播放，延迟补偿正确） |
 | 示例谱面生成 | `python run_editor.py --make-demo` | 生成 `charts/demo/demo.json`（6K 32 / 区域 3 / 滑键 6 / 点击按键 4 / 4 个速度组） |
@@ -227,7 +227,7 @@ python tools/check_audio.py
 | `tests/test_editor_smoke.py::test_note_on_grid_stays_on_grid_when_bpm_changes` | 默认流速的物件在 BPM 分段时仍精确压在网格线上 |
 | `tests/test_speed.py`（+5 条） | `scroll_seconds()`：默认流速 = 秒数差、跟随 BPM 段、倍率缩放（0 / 负数）、流速段与 BPM 段边界取并集积分、快速路径与通用路径一致 |
 | `tests/test_timing.py::test_zero_beats_per_bar_disables_bar_lines` | 每小节 0 拍：段内不再划线，但 **BPM 变更处那条小节线一定在**（小节编号继续累计） |
-| `tests/test_launcher.py`（10 条） | 启动器：能找到项目 `.venv`、已在虚拟环境里 / `VERUS_NO_VENV=1` / 已重启过时不重复重启（防死循环）、pygame 探测与音频模块一致；音频诊断：缺依赖 vs **设备打不开**分别报对原因（不再一律写“未安装 pygame”）、提示含解释器路径、`retry_backend()` 可在设备恢复后重新启用 |
+| `tests/test_launcher.py`（12 条） | **虚拟环境强制**：跑在 `.venv` 里时直接放行、`VERUS_ALLOW_ANY_PYTHON=1` 跳过、没有 `.venv` 时给出创建命令并 `SystemExit(2)`（不去改系统 Python）；音频诊断：缺依赖 vs **设备打不开**分别报对原因（不再一律写“未安装 pygame”）、提示含解释器路径、`retry_backend()` 可在设备恢复后重新启用；**播放停止判据**：音乐与谱面都播完 3 秒才停、只满足一边不停、没有音乐永不停 |
 | `python run_editor.py --make-demo`（系统解释器） | 实测：自动切换到 `.venv` 后启动（stderr 打印一行说明），音频后端起效 |
 
 人工确认：`docs/images/editor_overview.png`（分栏 + 分组工具栏）、

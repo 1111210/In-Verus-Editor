@@ -517,6 +517,8 @@ class AudioPlayer:
         self.latency_ms = 0.0
         self._playing = False
         self._paused_at_ms = 0.0
+        # 没有音频文件时用静音时钟推进（pygame.music 没有载入文件时不会走时间）
+        self._silent_clock = SilentBackend()
         self._plain_backend = self._create_plain_backend()
         self._stretch_backend = None
         self.backend = self._plain_backend
@@ -564,6 +566,11 @@ class AudioPlayer:
     def status_text(self) -> str:
         if self.path is None:
             if not self.usable_audio:
+                if audio_backend_state() == "ok":
+                    return (
+                        f"音频后端：{audio_backend_name()}"
+                        f"（未载入歌曲，播放为静音时钟）· {_fmt_rate(self.rate)}"
+                    )
                 return f"音频后端：silent（{_silent_reason()}，静音）· {_fmt_rate(self.rate)}"
             return f"音频后端：{self.backend.name}（未载入歌曲）· {_fmt_rate(self.rate)}"
         base = os.path.basename(self.path)
@@ -578,6 +585,9 @@ class AudioPlayer:
         self.path = None
         self.backend = self._select_backend()
         if not path or not os.path.isfile(path):
+            # 未载入歌曲：用静音时钟，播放时判定线照常前进（不会一点播放就立刻“结束”）
+            self.backend = self._silent_clock
+            self.backend.set_rate(self.rate)
             return False
         try:
             ok = self.backend.load(path)

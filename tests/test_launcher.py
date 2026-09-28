@@ -6,6 +6,7 @@ import importlib.util
 import os
 import sys
 import unittest
+from unittest import mock
 
 ROOT = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
 sys.path.insert(0, os.path.join(ROOT, "src"))
@@ -44,37 +45,67 @@ class LauncherTests(unittest.TestCase):
     def test_venv_python_missing_returns_empty(self) -> None:
         self.assertEqual(self.launcher._venv_python(os.path.join(ROOT, "no-such-dir")), "")
 
-    def test_no_restart_when_disabled_or_already_restarted(self) -> None:
-        """VERUS_NO_VENV / 已经在虚拟环境里时不再重启，避免死循环。"""
-        os.environ["VERUS_NO_VENV"] = "1"
-        try:
-            self.assertFalse(self.launcher._restart_with_venv(ROOT))
-        finally:
-            del os.environ["VERUS_NO_VENV"]
-        os.environ["VERUS_VENV_REEXEC"] = "1"
-        try:
-            self.assertFalse(self.launcher._restart_with_venv(ROOT))
-        finally:
-            del os.environ["VERUS_VENV_REEXEC"]
+    def test_running_in_venv_is_detected(self) -> None:
+        """测试本身跑在 .venv 里：venv_guard 必须认为「已经在虚拟环境中」。"""
+        from rhythm_editor.venv_guard import (
+            ensure_project_venv,
+            running_in_project_venv,
+        )
 
-    def test_current_venv_run_is_not_restarted(self) -> None:
-        """已经在 .venv 里运行时（本测试就是）不应再次重启。"""
-        interpreter = self.launcher._venv_python(ROOT)
-        if not interpreter:
+        if not self.launcher._venv_python(ROOT):
             self.skipTest("本机没有 .venv，跳过")
-        try:
-            same = os.path.samefile(interpreter, sys.executable)
-        except OSError:
-            self.skipTest("无法比较解释器路径")
-        if not same:
+        if not running_in_project_venv(ROOT):
             self.skipTest("当前测试不是用 .venv 解释器运行的")
-        self.assertFalse(self.launcher._restart_with_venv(ROOT))
+        # 已经在虚拟环境里：直接返回，不重启、不抛异常
+        self.assertIsNone(ensure_project_venv(argv=[]))
+
+    def test_allow_any_python_skips_guard(self) -> None:
+        """VERUS_ALLOW_ANY_PYTHON=1 时不做任何切换（方便在别的解释器里调试）。"""
+        from rhythm_editor.venv_guard import ENV_ALLOW_ANY, ensure_project_venv
+
+        os.environ[ENV_ALLOW_ANY] = "1"
+        try:
+            self.assertIsNone(ensure_project_venv(argv=[]))
+        finally:
+            del os.environ[ENV_ALLOW_ANY]
+
+    def test_missing_venv_gives_install_hint(self) -> None:
+        """没有 .venv 时：不装依赖、不报缺 pygame，而是给出创建命令并退出。"""
+        from rhythm_editor import venv_guard
+
+        with mock.patch.object(venv_guard, "project_root", lambda: os.path.join(ROOT, "no-such-dir")):
+            os.environ.pop(venv_guard.ENV_ALLOW_ANY, None)
+            with self.assertRaises(SystemExit) as ctx:
+                venv_guard.ensure_project_venv(argv=[])
+            self.assertEqual(ctx.exception.code, 2)
+        hint = venv_guard.venv_install_hint(ROOT)
+        self.assertIn(".venv", hint)
+        self.assertIn("requirements.txt", hint)
 
     def test_pygame_probe_matches_audio_module(self) -> None:
         self.assertEqual(self.launcher._has_pygame(), _PYGAME is not None)
 
 
 class AudioHintTests(unittest.TestCase):
+
+    def test_stop_rule_needs_both_music_and_chart_ended(self) -> None:
+        """音乐与谱面都播完 3 秒才停；只满足一边不停，没有音乐永远不停。"""
+        from rhythm_editor import config
+        from rhythm_editor.app import should_stop_playback
+
+        margin = config.PLAY_END_MARGIN_SECONDS
+        self.assertEqual(margin, 3.0)
+        # 音乐还没播完 -> 不停
+        self.assertFalse(should_stop_playback(100.0, 10.0, None))
+        # 只有音乐播完 3 秒、谱面还没播完 -> 不停
+        self.assertFalse(should_stop_playback(20.0, 30.0, 10.0))
+        # 只有谱面播完 3 秒、音乐还没播完 -> 不停
+        self.assertFalse(should_stop_playback(20.0, 10.0, 30.0))
+        # 两边都过了 3 秒 -> 停
+        self.assertTrue(should_stop_playback(40.0, 10.0, 20.0))
+        # 恰好等于边界时不提前停
+        self.assertFalse(should_stop_playback(13.0, 0.0, 10.0))
+        self.assertTrue(should_stop_playback(13.01, 0.0, 10.0))
     def test_backend_name_and_hint_are_consistent(self) -> None:
         name = audio_backend_name()
         hint = audio_setup_hint()

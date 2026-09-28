@@ -121,3 +121,6 @@ CLICK_DIAMOND_RADIUS_PX = 9.0
 
 # 数值容差
 EPS = 1e-7
+
+# 播放自动停止的余量（秒）：音乐与谱面都播完这么久之后才停
+PLAY_END_MARGIN_SECONDS = 3.0

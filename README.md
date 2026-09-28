@@ -151,14 +151,17 @@ tools/                   截图与验收辅助脚本
 
 ### 状态栏显示「未安装 pygame / silent」怎么办
 
-说明**启动编辑器用的解释器和 `.venv` 不是同一个** —— 依赖只装在了 `.venv` 里。
-按顺序试：
+编辑器**只在项目 `.venv` 里运行**：`run_editor.py`（以及 `python -m rhythm_editor.app`）
+发现当前解释器不是 `.venv` 时会**自动改用 `.venv` 重新启动**（无论它有没有 pygame），
+所以正常不会出现这个提示。补救手段：
 
-1. 双击 `run_editor.bat`，或 `python run_editor.py …`：启动脚本发现当前解释器没有
-   pygame 时，会**自动改用项目里的 `.venv` 重新启动**（想关掉这个行为就设
-   `VERUS_NO_VENV=1`）。
+1. 双击 `run_editor.bat`，或 `python run_editor.py …`（会自动切到 `.venv`）。
 2. 用 IDE（VS Code / PyCharm）运行时，把解释器选成 `.venv\Scripts\python.exe`。
-3. 坚持用系统 Python：`python -m pip install -r requirements.txt`。
+3. 没有 `.venv` 时它会打印创建命令（`python -m venv .venv` +
+   `.\.venv\Scripts\python.exe -m pip install -r requirements.txt`），照着做即可；
+   **不需要**给系统 Python 装依赖。
+4. 坚持用别的解释器调试：设 `VERUS_ALLOW_ANY_PYTHON=1` 跳过检查
+   （这时音频可能退化为静音）。
 
 自检命令：`.\.venv\Scripts\python.exe -c "import pygame; print(pygame.version.ver)"`
 （有输出 = 这个解释器能发声）。
