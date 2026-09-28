@@ -148,3 +148,17 @@ tools/                   截图与验收辅助脚本
 
 若当前 Python 版本暂时没有 pygame 轮子，编辑器会自动退化为静音时钟后端，
 状态栏会明确提示；滚动、缩放、播放进度、编辑功能全部照常工作。
+
+### 状态栏显示「未安装 pygame / silent」怎么办
+
+说明**启动编辑器用的解释器和 `.venv` 不是同一个** —— 依赖只装在了 `.venv` 里。
+按顺序试：
+
+1. 双击 `run_editor.bat`，或 `python run_editor.py …`：启动脚本发现当前解释器没有
+   pygame 时，会**自动改用项目里的 `.venv` 重新启动**（想关掉这个行为就设
+   `VERUS_NO_VENV=1`）。
+2. 用 IDE（VS Code / PyCharm）运行时，把解释器选成 `.venv\Scripts\python.exe`。
+3. 坚持用系统 Python：`python -m pip install -r requirements.txt`。
+
+自检命令：`.\.venv\Scripts\python.exe -c "import pygame; print(pygame.version.ver)"`
+（有输出 = 这个解释器能发声）。

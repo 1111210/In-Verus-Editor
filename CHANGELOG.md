@@ -2,6 +2,19 @@
 
 ## 0.3.1 — 鼠标点击按键与鼠标平面的摆放规则
 
+### 修复：状态栏提示「未安装 pygame / silent」
+
+* 根因：编辑器被**另一个解释器**启动了（例如系统 `C:\Python314\python.exe`），
+  而 `pygame-ce` 只装在项目 `.venv` 里，于是自动退化成静音时钟后端。
+* `run_editor.py` 现在会在当前解释器没有 pygame、且项目里存在 `.venv` 时
+  **自动改用 `.venv` 的解释器重新启动自己**（`VERUS_NO_VENV=1` 可关闭，
+  已重启过则不会循环）；`run_editor.bat` 本来就优先用 `.venv`。
+* 缺依赖时的提示改为可照做的一条信息：`audio_setup_hint()` 会带上
+  **当前解释器路径**与两种修法（run_editor.bat / pip install -r requirements.txt），
+  启动状态栏与右侧状态条都会明确写“未安装 pygame，静音”。
+* 新增本地 `.vscode/settings.json`（已被 gitignore）把 VS Code 解释器指向 `.venv`。
+* 新增 `tests/test_launcher.py`（7 条）覆盖启动器与提示文案。
+
 ### 小节设定（BPM 列表）
 
 * **纵向映射改为按“秒”线性**（`ViewState`：`px_per_second = 判定线以上像素 / zoom_seconds` 为常数）：

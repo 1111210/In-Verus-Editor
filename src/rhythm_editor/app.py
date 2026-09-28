@@ -8,7 +8,7 @@ from tkinter import filedialog, messagebox, ttk
 from typing import Dict, Optional, Tuple
 
 from . import config
-from .audio import AudioPlayer, audio_backend_available, audio_backend_name
+from .audio import AudioPlayer, audio_backend_available, audio_backend_name, audio_setup_hint
 from .io.chart_io import (
     chart_audio_path,
     copy_audio_into_chart_dir,
@@ -79,10 +79,12 @@ class EditorApp:
         self._build_layout()
         self._bind_events()
         self.status(f"欢迎使用 {config.APP_SUBTITLE}")
-        self.status(
-            f"音频后端：{audio_backend_name()}"
-            + ("" if audio_backend_available() else "（未检测到 pygame，播放为静音时钟，编辑不受影响）")
-        )
+        hint = audio_setup_hint()
+        if hint:
+            # 明确告诉用户是哪个解释器缺依赖、怎么修（启动器一般已经自动切到 .venv）
+            self.status(f"音频后端：{audio_backend_name()} · {hint}")
+        else:
+            self.status(f"音频后端：{audio_backend_name()}")
 
         if chart_path:
             self.load_chart_file(chart_path)

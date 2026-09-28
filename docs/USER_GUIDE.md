@@ -153,7 +153,14 @@ python run_editor.py charts/demo/demo.json --fullscreen  # 无边框全屏
 
 **Q：为什么没有声音？**
 没有安装 `pygame-ce`，或谱面没有关联音频。状态栏右侧会显示当前音频后端与文件名。
-执行 `pip install pygame-ce` 后重启编辑器即可。
+底部状态栏的提示会告诉你是**哪个解释器**缺依赖；按顺序试：
+
+1. 用 `run_editor.bat`（或 `python run_editor.py …`）启动 —— 发现当前解释器没有 pygame
+   时会自动改用项目里的 `.venv`；
+2. 在 IDE 里把解释器切换成 `.venv\Scripts\python.exe`；
+3. 或者给当前解释器装依赖：`python -m pip install -r requirements.txt`。
+
+装好后重启编辑器，状态栏右侧会从 `silent` 变成 `pygame.mixer`。
 
 **Q：改 BPM 之后时间轴会怎么变？**
 纵向是按**秒**画比例的（判定线以上固定显示「缩放」设定的秒数），所以

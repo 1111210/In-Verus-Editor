@@ -19,6 +19,7 @@
 from __future__ import annotations
 
 import os
+import sys
 import time
 from typing import List, Optional, Tuple
 
@@ -62,6 +63,18 @@ def audio_backend_name() -> str:
     if STRETCH_AVAILABLE:
         return "pygame.mixer + OLA"
     return "pygame.mixer"
+
+
+def audio_setup_hint() -> str:
+    """没有 pygame 时给用户一条能照着做的提示（正常情况返回空串）。"""
+    if _PYGAME is not None:
+        return ""
+    detail = f"（{_PYGAME_ERROR}）" if _PYGAME_ERROR else ""
+    return (
+        f"未检测到 pygame{detail}：用 run_editor.bat 启动（会自动使用项目里的 .venv），"
+        f"或执行 pip install -r requirements.txt；"
+        f"当前解释器：{sys.executable}"
+    )
 
 
 def audio_backend_available() -> bool:
@@ -481,10 +494,14 @@ class AudioPlayer:
     @property
     def status_text(self) -> str:
         if self.path is None:
+            if not self.usable_audio:
+                return f"音频后端：silent（未安装 pygame，静音）· {_fmt_rate(self.rate)}"
             return f"音频后端：{self.backend.name}（未载入歌曲）· {_fmt_rate(self.rate)}"
         base = os.path.basename(self.path)
         if not self.usable_audio:
-            return f"音频后端：silent（无 pygame，静音播放）· {base} · {_fmt_rate(self.rate)}"
+            return (
+                f"音频后端：silent（未安装 pygame，静音播放）· {base} · {_fmt_rate(self.rate)}"
+            )
         tone = "· 不变调" if self.stretch_active else ""
         return f"音频后端：{self.backend.name} · {base} · {_fmt_rate(self.rate)}{tone}"
 
