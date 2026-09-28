@@ -66,7 +66,10 @@ class EditorApp:
         self._closed = False
         self._tick_id: Optional[str] = None
 
-        self.scene = Scene(tk.Canvas(self.root, background=self.theme.play_bg, highlightthickness=0))
+        # 画布区容器（右侧放竖向滚动条），画布是它的子控件
+        self.body = ttk.Frame(self.root)
+        self.canvas = tk.Canvas(self.body, background=self.theme.play_bg, highlightthickness=0)
+        self.scene = Scene(self.canvas)
         self.renderer = Renderer(self.scene, self.theme)
         self.controller = ToolController(
             self.document, self.view, self.render_state, self._region_editor, self.status
@@ -89,15 +92,18 @@ class EditorApp:
         elif self.maximized:
             self.maximize_window()
         self._sync_ui()
-        self._tick_id = self.root.after(16, self._tick)
+        self._schedule_next_tick()
         self.root.bind("<Destroy>", self._on_destroy)
 
     # ------------------------------------------------------------------ 布局
     def _build_layout(self) -> None:
         self.toolbar = Toolbar(self.root, self, self.theme)
         self.toolbar.pack(side="top", fill="x")
-        self.canvas = self.scene.canvas
-        self.canvas.pack(side="top", fill="both", expand=True)
+        # 画布区：右侧是一条朴素的竖向滚动条（替代原来的底部总览条）
+        self.vscroll = ttk.Scrollbar(self.body, orient="vertical", command=self._on_scroll)
+        self.vscroll.pack(side="right", fill="y")
+        self.canvas.pack(side="left", fill="both", expand=True)
+        self._scroll_key: Optional[Tuple[float, float]] = None
         bar = ttk.Frame(self.root, padding=(8, 4))
         bar.pack(side="bottom", fill="x")
         self.status_var = tk.StringVar(value="")
@@ -105,6 +111,8 @@ class EditorApp:
         ttk.Label(bar, textvariable=self.status_var).pack(side="left")
         ttk.Label(bar, textvariable=self.info_var, style="Dim.TLabel").pack(side="right")
         self.status_bar = bar
+        # 打包顺序：工具栏(上) → 状态栏(下) → 画布区(占满中间)
+        self.body.pack(side="top", fill="both", expand=True)
 
     def _bind_events(self) -> None:
         root = self.root
@@ -177,7 +185,7 @@ class EditorApp:
         self._advance_playback()
         # 二级菜单展开时暂停画布重绘：否则画布每帧重画会把弹出的菜单"闪"掉
         if self.toolbar.is_menu_posted():
-            self._tick_id = self.root.after(16, self._tick)
+            self._schedule_next_tick()
             return
         state = self.render_state
         state.selection = set(self.document.selection)
@@ -186,6 +194,17 @@ class EditorApp:
         state.pending = self.controller.state.pending
         self.renderer.draw(self.document.chart, self.view, state)
         self._sync_ui()
+        self._schedule_next_tick()
+
+    def _schedule_next_tick(self) -> None:
+        """重新安排下一帧（保证同一时刻只有一个待执行回调，退出时不会残留）。"""
+        if self._closed:
+            return
+        if self._tick_id is not None:
+            try:
+                self.root.after_cancel(self._tick_id)
+            except (tk.TclError, ValueError):  # pragma: no cover
+                pass
         self._tick_id = self.root.after(16, self._tick)
 
     def _on_destroy(self, event=None) -> None:
@@ -228,6 +247,7 @@ class EditorApp:
         if info != self._last_info:
             self.info_var.set(info)
             self._last_info = info
+        self._sync_scrollbar()
         # 窗口标题每帧重设会让 Windows 反复重画非客户区（全屏时会让菜单抖动）
         title = f"{self.document.title} — {config.APP_TITLE}"
         if title != self._last_title:
@@ -242,7 +262,11 @@ class EditorApp:
 
     def _hover_status(self, x: float, y: float) -> None:
         if y >= self.view.layout.play_bottom:
-            self.status("总览条：点击可跳转到对应时间")
+            beat = self.view.y_to_beat(y)
+            self.status(
+                f"画布下方空白（用右侧滚动条移动时间轴）· 第 {beat:.3f} 拍 · "
+                f"{self.view.time_label(beat)}"
+            )
             return
         layout = self.view.layout
         beat = self.view.y_to_beat(y)
@@ -258,6 +282,31 @@ class EditorApp:
     # ------------------------------------------------------------------ 事件
     def _on_configure(self, event) -> None:
         self.view.resize(event.width, event.height)
+
+    # ------------------------------------------------------------ 竖向滚动条
+    def _on_scroll(self, *args) -> None:
+        """ttk 滚动条回调：拖动滑块 / 点箭头 / 翻页。"""
+        if not args:
+            return
+        if args[0] == "moveto":
+            self.view.set_from_fraction(float(args[1]))
+            self.status(f"时间轴：第 {self.view.current_beat:.3f} 拍")
+        elif args[0] == "scroll":
+            number = int(args[1])
+            what = args[2] if len(args) > 2 else "units"
+            if what == "pages":
+                self.view.scroll_beats(number * self.view.visible_beats() * 0.9)
+            else:
+                self.view.scroll_beats(number * self.view.grid_step())
+        self._sync_scrollbar(force=True)
+
+    def _sync_scrollbar(self, force: bool = False) -> None:
+        """把当前可视时间窗口映射到滚动条滑块上。"""
+        first, last = self.view.scroll_fractions()
+        key = (round(first, 4), round(last, 4))
+        if force or key != self._scroll_key:
+            self.vscroll.set(first, last)
+            self._scroll_key = key
 
     def _on_press(self, event) -> None:
         self.canvas.focus_set()
@@ -696,8 +745,8 @@ class EditorApp:
         else:
             self.toolbar.pack(side="top", fill="x")
             self.status_bar.pack(side="bottom", fill="x")
-            self.canvas.pack_forget()
-            self.canvas.pack(side="top", fill="both", expand=True)
+            self.body.pack_forget()
+            self.body.pack(side="top", fill="both", expand=True)
             self.render_state.message = ""
         self.status("进入演示模式" if enabled else "退出演示模式")
 

@@ -113,7 +113,7 @@ python tools/check_audio.py
 
 | 项目 | 命令 | 结果 |
 | --- | --- | --- |
-| 单元测试（含 Tk 画布冒烟测试与应用级测试） | `python -m unittest discover -s tests -t .` | Ran 115 tests — **OK** |
+| 单元测试（含 Tk 画布冒烟测试与应用级测试） | `python -m unittest discover -s tests -t .` | Ran 117 tests — **OK** |
 | 需求验收清单 | `python tools/acceptance.py` | 13 项全部 `[OK ]`，结论：全部通过 |
 | 音频后端 | `python tools/check_audio.py` | 9 项全部 `[OK ]`（pygame.mixer 真实播放，延迟补偿正确） |
 | 示例谱面生成 | `python run_editor.py --make-demo` | 生成 `charts/demo/demo.ivchart`（6K 32 / 区域 3 / 滑键 6 / 4 个速度组） |
@@ -122,6 +122,23 @@ python tools/check_audio.py
 | 菜单频闪 | `python tools/check_menu_flicker.py` | 4 项全部 `[OK ]`（展开期间帧数冻结、菜单项零改写、关闭后恢复） |
 
 截图与测试均在真实 Tk 画布上执行，因此“渲染 → 交互 → 数据”整条链路都有证据。
+
+### 7.0 渲染性能基准（`tools/bench_render.py`）
+
+移除底部总览条前后的实测对比（同一台机器，静态帧、无输入）：
+
+| 物件数 | 修复前 整帧渲染 | 修复后 整帧渲染 | 画布图元（前 → 后） |
+| --- | --- | --- | --- |
+| 1000 | 92 ms | 3.3 ms | 1152 → 147 |
+| 3000 | 738 ms | 8.7 ms | 3152 → 149 |
+| 6000 | 4146 ms | 27 ms 级 | 6152 → 149 |
+
+根因：总览条每帧给**每个物件**画一根刻度，且每根刻度都重新调用一次
+`chart.beat_bounds()`（本身 O(n)），整帧因此是 O(n²)。现在时间导航由右侧 ttk 竖向
+滚动条负责，画布只保留可见物件。
+
+修复后各环节的实测开销（20000 物件）：排序 2.3 ms、整帧渲染 53 ms、命中测试 149 ms、
+`beat_bounds` 2.5 ms、撤销快照 65 ms —— 后续优化方向见 `docs/ROADMAP.md`。
 
 ### 7.1 关于“流速可正可负”的专项验证
 
@@ -165,6 +182,9 @@ python tools/check_audio.py
 | `tests/test_app_flow.py::test_edit_note_button_is_in_toolbar_not_menu` | 「编辑物件」在顶栏「编辑」右侧、不在二级菜单里，且仅单选时可用 |
 | `tests/test_app_flow.py::test_toolbar_scrolls_horizontally_when_narrow` | 窄窗口自动出现横向滚动条，宽窗口自动隐藏 |
 | `tests/test_app_flow.py::test_menu_protection_has_no_hold_time` | 菜单保护没有等待时间，交互后立即恢复重绘 |
+| `tests/test_editor_smoke.py::test_no_ruler_items_on_canvas` | 总览条已移除（画布上不再有 ruler:* 图元） |
+| `tests/test_editor_smoke.py::test_scrollbar_fractions_track_view` | 竖向滚动条滑块比例跟随可视窗口，拖动可跳转时间 |
+| `tests/test_app_flow.py::test_vertical_scrollbar_drives_timeline` | 应用级：拖动 / 翻页 / 步进滚动条都会移动判定线且吸附网格 |
 | `tests/test_app_flow.py::test_fullscreen_toggle` | 全屏开关切换 |
 | `tests/test_app_flow.py::test_maximized_by_default` | 默认最大化（`-fullscreen` 属性为 0），不是无边框全屏 |
 | `tests/test_app_flow.py::test_toggle_maximize_and_fullscreen` | 最大化 / 还原 / 全屏互斥切换 |

@@ -196,16 +196,3 @@ def notes_in_box(
         found.append(note)
     return found
 
-
-# ------------------------------------------------------------------ 总览条
-def ruler_to_x(chart: Chart, width: float, beat: float, pad: float = 8.0) -> float:
-    low, high = chart.beat_bounds()
-    span = max(1e-3, high - low)
-    return pad + (float(beat) - low) / span * (width - 2 * pad)
-
-
-def ruler_x_to_beat(chart: Chart, width: float, x: float, pad: float = 8.0) -> float:
-    low, high = chart.beat_bounds()
-    span = max(1e-3, high - low)
-    usable = max(1.0, width - 2 * pad)
-    return low + (float(x) - pad) / usable * span

@@ -17,7 +17,7 @@ from ..model.notes import (
     MouseSlide,
     Note,
 )
-from .geometry import notes_at, notes_in_box, ruler_x_to_beat
+from .geometry import notes_at, notes_in_box
 from .renderer import PendingPreview, RenderState
 from .view import ViewState
 
@@ -108,8 +108,6 @@ class ToolController:
             )
             if hold_pending and not self.paste_mode:
                 self._place_lane_hold(x, y)
-            else:
-                self._jump_via_ruler(x)
             return
         if self.paste_mode:
             self._do_paste(x, y)
@@ -548,11 +546,6 @@ class ToolController:
             pending.hint = ""
 
     # ------------------------------------------------------------------ 其它
-    def _jump_via_ruler(self, x: float) -> None:
-        beat = ruler_x_to_beat(self.view.chart, self.view.layout.width, x)
-        self.view.set_beat(beat)
-        self.status(f"跳转到第 {self.view.current_beat:g} 拍")
-
     def selection_summary(self) -> str:
         count = len(self.document.selection)
         if count == 0:

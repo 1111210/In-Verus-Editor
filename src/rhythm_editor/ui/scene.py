@@ -26,6 +26,9 @@ class Scene:
         self._current_layer = 0
         self._layers: set[int] = set()
         self._z_dirty = False
+        # 统计信息（性能诊断用）：本帧/累计的建对象、移动、改样式、删对象次数
+        self.stats: Dict[str, int] = {"created": 0, "moved": 0, "configured": 0, "deleted": 0}
+        self.frame_stats: Dict[str, int] = {"created": 0, "moved": 0, "configured": 0, "deleted": 0}
 
     def set_layer(self, layer: int) -> None:
         self._current_layer = int(layer)
@@ -63,12 +66,15 @@ class Scene:
     # ------------------------------------------------------------------ 帧控制
     def begin(self) -> None:
         self._used.clear()
+        self.frame_stats = {"created": 0, "moved": 0, "configured": 0, "deleted": 0}
 
     def end(self) -> None:
         stale = [key for key in self._items if key not in self._used]
         for key in stale:
             item_id, _, _ = self._items.pop(key)
             self.canvas.delete(item_id)
+            self.stats["deleted"] += 1
+            self.frame_stats["deleted"] += 1
         if self._z_dirty:
             self._fix_z_order()
         self._frames += 1
@@ -99,14 +105,20 @@ class Scene:
                 self.canvas.delete(entry[0])
             item_id = self._create(kind, coords, options)
             self._z_dirty = True
+            self.stats["created"] += 1
+            self.frame_stats["created"] += 1
             self._items[key] = (item_id, kind, spec)
             return
         item_id, _, old_spec = entry
         if old_spec == spec:
             return
         self.canvas.coords(item_id, *[round(float(c), 2) for c in coords])
+        self.stats["moved"] += 1
+        self.frame_stats["moved"] += 1
         try:
             self.canvas.itemconfigure(item_id, **self._safe(options))
+            self.stats["configured"] += 1
+            self.frame_stats["configured"] += 1
         except tk.TclError as exc:  # pragma: no cover - 依赖平台
             try:
                 self.canvas.itemconfigure(item_id, **self._drop_optional(options, exc))

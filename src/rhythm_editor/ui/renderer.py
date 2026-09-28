@@ -8,7 +8,9 @@
 
 渲染顺序（自下而上）：
 背景 -> 区域底色 / 轨道 -> 时间网格 -> 合法区域边界 -> 横向辅助网格 -> 物件
--> 判定线 -> 区域标题 -> 预览幽灵 / 橡皮筋 -> 底部总览条 -> HUD
+-> 判定线 -> 区域标题 -> 预览幽灵 / 橡皮筋 -> HUD
+
+时间轴导航由右侧朴素的竖向滚动条负责（不在画布上画总览条）。
 """
 
 from __future__ import annotations
@@ -29,7 +31,7 @@ from ..model.notes import (
     Note,
 )
 from ..model.speed import SpeedGroup
-from .geometry import SLIDE_MIN_PX, TAP_MIN_PX, note_in_time, ruler_to_x, sample_beats
+from .geometry import SLIDE_MIN_PX, TAP_MIN_PX, note_in_time, sample_beats
 from .scene import Scene
 from .theme import Theme
 from .view import ViewState
@@ -75,7 +77,6 @@ class RenderState:
     demo: bool = False
     playing: bool = False
     message: str = ""
-    show_ruler: bool = True
 
 
 class Renderer:
@@ -104,9 +105,6 @@ class Renderer:
             self._draw_split_view(chart, view, state, beat_low, beat_high)
         else:
             self._draw_overlay_view(chart, view, state, beat_low, beat_high)
-        if state.show_ruler:
-            scene.set_layer(10)
-            self._draw_ruler(chart, view, state)
         scene.set_layer(11)
         self._draw_hud(chart, view, state)
         scene.end()
@@ -870,44 +868,6 @@ class Renderer:
             width=1,
             stipple=self.theme.stipple_soft,
         )
-
-    # ------------------------------------------------------------------ 总览条
-    def _draw_ruler(self, chart: Chart, view: ViewState, state: RenderState) -> None:
-        theme = self.theme
-        layout = view.layout
-        y0 = layout.play_bottom + 6
-        y1 = layout.height - 4
-        if y1 - y0 < 6:
-            return
-        low, high = chart.beat_bounds()
-        pad = 8.0
-        usable = max(10.0, layout.width - 2 * pad)
-
-        def to_x(beat: float) -> float:
-            return ruler_to_x(chart, layout.width, beat, pad)
-
-        self.scene.rect("ruler", pad, y0, pad + usable, y1, fill=theme.panel_alt, outline=theme.lane_border)
-        for note in chart.all_notes():
-            x = to_x(note.head_beat)
-            color = theme.note_white if isinstance(note, LaneNote) else (
-                theme.region_edge if isinstance(note, MouseRegion) else theme.slide_edge
-            )
-            self.scene.line(f"ruler-note:{note.id}", x, y0 + 1, x, y1 - 1, fill=color, width=1)
-        low_view, high_view = view.beat_range()
-        vx0 = to_x(max(low, low_view))
-        vx1 = to_x(min(high, high_view))
-        self.scene.rect(
-            "ruler-view",
-            vx0,
-            y0,
-            max(vx0 + 2, vx1),
-            y1,
-            fill="",
-            outline=theme.accent,
-            width=2,
-        )
-        cx = to_x(min(max(view.current_beat, low), high))
-        self.scene.line("ruler-play", cx, y0, cx, y1, fill=theme.judge_line, width=2)
 
     # ------------------------------------------------------------------ HUD
     def _draw_hud(self, chart: Chart, view: ViewState, state: RenderState) -> None:

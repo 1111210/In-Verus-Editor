@@ -91,7 +91,7 @@ class EditorSmokeTest(unittest.TestCase):
         self.view.set_chart(demo)
         self.view.set_beat(10.0)
         self.draw(demo)
-        for key in ("bg", "lane:0", "lane:5", "judge", "mouse:legal", "ruler", "judge-label"):
+        for key in ("bg", "lane:0", "lane:5", "judge", "mouse:legal", "judge-label"):
             self.assertIn(key, self.scene._items, f"缺少画布元素 {key}")
         note_items = [k for k in self.scene._items if k.startswith(("note:", "region:", "slide:"))]
         self.assertGreater(len(note_items), 3)
@@ -572,10 +572,27 @@ class EditorSmokeTest(unittest.TestCase):
         # 缩放后判定线仍在同一位置（只有时间尺度变化）
         self.assertAlmostEqual(self.view.beat_to_y(self.view.current_beat), self.view.layout.judgment_y, places=6)
 
-    def test_ruler_click_jumps(self) -> None:
-        self.controller.on_motion(WIDTH / 2, HEIGHT - 10)
-        self.controller.on_press(WIDTH / 2, HEIGHT - 10, False, False)
+    def test_no_ruler_items_on_canvas(self) -> None:
+        """总览条已移除：画布上不再有 ruler:* 图元（时间导航交给右侧滚动条）。"""
+        self.draw()
+        self.assertFalse([k for k in self.scene._items if k.startswith("ruler")])
+
+    def test_scrollbar_fractions_track_view(self) -> None:
+        """竖向滚动条：滑块位置跟随可视时间窗口，拖动可跳转时间。"""
+        self.chart.settings.grid_division = 4
+        self.view.set_beat(0.0)
+        first, last = self.view.scroll_fractions()
+        self.assertGreaterEqual(first, 0.0)
+        self.assertLess(first, last)
+        self.assertLessEqual(last, 1.0)
+        # 往后拖：判定线前进
+        self.view.set_from_fraction(0.5)
         self.assertGreater(self.view.current_beat, 0.0)
+        later_first, _ = self.view.scroll_fractions()
+        self.assertGreater(later_first, first)
+        # 回到开头
+        self.view.set_from_fraction(0.0)
+        self.assertLess(self.view.current_beat, 1.0)
 
     def test_note_geometry_reflects_speed_group(self) -> None:
         from rhythm_editor.model.speed import SpeedSegment

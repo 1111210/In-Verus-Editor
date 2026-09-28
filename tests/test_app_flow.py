@@ -270,6 +270,28 @@ class AppFlowTest(unittest.TestCase):
         self.app.toggle_fullscreen()
         self.assertEqual(self.app.fullscreen, before)
 
+    def test_vertical_scrollbar_drives_timeline(self) -> None:
+        """右侧竖向滚动条：拖动/翻页/步进都能移动时间轴，滑块位置跟随。"""
+        app = self.app
+        self.assertEqual(app.vscroll.winfo_manager(), "pack")
+        self.assertEqual(str(app.vscroll.pack_info()["side"]), "right")
+        app.jump(0.0)
+        app._sync_scrollbar(force=True)
+        first_before = float(app.vscroll.get()[0])
+        app._on_scroll("moveto", "0.6")
+        self.assertGreater(app.view.current_beat, 0.0)
+        self.assertGreater(float(app.vscroll.get()[0]), first_before)
+        # 翻页 + 步进
+        page_from = app.view.current_beat
+        app._on_scroll("scroll", "1", "pages")
+        self.assertGreater(app.view.current_beat, page_from)
+        unit_from = app.view.current_beat
+        app._on_scroll("scroll", "-1", "units")
+        self.assertAlmostEqual(app.view.current_beat, unit_from - app.view.grid_step(), places=6)
+        # 判定线仍然吸附在网格上
+        steps = app.view.current_beat * app.document.chart.settings.grid_division
+        self.assertAlmostEqual(steps, round(steps), places=6)
+
     def test_maximized_by_default(self) -> None:
         """默认以最大化启动（保留标题栏与任务栏），而不是无边框全屏。"""
         chart = DEMO_CHART if os.path.isfile(DEMO_CHART) else None

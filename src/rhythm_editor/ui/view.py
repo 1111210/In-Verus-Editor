@@ -41,7 +41,7 @@ class Layout:
     height: int = 700
     margin_x: int = 14
     pad_top: int = 8
-    pad_bottom: int = 26
+    pad_bottom: int = 12
     mode: str = config.LAYOUT_SPLIT
     split_ratio: float = config.SPLIT_6K_RATIO
 
@@ -220,6 +220,29 @@ class ViewState:
     def screen_center_beat(self) -> float:
         low, high = self.beat_range()
         return (low + high) / 2.0
+
+    # ---------------------------------------------------------- 竖向滚动条
+    def scroll_doc_range(self) -> Tuple[float, float]:
+        """滚动条代表的“文档范围”（拍）：谱面起点到终点，两端各留一点余量。"""
+        low, high = self.chart.beat_bounds()
+        pad = max(1.0, self.visible_beats() * 0.25)
+        return min(0.0, low) - pad, max(high, 1.0) + pad
+
+    def scroll_fractions(self) -> Tuple[float, float]:
+        """当前可视时间窗口在文档范围内的位置（0..1），用于设置滚动条滑块。"""
+        low, high = self.scroll_doc_range()
+        span = max(1e-6, high - low)
+        window_low, window_high = self.beat_range()
+        first = min(max((window_low - low) / span, 0.0), 1.0)
+        last = min(max((window_high - low) / span, first + 0.01), 1.0)
+        return first, last
+
+    def set_from_fraction(self, fraction: float) -> None:
+        """把可视窗口的“低端”（较早的一侧）移到文档的指定比例处。"""
+        low, high = self.scroll_doc_range()
+        window_low = low + float(fraction) * (high - low)
+        below = (self.layout.play_bottom - self.layout.judgment_y) / max(1e-6, self.px_per_beat())
+        self.set_beat(window_low + below)
 
     # ------------------------------------------------------------------ 横向
     def norm_to_x(self, value: float) -> float:
