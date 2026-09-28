@@ -3,10 +3,11 @@
 
 用法::
 
-    python run_editor.py                  # 空白谱面（默认全屏，F11 切换）
+    python run_editor.py                  # 空白谱面（默认最大化，F10 还原 / F11 全屏）
     python run_editor.py charts/demo/demo.ivchart
     python run_editor.py charts/demo/demo.ivchart --demo      # 叠加演示模式
-    python run_editor.py charts/demo/demo.ivchart --windowed  # 窗口模式
+    python run_editor.py charts/demo/demo.ivchart --windowed  # 普通窗口
+    python run_editor.py charts/demo/demo.ivchart --fullscreen # 无边框全屏
     python run_editor.py --make-demo      # 只生成示例谱面
 """
 

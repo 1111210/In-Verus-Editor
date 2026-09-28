@@ -42,8 +42,10 @@ SHIFT_MASK = 0x0001
 
 class EditorApp:
     def __init__(self, chart_path: Optional[str] = None, demo: bool = False,
-                 width: int = 1360, height: int = 860, fullscreen: bool = True) -> None:
+                 width: int = 1360, height: int = 860,
+                 maximized: bool = True, fullscreen: bool = False) -> None:
         self.theme = DARK
+        self.maximized = bool(maximized)
         self.fullscreen = bool(fullscreen)
         self.root = tk.Tk()
         self.root.title(f"{config.APP_TITLE} {config.VERSION}")
@@ -58,6 +60,8 @@ class EditorApp:
         self.audio = AudioPlayer()
         self.demo_mode = False
         self._last_message = ""
+        self._last_info = ""
+        self._last_title = ""
         self._pending_frames = 0
 
         self.scene = Scene(tk.Canvas(self.root, background=self.theme.play_bg, highlightthickness=0))
@@ -79,10 +83,9 @@ class EditorApp:
         if demo:
             self.set_demo_mode(True)
         if self.fullscreen:
-            try:
-                self.root.attributes("-fullscreen", True)
-            except tk.TclError:  # pragma: no cover
-                pass
+            self.set_fullscreen(True)
+        elif self.maximized:
+            self.maximize_window()
         self._sync_ui()
         self.root.after(16, self._tick)
 
@@ -140,6 +143,8 @@ class EditorApp:
         root.bind("<Control-e>", lambda e: self.edit_selected())
         root.bind("<Control-g>", lambda e: self.edit_settings())
         root.bind("<F11>", lambda e: self.toggle_fullscreen())
+        root.bind("<F10>", lambda e: self.toggle_maximize())
+        root.bind("<KeyPress>", lambda e: self.toolbar.mark_interaction(), add="+")
         root.bind("m", lambda e: self._shortcut(self.mirror_selection))
         root.bind("e", lambda e: self._shortcut(self.edit_selected))
         root.bind("g", lambda e: self._shortcut(self.toggle_horizontal_grid))
@@ -164,6 +169,10 @@ class EditorApp:
 
     def _tick(self) -> None:
         self._advance_playback()
+        # 二级菜单展开时暂停画布重绘：否则画布每帧重画会把弹出的菜单"闪"掉
+        if self.toolbar.is_menu_posted():
+            self.root.after(16, self._tick)
+            return
         state = self.render_state
         state.selection = set(self.document.selection)
         state.demo = self.demo_mode
@@ -191,19 +200,26 @@ class EditorApp:
         self.toolbar.sync()
         counts = self.document.chart.note_counts()
         layout_name = "分栏（6K / 鼠标）" if self.view.split_layout else "叠加（演示）"
-        self.info_var.set(
+        info = (
             f"布局：{layout_name}"
             f"　|　物件：6K {counts['lane']} · 区域 {counts['region']} · 滑键 {counts['slide']}"
             f"　|　判定线：第 {self.view.current_beat:.3f} 拍"
             f"　|　{self.controller.selection_summary()}"
             f"　|　{self.audio.status_text}"
         )
-        self.root.title(f"{self.document.title} — {config.APP_TITLE}")
+        if info != self._last_info:
+            self.info_var.set(info)
+            self._last_info = info
+        # 窗口标题每帧重设会让 Windows 反复重画非客户区（全屏时会让菜单抖动）
+        title = f"{self.document.title} — {config.APP_TITLE}"
+        if title != self._last_title:
+            self.root.title(title)
+            self._last_title = title
 
     # ------------------------------------------------------------------ 状态
     def status(self, text: str) -> None:
         self._last_message = text
-        if hasattr(self, "status_var"):
+        if hasattr(self, "status_var") and self.status_var.get() != text:
             self.status_var.set(text)
 
     def _hover_status(self, x: float, y: float) -> None:
@@ -227,6 +243,7 @@ class EditorApp:
 
     def _on_press(self, event) -> None:
         self.canvas.focus_set()
+        self.toolbar.mark_interaction()
         ctrl = bool(event.state & CTRL_MASK)
         shift = bool(event.state & SHIFT_MASK)
         if self.demo_mode:
@@ -236,16 +253,19 @@ class EditorApp:
         self.controller.on_press(event.x, event.y, ctrl, shift)
 
     def _on_motion(self, event) -> None:
+        self.toolbar.mark_interaction()
         self.controller.on_motion(event.x, event.y)
         self._hover_status(event.x, event.y)
 
     def _on_motion_drag(self, event) -> None:
+        self.toolbar.mark_interaction()
         self.controller.on_motion(event.x, event.y)
 
     def _on_release(self, event) -> None:
         self.controller.on_release(event.x, event.y, bool(event.state & CTRL_MASK))
 
     def _wheel_notches(self, notches: float, event) -> None:
+        self.toolbar.mark_interaction()
         ctrl = bool(event.state & CTRL_MASK)
         shift = bool(event.state & SHIFT_MASK)
         self.controller.on_wheel(float(notches), ctrl, shift)
@@ -263,12 +283,58 @@ class EditorApp:
             self.set_demo_mode(False)
 
     def toggle_fullscreen(self) -> None:
-        self.fullscreen = not self.fullscreen
+        self.set_fullscreen(not self.fullscreen)
+        if self.fullscreen:
+            self.maximized = False
+        self.status(
+            "已进入全屏（F11 退出）" if self.fullscreen else "已退出全屏"
+        )
+
+    def set_fullscreen(self, enabled: bool) -> None:
+        self.fullscreen = bool(enabled)
         try:
             self.root.attributes("-fullscreen", self.fullscreen)
         except tk.TclError:  # pragma: no cover
             pass
-        self.status("已切换到全屏" if self.fullscreen else "已退出全屏（窗口模式）")
+
+    def maximize_window(self) -> bool:
+        """把窗口最大化（默认启动状态：保留标题栏与任务栏）。"""
+        root = self.root
+        try:
+            root.state("zoomed")           # Windows
+        except tk.TclError:
+            try:
+                root.attributes("-zoomed", True)   # X11
+            except tk.TclError:
+                try:
+                    width = root.winfo_screenwidth()
+                    height = root.winfo_screenheight()
+                    root.geometry(f"{width}x{height}+0+0")
+                except tk.TclError:        # pragma: no cover
+                    return False
+        self.maximized = True
+        return True
+
+    def restore_window(self) -> None:
+        root = self.root
+        try:
+            root.state("normal")
+        except tk.TclError:  # pragma: no cover
+            try:
+                root.attributes("-zoomed", False)
+            except tk.TclError:
+                pass
+        self.maximized = False
+
+    def toggle_maximize(self) -> None:
+        if self.fullscreen:
+            self.set_fullscreen(False)
+        if self.maximized:
+            self.restore_window()
+            self.status("窗口已还原（F10 可再次最大化）")
+        else:
+            self.maximize_window()
+            self.status("窗口已最大化（F10 可还原，F11 为无边框全屏）")
 
     def reset_zoom(self) -> None:
         self.document.chart.settings.zoom_seconds = config.DEFAULT_ZOOM_SECONDS
@@ -607,7 +673,8 @@ def main(argv: Optional[list] = None) -> int:  # pragma: no cover - GUI 入口
     parser.add_argument("chart", nargs="?", help="要打开的谱面文件（.ivchart）")
     parser.add_argument("--demo", action="store_true", help="直接进入演示模式")
     parser.add_argument("--make-demo", action="store_true", help="生成示例谱面后退出")
-    parser.add_argument("--windowed", action="store_true", help="以窗口模式启动（默认全屏）")
+    parser.add_argument("--windowed", action="store_true", help="以普通窗口启动（默认最大化）")
+    parser.add_argument("--fullscreen", action="store_true", help="以无边框全屏启动（F11 同样可切）")
     args = parser.parse_args(argv)
 
     if args.make_demo:
@@ -617,6 +684,11 @@ def main(argv: Optional[list] = None) -> int:  # pragma: no cover - GUI 入口
         print(f"示例谱面已生成：{path}")
         return 0
 
-    app = EditorApp(args.chart, demo=args.demo, fullscreen=not args.windowed)
+    app = EditorApp(
+        args.chart,
+        demo=args.demo,
+        maximized=not (args.windowed or args.fullscreen),
+        fullscreen=args.fullscreen,
+    )
     app.run()
     return 0

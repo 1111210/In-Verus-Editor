@@ -6,9 +6,11 @@
 
 会在输出目录生成：
 
-* ``editor_overview.png`` —— 编辑器主界面（鼠标区域、网格、物件）
-* ``placement.png``       —— 放置预览（长按的幽灵物件与提示）
-* ``demo_mode.png``       —— 演示模式
+* ``editor_overview.png``  —— 编辑器主界面（左右分栏、分组工具栏）
+* ``placement.png``        —— 放置预览（长按的幽灵物件与提示）
+* ``demo_mode.png``        —— 演示模式（两个平面叠加）
+* ``maximized_editor.png`` —— 默认启动状态（窗口最大化）
+* ``fullscreen_editor.png``—— 无边框全屏（F11）
 """
 
 from __future__ import annotations
@@ -32,7 +34,10 @@ def main() -> int:
     os.makedirs(out_dir, exist_ok=True)
     chart_path = write_demo_chart()
 
-    app = EditorApp(chart_path, demo=False, width=1280, height=800, fullscreen=False)
+    # 截图用窗口模式，尺寸固定，方便对比；最大化 / 全屏状态在后面单独截图
+    app = EditorApp(
+        chart_path, demo=False, width=1280, height=800, maximized=False, fullscreen=False
+    )
     root = app.root
     root.geometry("1280x800+60+30")
     app.document.chart.settings.zoom_seconds = 6.0
@@ -80,6 +85,10 @@ def main() -> int:
 
     def step_fullscreen() -> None:
         app.set_demo_mode(False)
+        app.toggle_maximize()
+        root.after(500, lambda: (shot("maximized_editor.png"), root.after(200, step_true_fullscreen)))
+
+    def step_true_fullscreen() -> None:
         app.toggle_fullscreen()
         root.after(400, lambda: (shot("fullscreen_editor.png"), root.after(200, finish)))
 

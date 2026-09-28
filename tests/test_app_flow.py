@@ -32,7 +32,9 @@ class AppFlowTest(unittest.TestCase):
         except tk.TclError as exc:  # pragma: no cover - 无图形环境
             raise unittest.SkipTest(f"没有可用的图形环境：{exc}")
         chart = DEMO_CHART if os.path.isfile(DEMO_CHART) else None
-        self.app = EditorApp(chart, demo=False, width=1100, height=700, fullscreen=False)
+        self.app = EditorApp(
+            chart, demo=False, width=1100, height=700, maximized=False, fullscreen=False
+        )
         self.app.root.withdraw()
         self.app.root.update_idletasks()
         self.addCleanup(self._close)
@@ -54,6 +56,7 @@ class AppFlowTest(unittest.TestCase):
         # 编辑器默认是左右分栏，不是叠加
         self.assertTrue(self.app.view.split_layout)
         self.assertFalse(self.app.fullscreen)
+        self.assertFalse(self.app.maximized)
 
     def test_split_layout_and_demo_overlay(self) -> None:
         view = self.app.view
@@ -97,6 +100,49 @@ class AppFlowTest(unittest.TestCase):
         # 顶栏只保留分组 + 播放/演示，不再是一长串按钮
         self.assertTrue(hasattr(self.app.toolbar, "btn_play"))
 
+    def test_menu_not_reconfigured_every_frame(self) -> None:
+        """回归测试：菜单项只在状态变化时才写入，避免展开中的二级菜单频闪。"""
+        toolbar = self.app.toolbar
+        menu = toolbar._menus["编辑"]
+        calls: list = []
+        original = menu.entryconfigure
+
+        def recorder(*args, **kwargs):
+            calls.append((args, kwargs))
+            return original(*args, **kwargs)
+
+        menu.entryconfigure = recorder
+        try:
+            toolbar.sync()
+            first = len(calls)
+            for _ in range(5):
+                toolbar.sync()
+            self.assertEqual(len(calls), first, "状态没变时不应该再改写菜单项")
+            # 状态真的改变时才写入
+            self.app.document.select_all()
+            self.app.document.copy_selection()
+            before = len(calls)
+            toolbar.sync()
+            self.assertGreater(len(calls), before)
+        finally:
+            menu.entryconfigure = original
+
+    def test_tick_skips_redraw_while_menu_is_posted(self) -> None:
+        """回归测试：二级菜单展开期间不重绘画布（避免画布盖住菜单造成频闪）。"""
+        app = self.app
+        frames = app.scene.frames
+        app._tick()
+        self.assertGreater(app.scene.frames, frames)
+        original = app.toolbar.is_menu_posted
+        app.toolbar.is_menu_posted = lambda: True  # type: ignore[assignment]
+        try:
+            frames = app.scene.frames
+            for _ in range(3):
+                app._tick()
+            self.assertEqual(app.scene.frames, frames, "菜单展开时不应重绘画布")
+        finally:
+            app.toolbar.is_menu_posted = original  # type: ignore[assignment]
+
     def test_fullscreen_toggle(self) -> None:
         before = self.app.fullscreen
         self.app.toggle_fullscreen()
@@ -104,18 +150,42 @@ class AppFlowTest(unittest.TestCase):
         self.app.toggle_fullscreen()
         self.assertEqual(self.app.fullscreen, before)
 
-    def test_fullscreen_by_default(self) -> None:
-        """默认以全屏启动（构造函数参数 fullscreen=True）。"""
+    def test_maximized_by_default(self) -> None:
+        """默认以最大化启动（保留标题栏与任务栏），而不是无边框全屏。"""
         chart = DEMO_CHART if os.path.isfile(DEMO_CHART) else None
-        app = EditorApp(chart, demo=False, width=900, height=600, fullscreen=True)
+        app = EditorApp(chart, demo=False, width=900, height=600)
         try:
-            self.assertTrue(app.fullscreen)
-            self.assertEqual(int(app.root.attributes("-fullscreen")), 1)
+            self.assertTrue(app.maximized)
+            self.assertFalse(app.fullscreen)
+            self.assertIn(str(app.root.state()), ("zoomed", "normal", "iconic"))
+            self.assertEqual(int(app.root.attributes("-fullscreen")), 0)
+            app.root.update_idletasks()
+            # 最大化后的窗口不会小于构造时给的尺寸
+            self.assertGreaterEqual(app.root.winfo_width(), 900)
             app.root.withdraw()
         finally:
             app.audio.stop()
             app.audio.unload()
             app.root.destroy()
+
+    def test_toggle_maximize_and_fullscreen(self) -> None:
+        app = self.app
+        app.maximize_window()
+        self.assertTrue(app.maximized)
+        app.restore_window()
+        self.assertFalse(app.maximized)
+        app.toggle_maximize()
+        self.assertTrue(app.maximized)
+        app.toggle_maximize()
+        self.assertFalse(app.maximized)
+        # 无边框全屏与最大化互斥
+        app.set_fullscreen(True)
+        app.root.update_idletasks()
+        self.assertEqual(int(app.root.attributes("-fullscreen")), 1)
+        app.toggle_maximize()
+        self.assertEqual(int(app.root.attributes("-fullscreen")), 0)
+        self.assertTrue(app.maximized)
+        app.restore_window()
 
     def test_place_edit_and_undo_through_app(self) -> None:
         from rhythm_editor.model.notes import LaneNote

@@ -3,15 +3,17 @@
 ## 1. 启动
 
 ```bash
-python run_editor.py                                        # 空白谱面（默认全屏）
+python run_editor.py                                        # 空白谱面（默认最大化）
 python run_editor.py charts/demo/demo.ivchart               # 打开示例谱面
 python run_editor.py charts/demo/demo.ivchart --demo        # 直接进入叠加演示模式
-python run_editor.py charts/demo/demo.ivchart --windowed    # 窗口模式（F11 切换全屏）
+python run_editor.py charts/demo/demo.ivchart --windowed    # 普通窗口（F10 最大化 / F11 全屏）
+python run_editor.py charts/demo/demo.ivchart --fullscreen  # 无边框全屏
 ```
 
 ## 2. 界面
 
-* **默认全屏**：启动即全屏，`F11` 或「视图 → 全屏切换」随时切换。
+* **默认最大化**：启动即最大化（仍有标题栏与任务栏）；`F10` 还原 / 最大化，
+  `F11` 或「视图 → 全屏切换」进入无边框全屏。
 * **上方工具栏（分组 + 二级菜单）**：只保留分组入口
   「文件 / 编辑 / 放置 / 视图 / 面板 / 帮助」+「播放 / 暂停」+「演示模式」+ 快速缩放（`−` / `+`）。
   各分组里的具体功能：
@@ -98,6 +100,7 @@ python run_editor.py charts/demo/demo.ivchart --windowed    # 窗口模式（F11
 | `Esc` | 放弃当前放置流程 / 退出演示模式 |
 | `Tab` | 进入 / 退出演示模式 |
 | `F11` | 全屏 / 窗口切换 |
+| `F10` | 最大化 / 还原窗口 |
 | `空格` | 播放 / 暂停 |
 | `滚轮` | 滚动时间（`Shift` 加快） |
 | `Ctrl+滚轮` / `+` / `-` | 缩放 |

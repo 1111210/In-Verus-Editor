@@ -13,6 +13,7 @@
 
 from __future__ import annotations
 
+import time
 import tkinter as tk
 from dataclasses import dataclass, field
 from tkinter import ttk
@@ -54,6 +55,17 @@ class Toolbar(ttk.Frame):
         self._group_buttons: Dict[str, tk.Menubutton] = {}
         self._menus: Dict[str, tk.Menu] = {}
         self._menubar_menus: Dict[str, tk.Menu] = {}
+        # 缓存上一次真正写入菜单/按钮的值：每帧无脑 entryconfigure 会导致菜单频闪
+        self._last_entry_state: List[Optional[Tuple[str, Optional[bool]]]] = []
+        self._last_labels: Dict[Tuple[str, int], str] = {}
+        self._last_play_text: Optional[str] = None
+        self._last_demo_text: Optional[Tuple[str, str]] = None
+        self._last_zoom_text: Optional[str] = None
+        self._last_place_text: Optional[str] = None
+        # 原生弹出菜单期间暂停画布重绘（见 is_menu_posted 的说明）
+        self._menu_open = False
+        self._menu_open_at = 0.0
+        self._menu_open_timeout = 15.0
         self._groups = self._build_groups()
         self._build_widgets()
         self._build_menubar()
@@ -146,6 +158,8 @@ class Toolbar(ttk.Frame):
             Entry("演示模式（叠加显示 · 只读）", app.toggle_demo, "Tab",
                   checked=lambda: app.demo_mode),
             Entry(separator=True),
+            Entry("最大化 / 还原窗口", app.toggle_maximize, "F10",
+                  checked=lambda: app.maximized),
             Entry("全屏切换", app.toggle_fullscreen, "F11",
                   checked=lambda: app.fullscreen),
         ])
@@ -214,6 +228,7 @@ class Toolbar(ttk.Frame):
         self._fill_menu(menu, group.entries)
         self._menus[group.label] = menu
         button = ttk.Menubutton(parent, text=f"{group.label} ▾", menu=menu, style="Tool.TMenubutton")
+        button.bind("<ButtonPress-1>", self.mark_menu_open, add="+")
         return button
 
     def _fill_menu(self, menu: tk.Menu, entries: List[Entry]) -> None:
@@ -275,7 +290,10 @@ class Toolbar(ttk.Frame):
             )
             self._fill_menu(menu, group.entries)
             self._menubar_menus[group.label] = menu
+            menu.bind("<Unmap>", self.mark_menu_closed, add="+")
+            menu.bind("<Motion>", self.mark_menu_open, add="+")
             menubar.add_cascade(label=group.label, menu=menu)
+        menubar.bind("<ButtonPress-1>", self.mark_menu_open, add="+")
         try:
             self.root.configure(menu=menubar)
         except tk.TclError:  # pragma: no cover
@@ -283,16 +301,61 @@ class Toolbar(ttk.Frame):
         self.menubar = menubar
 
     # ------------------------------------------------------------------ 同步
+    def mark_menu_open(self, _event=None) -> None:
+        """记录“刚展开了菜单”。"""
+        self._menu_open = True
+        self._menu_open_at = time.monotonic()
+
+    def mark_menu_closed(self, _event=None) -> None:
+        self._menu_open = False
+
+    def mark_interaction(self, _event=None) -> None:
+        """用户继续操作（画布收到鼠标/键盘事件）时解除绘制保护。"""
+        if self._menu_open and (time.monotonic() - self._menu_open_at) > 0.5:
+            self._menu_open = False
+
+    def is_menu_posted(self) -> bool:
+        """是否有二级菜单正在展开（用于暂停画布重绘，避免菜单频闪）。
+
+        Tk 在 Windows 上使用的是原生弹出菜单：展开时既不触发 ``<Map>``，
+        ``winfo_ismapped()`` 也一直是 0，因此这里用“菜单按钮被按下 + 超时”来判定：
+        * 按下分组按钮 / 菜单栏 -> ``mark_menu_open``；
+        * 画布重新收到鼠标或键盘事件（说明菜单已经关闭）-> ``mark_interaction``；
+        * 兜底超时，避免异常情况下一直不重绘。
+        """
+        if not self._menu_open:
+            return False
+        if (time.monotonic() - self._menu_open_at) > self._menu_open_timeout:
+            self._menu_open = False
+            return False
+        for menu in list(self._menus.values()) + list(self._menubar_menus.values()):
+            try:
+                if menu.winfo_ismapped():
+                    return True
+            except tk.TclError:  # pragma: no cover
+                continue
+        return True
+
     def sync(self) -> None:
         app = self.app
         document = app.document
         view = app.view
-        for menu, index, entry, var, is_check in self._registered:
-            if entry.enabled is not None:
-                state = "normal" if entry.enabled() else "disabled"
+        if len(self._last_entry_state) != len(self._registered):
+            self._last_entry_state = [None] * len(self._registered)
+        for position, (menu, index, entry, var, is_check) in enumerate(self._registered):
+            state = "normal"
+            if entry.enabled is not None and not entry.enabled():
+                state = "disabled"
+            checked = bool(entry.checked()) if (is_check and entry.checked is not None) else None
+            desired = (state, checked)
+            previous = self._last_entry_state[position]
+            if previous == desired:
+                continue  # 值没变就不碰菜单，避免展开中的菜单被反复重绘
+            if entry.enabled is not None and (previous is None or previous[0] != state):
                 menu.entryconfigure(index, state=state)
-            if is_check and entry.checked is not None and var is not None:
-                var.set(bool(entry.checked()))
+            if checked is not None and var is not None and (previous is None or previous[1] != checked):
+                var.set(checked)
+            self._last_entry_state[position] = desired
 
         # 撤销 / 重做 显示具体动作名
         self._set_label("编辑", 0, f"撤销 {document.undo_label()}".strip() if document.can_undo() else "撤销")
@@ -300,22 +363,36 @@ class Toolbar(ttk.Frame):
 
         place_button = self._group_buttons.get("放置")
         if place_button is not None:
-            place_button.configure(text=f"放置：{config.TOOL_LABELS.get(app.controller.tool, '')} ▾")
+            text = f"放置：{config.TOOL_LABELS.get(app.controller.tool, '')} ▾"
+            if text != self._last_place_text:
+                place_button.configure(text=text)
+                self._last_place_text = text
 
         if hasattr(self, "btn_play"):
-            self.btn_play.configure(text="⏸ 暂停" if app.audio.is_playing else "▶ 播放")
+            text = "⏸ 暂停" if app.audio.is_playing else "▶ 播放"
+            if text != self._last_play_text:
+                self.btn_play.configure(text=text)
+                self._last_play_text = text
         if hasattr(self, "btn_demo"):
-            self.btn_demo.configure(
-                text="退出演示" if app.demo_mode else "演示模式",
-                style="Accent.TButton" if app.demo_mode else "TButton",
+            desired = (
+                "退出演示" if app.demo_mode else "演示模式",
+                "Accent.TButton" if app.demo_mode else "TButton",
             )
+            if desired != self._last_demo_text:
+                self.btn_demo.configure(text=desired[0], style=desired[1])
+                self._last_demo_text = desired
         layout_name = "分栏（编辑）" if view.split_layout else "叠加（演示）"
-        self.lbl_zoom.configure(
-            text=f"{view.zoom_seconds:.3g} 秒 · {layout_name}"
-        )
+        zoom_text = f"{view.zoom_seconds:.3g} 秒 · {layout_name}"
+        if zoom_text != self._last_zoom_text:
+            self.lbl_zoom.configure(text=zoom_text)
+            self._last_zoom_text = zoom_text
 
     def _set_label(self, group_label: str, command_index: int, text: str) -> None:
         """按命令序号修改某个分组菜单（含菜单栏副本）的条目文字。"""
+        key = (group_label, command_index)
+        if self._last_labels.get(key) == text:
+            return
+        self._last_labels[key] = text
         for menu in (self._menus.get(group_label), self._menubar_menus.get(group_label)):
             if menu is None:
                 continue

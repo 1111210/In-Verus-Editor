@@ -17,8 +17,8 @@ pip install -r requirements.txt
 
 # 3) 生成示例谱面并启动编辑器
 python run_editor.py --make-demo
-python run_editor.py charts/demo/demo.ivchart            # 默认全屏启动
-python run_editor.py charts/demo/demo.ivchart --windowed # 窗口模式（F11 随时切换）
+python run_editor.py charts/demo/demo.ivchart             # 默认最大化启动
+python run_editor.py charts/demo/demo.ivchart --windowed  # 普通窗口（F10 最大化 / F11 全屏）
 
 # 或者双击 run_editor.bat（会自动优先使用 .venv）
 ```
@@ -40,12 +40,16 @@ python -m unittest discover -s tests -t . -v
 
 ## 界面预览
 
-默认全屏启动。编辑器把两个平面**左右分栏**：左边 6K 下落式、右边鼠标平面，
+默认**最大化**启动（`F10` 最大化 / 还原，`F11` 无边框全屏）。编辑器把两个平面**左右分栏**：左边 6K 下落式、右边鼠标平面，
 两边共用同一条判定线与同一套时间网格；顶部工具栏只有几个分组，具体功能收在二级菜单里：
 
 ![编辑器主界面](docs/images/editor_overview.png)
 
-全屏（F11 切换）：
+默认启动状态（窗口最大化，保留标题栏与任务栏）：
+
+![最大化](docs/images/maximized_editor.png)
+
+无边框全屏（F11）：
 
 ![全屏](docs/images/fullscreen_editor.png)
 
