@@ -395,10 +395,14 @@ class SettingsDialog(BaseDialog):
 
         latency = ttk.LabelFrame(body, text="系统音频延迟", padding=8)
         latency.pack(fill="x", pady=(8, 0))
-        self.e_latency = labeled_entry(latency, 0, "延迟（毫秒）", f"{self.settings.audio_latency_ms:g}", width=12)
+        self.e_latency = labeled_entry(
+            latency, 0, "延迟（毫秒，可为负）", f"{self.settings.audio_latency_ms:g}", width=12
+        )
         ttk.Label(
             latency,
-            text="从软件执行音频播放操作到电脑硬件放出声音的间隔；播放时用“后端位置 - 延迟”对齐画面与声音。",
+            text="从软件执行音频播放操作到电脑硬件放出声音的间隔；播放时用“后端位置 − 延迟”"
+                 f"对齐画面与声音。允许负数（{config.AUDIO_LATENCY_MIN_MS:g} ~ "
+                 f"{config.AUDIO_LATENCY_MAX_MS:g} ms），负值代表声音比软件位置更早。",
             style="Dim.TLabel",
             wraplength=520,
         ).grid(row=1, column=0, columnspan=2, sticky="w", pady=(4, 0))

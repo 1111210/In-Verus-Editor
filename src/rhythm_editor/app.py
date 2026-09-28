@@ -101,7 +101,12 @@ class EditorApp:
         self.toolbar = Toolbar(self.root, self, self.theme)
         self.toolbar.pack(side="top", fill="x")
         # 画布区：右侧是一条朴素的竖向滚动条（替代原来的底部总览条）
-        self.vscroll = ttk.Scrollbar(self.body, orient="vertical", command=self._on_scroll)
+        self.vscroll = ttk.Scrollbar(
+            self.body,
+            orient="vertical",
+            command=self._on_scroll,
+            style="White.Vertical.TScrollbar",
+        )
         self.vscroll.pack(side="right", fill="y")
         self.canvas.pack(side="left", fill="both", expand=True)
         self._scroll_key: Optional[Tuple[float, float]] = None
@@ -184,6 +189,7 @@ class EditorApp:
         if self._closed:
             return
         self._advance_playback()
+        self.audio.poll()          # 变速后端：提前准备后续音频窗口
         # 二级菜单展开时暂停画布重绘：否则画布每帧重画会把弹出的菜单"闪"掉
         if self.toolbar.is_menu_posted():
             self._schedule_next_tick()
@@ -240,6 +246,7 @@ class EditorApp:
         layout_name = "分栏（6K / 鼠标）" if self.view.split_layout else "叠加（演示）"
         info = (
             f"布局：{layout_name}"
+            f"　|　倍速 {self.audio.rate:.1f}x"
             f"　|　物件：6K {counts['lane']} · 区域 {counts['region']} · 滑键 {counts['slide']}"
             f"　|　判定线：第 {self.view.current_beat:.3f} 拍"
             f"　|　{self.controller.selection_summary()}"
@@ -410,6 +417,28 @@ class EditorApp:
     def reset_zoom(self) -> None:
         self.document.chart.settings.zoom_seconds = config.DEFAULT_ZOOM_SECONDS
         self.status(f"缩放已重置为 {config.DEFAULT_ZOOM_SECONDS:g} 秒")
+
+    # ------------------------------------------------------------------ 倍速
+    def set_playback_rate(self, rate: float, announce: bool = True) -> None:
+        """播放倍速（0.1 ~ 1.0x，0.1 一档）：同时改变谱面推进速度与音频速度（不变调）。"""
+        step = config.RATE_STEP
+        rate = round(round(float(rate) / step) * step, 1)
+        rate = max(config.RATE_MIN, min(config.RATE_MAX, rate))
+        if abs(rate - self.audio.rate) < 1e-9:
+            self.toolbar.sync()
+            return
+        self.audio.set_rate(rate)
+        if announce:
+            tone = "（不变调）" if self.audio.stretch_active else ""
+            extra = "" if self.audio.usable_audio else "（静音时钟）"
+            self.status(f"播放倍速：{rate:.1f}x{tone}{extra}")
+        self.toolbar.sync()
+
+    def increase_playback_rate(self) -> None:
+        self.set_playback_rate(self.audio.rate + config.RATE_STEP)
+
+    def decrease_playback_rate(self) -> None:
+        self.set_playback_rate(self.audio.rate - config.RATE_STEP)
 
     def cancel_pending(self) -> None:
         self.controller.cancel_pending()

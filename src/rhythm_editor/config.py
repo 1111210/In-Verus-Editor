@@ -53,6 +53,16 @@ SCROLL_WHEEL_SNAP = True          # 滚轮滚动后仍然吸附到时间网格�
 SCROLL_WHEEL_FAST_BEATS = 1.0     # Shift + 滚轮：一次滚动 1 拍
 PENDING_COLOR = "#ffd166"
 
+# 播放倍速：0.1 ~ 1.0，每 0.1 一档（变速不变调）
+RATE_MIN = 0.1
+RATE_MAX = 1.0
+RATE_STEP = 0.1
+DEFAULT_RATE = 1.0
+
+# 系统音频延迟允许为负（负值 = 声音比软件位置更早），这里给出合理范围防止误填
+AUDIO_LATENCY_MIN_MS = -5000.0
+AUDIO_LATENCY_MAX_MS = 5000.0
+
 # 缓动类型
 EASE_LINEAR = "linear"
 EASE_IN = "ease_in"

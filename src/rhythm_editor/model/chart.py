@@ -80,7 +80,11 @@ class EditorSettings:
         self.horizontal_divisions = max(
             0, min(config.HORIZONTAL_DIVISION_MAX, int(self.horizontal_divisions))
         )
-        self.audio_latency_ms = max(0.0, float(self.audio_latency_ms))
+        # 允许负数：负延迟表示声音比软件位置更早，需要反向补偿
+        self.audio_latency_ms = min(
+            config.AUDIO_LATENCY_MAX_MS,
+            max(config.AUDIO_LATENCY_MIN_MS, float(self.audio_latency_ms)),
+        )
 
     @property
     def horizontal_grid_enabled(self) -> bool:

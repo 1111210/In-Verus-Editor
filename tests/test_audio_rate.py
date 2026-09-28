@@ -1,0 +1,144 @@
+"""倍速（变速不变调）与负延迟的单元测试。"""
+
+from __future__ import annotations
+
+import os
+import sys
+import time
+import unittest
+
+sys.path.insert(0, os.path.join(os.path.dirname(os.path.dirname(os.path.abspath(__file__))), "src"))
+
+from rhythm_editor import config
+from rhythm_editor.audio import (
+    STRETCH_AVAILABLE,
+    AudioPlayer,
+    SilentBackend,
+    time_stretch,
+)
+from rhythm_editor.model.chart import EditorSettings
+
+
+class RateSettingsTests(unittest.TestCase):
+    def test_latency_allows_negative(self) -> None:
+        settings = EditorSettings(audio_latency_ms=-80.0)
+        settings.normalize()
+        self.assertAlmostEqual(settings.audio_latency_ms, -80.0)
+
+    def test_latency_range_clamped(self) -> None:
+        settings = EditorSettings(audio_latency_ms=-99999.0)
+        settings.normalize()
+        self.assertAlmostEqual(settings.audio_latency_ms, config.AUDIO_LATENCY_MIN_MS)
+        settings = EditorSettings(audio_latency_ms=99999.0)
+        settings.normalize()
+        self.assertAlmostEqual(settings.audio_latency_ms, config.AUDIO_LATENCY_MAX_MS)
+
+    def test_rate_constants(self) -> None:
+        self.assertAlmostEqual(config.RATE_MIN, 0.1)
+        self.assertAlmostEqual(config.RATE_MAX, 1.0)
+        self.assertAlmostEqual(config.RATE_STEP, 0.1)
+
+
+class SilentClockRateTests(unittest.TestCase):
+    def test_silent_clock_follows_rate(self) -> None:
+        backend = SilentBackend()
+        backend.set_rate(0.5)
+        backend.play(1000.0)
+        time.sleep(0.25)
+        advanced = backend.position_ms() - 1000.0
+        # 0.5x：0.25 秒真实时间应该推进约 125ms（给出宽松容差避免抖动）
+        self.assertGreater(advanced, 60.0)
+        self.assertLess(advanced, 220.0)
+        backend.stop()
+
+    def test_set_rate_keeps_position(self) -> None:
+        backend = SilentBackend()
+        backend.play(2000.0)
+        time.sleep(0.05)
+        before = backend.position_ms()
+        backend.set_rate(0.2)
+        self.assertAlmostEqual(backend.position_ms(), before, delta=60.0)
+        backend.stop()
+
+
+class AudioPlayerRateTests(unittest.TestCase):
+    def test_rate_step_and_clamp(self) -> None:
+        player = AudioPlayer()
+        player.set_rate(0.7)
+        self.assertAlmostEqual(player.rate, 0.7)
+        player.set_rate(0.04)          # 低于下限 -> 夹到 0.1
+        self.assertAlmostEqual(player.rate, 0.1)
+        player.set_rate(3.0)           # 高于上限 -> 夹到 1.0
+        self.assertAlmostEqual(player.rate, 1.0)
+        self.assertFalse(player.stretch_active)
+
+    def test_heard_position_applies_signed_latency(self) -> None:
+        """延迟可以为负：heard = position - latency（负延迟会加回来）。"""
+        player = AudioPlayer()
+
+        class Stub:
+            name = "stub"
+            supports_seek = True
+
+            def position_ms(self) -> float:
+                return 1000.0
+
+            def poll(self) -> None:  # pragma: no cover
+                return
+
+            is_playing = True
+
+        player.backend = Stub()
+        player._playing = True
+        player.latency_ms = 60.0
+        self.assertAlmostEqual(player.heard_position_ms(), 940.0)
+        player.latency_ms = -60.0
+        self.assertAlmostEqual(player.heard_position_ms(), 1060.0)
+
+    def test_stretch_available_flag_matches_dependencies(self) -> None:
+        # 当前环境装了 pygame-ce 与 numpy，因此变速不变调可用
+        self.assertTrue(STRETCH_AVAILABLE)
+
+
+@unittest.skipUnless(STRETCH_AVAILABLE, "需要 numpy + pygame 才能做时间伸缩")
+class TimeStretchTests(unittest.TestCase):
+    def _tone(self, seconds: float = 1.0, freq: float = 440.0, rate: int = 44100):
+        import numpy as np
+
+        t = np.arange(int(seconds * rate)) / rate
+        return (np.sin(2 * np.pi * freq * t) * 12000).astype(np.int16)
+
+    def test_length_scales_with_rate(self) -> None:
+        tone = self._tone(1.0)
+        slow = time_stretch(tone, 0.5)
+        fast = time_stretch(tone, 0.8)
+        self.assertAlmostEqual(len(slow) / len(tone), 2.0, delta=0.05)
+        self.assertAlmostEqual(len(fast) / len(tone), 1.25, delta=0.05)
+        self.assertEqual(slow.dtype.name, "int16")
+
+    def test_pitch_is_preserved(self) -> None:
+        """变速不变调：过零率（≈ 2×频率）在伸缩前后保持一致。"""
+        import numpy as np
+
+        tone = self._tone(1.0, freq=440.0)
+
+        def zero_cross_per_second(signal) -> float:
+            sign = np.signbit(signal.astype(np.float32))
+            crossings = int(np.count_nonzero(sign[1:] != sign[:-1]))
+            seconds = len(signal) / 44100.0
+            return crossings / 2.0 / seconds
+
+        base = zero_cross_per_second(tone)
+        slowed = zero_cross_per_second(time_stretch(tone, 0.5))
+        self.assertAlmostEqual(slowed, base, delta=15.0)
+        self.assertGreater(base, 400.0)
+        self.assertLess(base, 480.0)
+
+    def test_rate_one_returns_input(self) -> None:
+        tone = self._tone(0.2)
+        same = time_stretch(tone, 1.0)
+        self.assertEqual(len(same), len(tone))
+
+
+if __name__ == "__main__":
+    unittest.main()

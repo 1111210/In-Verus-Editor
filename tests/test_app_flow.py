@@ -82,8 +82,8 @@ class AppFlowTest(unittest.TestCase):
         self.app.set_demo_mode(False)
         self.assertTrue(view.split_layout)
 
-    def test_zoom_plus_button_is_always_available(self) -> None:
-        """回归测试：缩放 + 按钮曾经会被挤掉，现在固定在右侧优先分配空间。"""
+    def test_rate_buttons_are_always_available(self) -> None:
+        """回归测试：右侧［−］［倍速］［＋］固定在右侧优先分配空间，不会被挤掉。"""
         plus = None
         container = None
         for child in self.app.toolbar.winfo_children():
@@ -92,9 +92,10 @@ class AppFlowTest(unittest.TestCase):
             for sub in child.winfo_children():
                 if isinstance(sub, ttk.Button) and sub.cget("text") == "+":
                     plus, container = sub, child
-        self.assertIsNotNone(plus, "工具栏里应该有 + 缩放按钮")
+        self.assertIsNotNone(plus, "工具栏里应该有 + 倍速按钮")
         self.assertEqual(plus.winfo_manager(), "pack")
         self.assertEqual(container.pack_info()["side"], "right")
+        self.assertEqual(str(self.app.toolbar.lbl_rate.cget("text")), "1.0x")
 
     def test_toolbar_groups_without_menubar(self) -> None:
         toolbar = self.app.toolbar
@@ -226,8 +227,8 @@ class AppFlowTest(unittest.TestCase):
         self.assertIn("L900", captured["content"])
         self.assertEqual(self.app.document.selection, {"L900", "L901"})
 
-    def test_zoom_buttons_direction(self) -> None:
-        """+ 放大（可视时间变少、物件变大），− 缩小，与直觉一致。"""
+    def test_rate_buttons_step_and_clamp(self) -> None:
+        """倍速按钮：[−] 减 0.1x、[+] 加 0.1x，范围 0.1 ~ 1.0x。"""
         toolbar = self.app.toolbar
         plus = minus = None
         for child in toolbar.winfo_children():
@@ -239,13 +240,22 @@ class AppFlowTest(unittest.TestCase):
                         minus = sub
         self.assertIsNotNone(plus)
         self.assertIsNotNone(minus)
-        before = self.app.view.zoom_seconds
-        plus.invoke()
-        self.assertLess(self.app.view.zoom_seconds, before, "+ 应该放大（可视时间变少）")
-        plus.invoke()
-        zoomed_in = self.app.view.zoom_seconds
         minus.invoke()
-        self.assertGreater(self.app.view.zoom_seconds, zoomed_in, "− 应该缩小（可视时间变多）")
+        self.assertAlmostEqual(self.app.audio.rate, 0.9, places=6)
+        toolbar.sync()
+        self.assertEqual(str(toolbar.lbl_rate.cget("text")), "0.9x")
+        plus.invoke()
+        self.assertAlmostEqual(self.app.audio.rate, 1.0, places=6)
+        # 上限：1.0x 再加不上去
+        plus.invoke()
+        self.assertAlmostEqual(self.app.audio.rate, 1.0, places=6)
+        # 下限：一路减到 0.1x 就停住
+        for _ in range(20):
+            minus.invoke()
+        self.assertAlmostEqual(self.app.audio.rate, config.RATE_MIN, places=6)
+        toolbar.sync()
+        self.assertEqual(str(toolbar.lbl_rate.cget("text")), "0.1x")
+        self.app.set_playback_rate(1.0)
 
     def test_menu_not_reconfigured_every_frame(self) -> None:
         """回归测试：菜单项只在状态变化时才写入，避免展开中的二级菜单频闪。"""
@@ -372,6 +382,16 @@ class AppFlowTest(unittest.TestCase):
         # 判定线仍然吸附在网格上
         steps = app.view.current_beat * app.document.chart.settings.grid_division
         self.assertAlmostEqual(steps, round(steps), places=6)
+
+    def test_scrollbars_use_white_thumb_black_trough(self) -> None:
+        """滚动条样式：滑条体白色、背景黑色（竖向时间轴与工具栏横向滚动条一致）。"""
+        style = ttk.Style(self.app.root)
+        for name in ("White.Vertical.TScrollbar", "White.Horizontal.TScrollbar"):
+            self.assertEqual(str(style.lookup(name, "background")), "#ffffff")
+            self.assertEqual(str(style.lookup(name, "troughcolor")), "#000000")
+        # 两个滚动条都套用了该样式
+        self.assertEqual(str(self.app.vscroll.cget("style")), "White.Vertical.TScrollbar")
+        self.assertEqual(str(self.app.toolbar._hscroll.cget("style")), "White.Horizontal.TScrollbar")
 
     def test_maximized_by_default(self) -> None:
         """默认以最大化启动（保留标题栏与任务栏），而不是无边框全屏。"""

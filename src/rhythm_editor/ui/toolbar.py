@@ -67,6 +67,7 @@ class Toolbar(ttk.Frame):
         self._last_labels: Dict[Tuple[str, int], str] = {}
         self._last_play_text: Optional[str] = None
         self._last_place_text: Optional[str] = None
+        self._last_rate_text: Optional[str] = None
         # 原生弹出菜单期间暂停画布重绘（见 is_menu_posted 的说明）
         self._menu_open = False
         self._groups = self._build_groups()
@@ -213,12 +214,19 @@ class Toolbar(ttk.Frame):
         self._right.pack(side="right", fill="y")
         self._group_buttons["帮助"] = self._make_menubutton(self._right, self._groups[-1])
         self._group_buttons["帮助"].pack(side="right", padx=(8, 0))
-        # 「+」= 放大（屏幕内时间变少、物件变大），与直觉一致；滚轮方向保持不变
+        # 播放倍速：［−］［当前倍速］［＋］，0.1x 一档，范围 0.1 ~ 1.0x（变速不变调）
         ttk.Button(
-            self._right, text="+", width=3, command=lambda: app.zoom(1 / config.ZOOM_STEP)
+            self._right, text="+", width=3, command=app.increase_playback_rate
         ).pack(side="right", padx=(4, 0))
+        self.lbl_rate = ttk.Label(
+            self._right,
+            text=f"{config.DEFAULT_RATE:.1f}x",
+            width=5,
+            anchor="center",
+        )
+        self.lbl_rate.pack(side="right", padx=4)
         ttk.Button(
-            self._right, text="−", width=3, command=lambda: app.zoom(config.ZOOM_STEP)
+            self._right, text="−", width=3, command=app.decrease_playback_rate
         ).pack(side="right")
 
         # 左侧分组放在可横向滚动的视口里：窗口宽度不足时自动出现横向滚动条
@@ -228,7 +236,12 @@ class Toolbar(ttk.Frame):
         self._strip_canvas.pack(side="top", fill="x", expand=True)
         self._strip = ttk.Frame(self._strip_canvas)
         self._strip_window = self._strip_canvas.create_window((0, 0), window=self._strip, anchor="nw")
-        self._hscroll = ttk.Scrollbar(self, orient="horizontal", command=self._strip_canvas.xview)
+        self._hscroll = ttk.Scrollbar(
+            self,
+            orient="horizontal",
+            command=self._strip_canvas.xview,
+            style="White.Horizontal.TScrollbar",
+        )
         self._strip_canvas.configure(xscrollcommand=self._hscroll.set, xscrollincrement=40)
         self._hscroll_visible = False
         self._updating_scroll = False
@@ -495,6 +508,10 @@ class Toolbar(ttk.Frame):
             if text != self._last_play_text:
                 self.btn_play.configure(text=text)
                 self._last_play_text = text
+        rate_text = f"{app.audio.rate:.1f}x"
+        if rate_text != self._last_rate_text:
+            self.lbl_rate.configure(text=rate_text)
+            self._last_rate_text = rate_text
         if len(self._last_direct_state) != len(self._direct_buttons):
             self._last_direct_state = [None] * len(self._direct_buttons)
         for position, (button, enabled) in enumerate(self._direct_buttons):

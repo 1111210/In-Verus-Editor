@@ -1,27 +1,36 @@
-"""音频播放后端（可选依赖）与延迟补偿时钟。
+"""音频播放后端与倍速（变速不变调）。
 
-* 安装了 ``pygame-ce`` / ``pygame`` 时使用 ``pygame.mixer.music``，支持 mp3/ogg/wav 等，
-  并提供播放位置查询与 seek。
-* 否则退化为“静音时钟”后端：播放/暂停/滚动/编辑仍然完全可用，只是没有声音。
+后端
+----
+* ``PygameBackend``            —— ``pygame.mixer.music`` 流式播放（倍速 = 1.0x 时使用）
+* ``StretchedSoundBackend``    —— 用 Hann 窗重叠相加（OLA）做**时间伸缩**，
+  播放拉伸后的 PCM（倍速 < 1.0x 时使用，音调不变）
+* ``SilentBackend``            —— 静音时钟（没有 pygame / 没有音频文件时的兜底）
+
+所有后端的 ``position_ms()`` 都返回**歌曲原始时间轴**上的位置，
+因此上层（谱面/判定线）的换算完全不用区分后端。
 
 延迟补偿
 --------
 ``audio_latency_ms`` 表示“软件执行播放操作 -> 电脑硬件放出声音”的间隔。
-播放时我们用 ``后端位置 - 延迟`` 作为“耳朵听到的位置”，再换算成判定线所在拍，
-这样画面与听到的声音是对齐的。
+播放时用 ``后端位置 - 延迟`` 作为“耳朵听到的位置”，再换算成判定线所在拍。
 """
 
 from __future__ import annotations
 
 import os
 import time
-from typing import Optional
+from typing import List, Optional, Tuple
 
 from . import config
 
+
+def _fmt_rate(rate: float) -> str:
+    return f"{rate:.1f}x"
+
+
 _PYGAME = None
 _PYGAME_ERROR: Optional[str] = None
-
 try:  # pragma: no cover - 依赖运行环境
     import pygame  # type: ignore
 
@@ -30,17 +39,114 @@ except Exception as exc:  # pragma: no cover
     _PYGAME_ERROR = str(exc)
     _PYGAME = None
 
+_NP = None
+try:  # pragma: no cover - 依赖运行环境
+    import numpy as _numpy  # type: ignore
+
+    _NP = _numpy
+except Exception:  # pragma: no cover
+    _NP = None
+
+STRETCH_AVAILABLE = _PYGAME is not None and _NP is not None
+
+# 时间伸缩参数
+STRETCH_FRAME = 2048          # 每帧样本数（约 46ms @44.1kHz）
+STRETCH_OVERLAP = 4           # 75% 重叠
+STRETCH_WINDOW_MS = 20_000.0  # 一次处理 20 秒原始音频（控制内存）
+STRETCH_QUEUE_AHEAD_MS = 5_000.0
+
 
 def audio_backend_name() -> str:
-    return "pygame.mixer" if _PYGAME is not None else "silent"
+    if _PYGAME is None:
+        return "silent"
+    if STRETCH_AVAILABLE:
+        return "pygame.mixer + OLA"
+    return "pygame.mixer"
 
 
 def audio_backend_available() -> bool:
     return _PYGAME is not None
 
 
+def time_stretch(
+    samples,
+    rate: float,
+    frame: int = STRETCH_FRAME,
+    overlap: int = STRETCH_OVERLAP,
+    search: int = 64,
+    probe: int = 256,
+):
+    """把 PCM 样本按 ``rate`` 伸缩（rate < 1 变慢），**音调不变**。
+
+    采用 WSOLA（波形相似重叠相加）：输出每次前进 ``hop``、输入每次前进 ``hop * rate``，
+    并在 ``±search`` 范围内搜索“与上一帧自然延续最相似”的位置，再重叠相加。
+    搜索保证帧与帧之间相位连贯（否则会出现周期性的相位跳变杂音），
+    而播放速率始终是原速，因此**频率（音调）不变**。
+    """
+    if _NP is None:  # pragma: no cover - 无 numpy 时直接原样返回
+        return samples
+    np = _NP
+    rate = max(0.05, float(rate))
+    if abs(rate - 1.0) < 1e-6:
+        return samples
+    data = samples
+    squeeze = False
+    if data.ndim == 1:
+        data = data.reshape(-1, 1)
+        squeeze = True
+    channels = data.shape[1]
+    total = data.shape[0]
+    if total <= frame:
+        return samples
+    hop_out = max(1, frame // max(1, overlap))
+    hop_in = hop_out * rate
+    n_frames = int((total - frame) / hop_in) + 1
+    out_len = n_frames * hop_out + frame
+    out = np.zeros((out_len, channels), dtype=np.float32)
+    norm = np.zeros((out_len, 1), dtype=np.float32)
+    window = np.hanning(frame + 1)[:frame].astype(np.float32)
+    probe = max(32, min(int(probe), frame - hop_out))
+    pos = 0.0
+    previous_start = 0
+    for index in range(n_frames):
+        nominal = int(pos)
+        start = nominal
+        if index > 0:
+            max_start = total - frame
+            target_start = min(previous_start + hop_out, max_start)
+            target = data[target_start:target_start + probe].astype(np.float32)
+            if target.shape[0] == probe:
+                low = max(0, nominal - search)
+                high = min(max_start, nominal + search)
+                if high > low:
+                    window_view = np.lib.stride_tricks.sliding_window_view(
+                        data[low:high + probe], probe, axis=0
+                    )
+                    candidates = window_view.astype(np.float32)
+                    # 归一化互相关（避免选到能量更大的无关片段）
+                    target_norm = float(np.linalg.norm(target)) + 1e-6
+                    candidate_norm = np.linalg.norm(candidates, axis=1) + 1e-6
+                    scores = (candidates @ target) / (candidate_norm * target_norm)
+                    start = low + int(np.argmax(scores))
+            start = max(0, min(max_start, start))
+        segment = data[start:start + frame]
+        if segment.shape[0] < frame:  # pragma: no cover - 收尾
+            break
+        offset = index * hop_out
+        out[offset:offset + frame] += segment.astype(np.float32) * window[:, None]
+        norm[offset:offset + frame, 0] += window
+        previous_start = start
+        pos += hop_in
+    np.maximum(norm, 1e-3, out=norm)
+    out /= norm
+    result = out[:, 0] if squeeze else out
+    if samples.dtype == np.int16:
+        return np.clip(result, -32768, 32767).astype(np.int16)
+    return result.astype(samples.dtype)
+
+
 class SilentBackend:
-    """不发声的时钟后端：保证没有音频依赖时编辑器依然可用。"""
+    """不发声的时钟后端：保证没有音频依赖时编辑器依然可用（支持倍速）。"""
 
     name = "silent"
     supports_seek = True
@@ -49,8 +155,8 @@ class SilentBackend:
         self._start = 0.0
         self._base_ms = 0.0
         self._playing = False
-        self._length_ms = 0.0
-        self._volume = 1.0
+        self._length_ms = 300_000.0
+        self.rate = 1.0
 
     def load(self, path: str) -> bool:
         self._length_ms = max(60_000.0, 300_000.0)
@@ -58,6 +164,12 @@ class SilentBackend:
 
     def unload(self) -> None:
         self.stop()
+
+    def set_rate(self, rate: float) -> None:
+        # 变速时保持“当前位置”不变
+        self._base_ms = self.position_ms()
+        self._start = time.perf_counter()
+        self.rate = max(0.05, float(rate))
 
     def play(self, start_ms: float) -> None:
         self._base_ms = float(start_ms)
@@ -75,11 +187,14 @@ class SilentBackend:
 
     def position_ms(self) -> float:
         if self._playing:
-            return self._base_ms + (time.perf_counter() - self._start) * 1000.0
+            return self._base_ms + (time.perf_counter() - self._start) * 1000.0 * self.rate
         return self._base_ms
 
+    def poll(self) -> None:
+        return
+
     def set_volume(self, volume: float) -> None:
-        self._volume = float(volume)
+        return
 
     @property
     def is_playing(self) -> bool:
@@ -90,23 +205,33 @@ class SilentBackend:
         return self._length_ms
 
 
+def _ensure_mixer() -> Tuple[int, int, int]:
+    """确保 mixer 用固定格式初始化（sndarray 需要已知格式）。"""
+    assert _PYGAME is not None
+    info = _PYGAME.mixer.get_init()
+    if info is None:
+        try:
+            _PYGAME.mixer.init(frequency=44100, size=-16, channels=2, buffer=1024)
+        except Exception:
+            _PYGAME.mixer.quit()
+            _PYGAME.mixer.init(frequency=44100, size=-16, channels=2, buffer=1024)
+        info = _PYGAME.mixer.get_init()
+    return int(info[0]), int(info[1]), int(info[2])
+
+
 class PygameBackend:  # pragma: no cover - 依赖 pygame
+    """流式播放后端（倍速 1.0x）。"""
+
     name = "pygame.mixer"
     supports_seek = True
 
     def __init__(self) -> None:
         assert _PYGAME is not None
-        try:
-            _PYGAME.mixer.init()
-        except Exception:
-            try:
-                _PYGAME.mixer.quit()
-                _PYGAME.mixer.init()
-            except Exception:
-                raise
+        _ensure_mixer()
         self._loaded: Optional[str] = None
         self._volume = 1.0
         self._seek_base_ms = 0.0
+        self.rate = 1.0
 
     def load(self, path: str) -> bool:
         if not os.path.isfile(path):
@@ -122,8 +247,14 @@ class PygameBackend:  # pragma: no cover - 依赖 pygame
             pass
         self._loaded = None
 
+    def set_rate(self, rate: float) -> None:
+        # 流式后端不支持变速；倍速由 StretchedSoundBackend 负责
+        self._seek_base_ms = self.position_ms()
+        self.rate = max(0.05, float(rate))
+
     def play(self, start_ms: float) -> None:
-        _PYGAME.mixer.music.play(start=max(0.0, float(start_ms) / 1000.0))
+        self._seek_base_ms = max(0.0, float(start_ms))
+        _PYGAME.mixer.music.play(start=self._seek_base_ms / 1000.0)
 
     def stop(self) -> None:
         _PYGAME.mixer.music.stop()
@@ -131,15 +262,14 @@ class PygameBackend:  # pragma: no cover - 依赖 pygame
     def pause(self) -> None:
         _PYGAME.mixer.music.pause()
 
-    def unpause(self) -> None:
-        _PYGAME.mixer.music.unpause()
+    def poll(self) -> None:
+        return
 
     def position_ms(self) -> float:
         pos = _PYGAME.mixer.music.get_pos()
         if pos is None or pos < 0:
-            return 0.0
-        base = getattr(self, "_seek_base_ms", 0.0)
-        return base + float(pos)
+            return self._seek_base_ms
+        return self._seek_base_ms + float(pos)
 
     def set_volume(self, volume: float) -> None:
         self._volume = float(volume)
@@ -154,35 +284,190 @@ class PygameBackend:  # pragma: no cover - 依赖 pygame
 
     @property
     def length_ms(self) -> float:
-        try:
-            sound = _PYGAME.mixer.Sound(self._loaded) if self._loaded else None
-            return float(sound.get_length() * 1000.0) if sound else 0.0
-        except Exception:
-            return 0.0
+        return 0.0
 
-    def play_seek(self, start_ms: float) -> None:
-        self._seek_base_ms = max(0.0, float(start_ms))
-        self.play(0.0)
+
+class StretchedSoundBackend:  # pragma: no cover - 依赖 pygame + numpy
+    """时间伸缩播放后端：把 PCM 分窗口拉伸（音调不变）后用 Sound 播放。"""
+
+    name = "pygame+OLA"
+    supports_seek = True
+
+    def __init__(self) -> None:
+        assert _PYGAME is not None and _NP is not None
+        self.freq, self.size, self.channels = _ensure_mixer()
+        self._samples = None
+        self._loaded: Optional[str] = None
+        self._volume = 1.0
+        self.rate = 1.0
+        self._channel = None
+        self._windows: List[Tuple[object, float, float]] = []
+        self._playing = False
+        self._start_source_ms = 0.0
+        self._start_time = 0.0
+        self._paused_ms = 0.0
+        self._length_ms = 0.0
+
+    # ------------------------------------------------------------------ 载入
+    def load(self, path: str) -> bool:
+        if not os.path.isfile(path):
+            return False
+        sound = _PYGAME.mixer.Sound(path)
+        array = _PYGAME.sndarray.array(sound)
+        self._samples = _NP.ascontiguousarray(array)
+        self._loaded = path
+        self._length_ms = float(self._samples.shape[0]) / self.freq * 1000.0
+        self._windows.clear()
+        return True
+
+    def unload(self) -> None:
+        self.stop()
+        self._samples = None
+        self._loaded = None
+        self._windows.clear()
+
+    def set_rate(self, rate: float) -> None:
+        self._paused_ms = self.position_ms()
+        self.rate = max(0.05, float(rate))
+        self._windows.clear()
+
+    # ------------------------------------------------------------------ 播放
+    def _make_window(self, start_ms: float):
+        if self._samples is None:
+            return None
+        start = max(0, int(start_ms / 1000.0 * self.freq))
+        stop = min(
+            int(self._samples.shape[0]),
+            start + int(STRETCH_WINDOW_MS / 1000.0 * self.freq),
+        )
+        if stop - start < STRETCH_FRAME * 2:
+            return None
+        chunk = self._samples[start:stop]
+        stretched = time_stretch(chunk, self.rate)
+        sound = _PYGAME.sndarray.make_sound(_NP.ascontiguousarray(stretched))
+        sound.set_volume(max(0.0, min(1.0, self._volume)))
+        return sound, start / self.freq * 1000.0, stop / self.freq * 1000.0
+
+    def play(self, start_ms: float) -> None:
+        if self._samples is None:
+            return
+        self.stop()
+        first = self._make_window(start_ms)
+        if first is None:
+            return
+        self._channel = _PYGAME.mixer.Channel(0)
+        self._channel.play(first[0])
+        self._windows = [first]
+        self._start_source_ms = max(0.0, float(start_ms))
+        self._start_time = time.perf_counter()
+        self._playing = True
+
+    def poll(self) -> None:
+        """播放过程中提前准备下一个窗口并排队，保证连续播放。"""
+        if not self._playing or self._channel is None or not self._windows:
+            return
+        position = self.position_ms()
+        last = self._windows[-1]
+        if position > last[1]:
+            # 已经进入后面的窗口，丢掉前面的
+            self._windows = [w for w in self._windows if w[2] > position]
+            last = self._windows[-1] if self._windows else last
+        if last[2] - position <= STRETCH_QUEUE_AHEAD_MS:
+            nxt = self._make_window(last[2])
+            if nxt is not None and (not self._windows or self._windows[-1][2] < nxt[2]):
+                self._channel.queue(nxt[0])
+                self._windows.append(nxt)
+
+    def stop(self) -> None:
+        if self._channel is not None:
+            try:
+                self._channel.stop()
+            except Exception:
+                pass
+        self._channel = None
+        self._windows.clear()
+        self._playing = False
+        self._paused_ms = 0.0
+
+    def pause(self) -> None:
+        self._paused_ms = self.position_ms()
+        if self._channel is not None:
+            try:
+                self._channel.stop()
+            except Exception:
+                pass
+        self._channel = None
+        self._windows.clear()
+        self._playing = False
+
+    def position_ms(self) -> float:
+        if not self._playing:
+            return self._paused_ms
+        elapsed = (time.perf_counter() - self._start_time) * 1000.0 * self.rate
+        return min(self._start_source_ms + elapsed, self._length_ms)
+
+    def set_volume(self, volume: float) -> None:
+        self._volume = float(volume)
+        for window in self._windows:
+            try:
+                window[0].set_volume(max(0.0, min(1.0, self._volume)))
+            except Exception:
+                pass
+
+    @property
+    def is_playing(self) -> bool:
+        if not self._playing:
+            return False
+        if self._channel is None:
+            return False
+        try:
+            return bool(self._channel.get_busy())
+        except Exception:
+            return self._playing
+
+    @property
+    def length_ms(self) -> float:
+        return self._length_ms
 
 
 class AudioPlayer:
-    """对上层暴露的音频接口：以“歌曲毫秒位置”为单位。"""
+    """对上层暴露的音频接口：以“歌曲原始毫秒位置”为单位。"""
 
     def __init__(self) -> None:
-        self.backend = self._create_backend()
+        self.rate = config.DEFAULT_RATE
         self.path: Optional[str] = None
         self.latency_ms = 0.0
         self._playing = False
         self._paused_at_ms = 0.0
+        self._plain_backend = self._create_plain_backend()
+        self._stretch_backend = None
+        self.backend = self._plain_backend
 
+    # ------------------------------------------------------------------ 后端
     @staticmethod
-    def _create_backend():
+    def _create_plain_backend():
         if _PYGAME is not None:
             try:
                 return PygameBackend()
             except Exception:
                 pass
         return SilentBackend()
+
+    def _select_backend(self):
+        want_stretch = self.rate < config.RATE_MAX - 1e-9
+        if want_stretch and STRETCH_AVAILABLE:
+            if self._stretch_backend is None:
+                try:
+                    self._stretch_backend = StretchedSoundBackend()
+                except Exception:  # pragma: no cover - 无音频设备
+                    self._stretch_backend = None
+            if self._stretch_backend is not None:
+                return self._stretch_backend
+        return self._plain_backend
+
+    @property
+    def stretch_active(self) -> bool:
+        return isinstance(self.backend, StretchedSoundBackend)
 
     # ------------------------------------------------------------------ 属性
     @property
@@ -196,45 +481,83 @@ class AudioPlayer:
     @property
     def status_text(self) -> str:
         if self.path is None:
-            return f"音频后端：{self.backend.name}（未载入歌曲）"
+            return f"音频后端：{self.backend.name}（未载入歌曲）· {_fmt_rate(self.rate)}"
         base = os.path.basename(self.path)
         if not self.usable_audio:
-            return f"音频后端：silent（无 pygame，静音播放）· {base}"
-        return f"音频后端：{self.backend.name} · {base}"
+            return f"音频后端：silent（无 pygame，静音播放）· {base} · {_fmt_rate(self.rate)}"
+        tone = "· 不变调" if self.stretch_active else ""
+        return f"音频后端：{self.backend.name} · {base} · {_fmt_rate(self.rate)}{tone}"
 
     # ------------------------------------------------------------------ 载入
     def load(self, path: Optional[str]) -> bool:
         self.stop()
         self.path = None
+        self.backend = self._select_backend()
         if not path or not os.path.isfile(path):
             return False
         try:
             ok = self.backend.load(path)
         except Exception:
             ok = False
+        if not ok and self.backend is not self._plain_backend:
+            # 拉伸后端失败时退回普通后端
+            self.backend = self._plain_backend
+            try:
+                ok = self.backend.load(path)
+            except Exception:
+                ok = False
         if ok:
             self.path = path
+            self.backend.set_rate(self.rate)
         return ok
 
     def unload(self) -> None:
         """停止并释放当前音频文件（Windows 下会解除文件占用）。"""
         self.stop()
-        try:
-            self.backend.unload()
-        except Exception:
-            pass
+        for backend in (self._plain_backend, self._stretch_backend):
+            if backend is None:
+                continue
+            try:
+                backend.unload()
+            except Exception:
+                pass
         self.path = None
+
+    # ------------------------------------------------------------------ 倍速
+    def set_rate(self, rate: float) -> None:
+        """设置播放倍速（0.1 ~ 1.0x，步进 0.1），变速不变调。"""
+        rate = round(max(config.RATE_MIN, min(config.RATE_MAX, float(rate))), 2)
+        if abs(rate - self.rate) < 1e-9:
+            return
+        was_playing = self._playing
+        position = self.position_ms()
+        self.rate = rate
+        backend = self._select_backend()
+        if backend is not self.backend:
+            self.backend = backend
+            if self.path:
+                try:
+                    if not backend.load(self.path):  # pragma: no cover
+                        self.backend = self._plain_backend
+                except Exception:  # pragma: no cover
+                    self.backend = self._plain_backend
+        try:
+            self.backend.set_rate(self.rate)
+        except Exception:  # pragma: no cover
+            pass
+        self._paused_at_ms = position
+        self._playing = False
+        if was_playing and self.path:
+            self.play(position)
 
     # ------------------------------------------------------------------ 控制
     def play(self, song_ms: float) -> None:
         start = max(0.0, float(song_ms))
         try:
-            if isinstance(self.backend, PygameBackend):
-                self.backend.play_seek(start)
-            else:
-                self.backend.play(start)
-        except Exception:
+            self.backend.play(start)
+        except Exception:  # pragma: no cover - 后端异常时退回静音时钟
             self.backend = SilentBackend()
+            self.backend.set_rate(self.rate)
             self.backend.play(start)
         self._playing = True
         self._paused_at_ms = start
@@ -257,6 +580,13 @@ class AudioPlayer:
             pass
         self._playing = False
         self._paused_at_ms = 0.0
+
+    def poll(self) -> None:
+        """每帧调用：拉伸后端用它提前准备后续窗口。"""
+        try:
+            self.backend.poll()
+        except Exception:  # pragma: no cover
+            pass
 
     def set_volume(self, volume: float) -> None:
         try:

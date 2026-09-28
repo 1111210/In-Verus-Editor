@@ -147,6 +147,25 @@ def apply_theme(root: tk.Misc, theme: Theme) -> ttk.Style:
     style.configure("TCheckbutton", background=theme.panel, foreground=theme.text, font=font)
     style.map("TCheckbutton", background=[("active", theme.panel)])
     style.configure("TSeparator", background=theme.lane_border)
+    # 滚动条：滑条体白色、背景（槽）纯黑
+    for name in ("White.Vertical.TScrollbar", "White.Horizontal.TScrollbar"):
+        style.configure(
+            name,
+            background="#ffffff",
+            troughcolor=theme.bg,
+            bordercolor=theme.bg,
+            darkcolor="#ffffff",
+            lightcolor="#ffffff",
+            arrowcolor="#ffffff",
+            relief="flat",
+            gripcount=0,
+            arrowsize=12,
+        )
+        style.map(
+            name,
+            background=[("pressed", "#c8c8c8"), ("active", "#f0f0f0")],
+            arrowcolor=[("pressed", theme.bg), ("active", "#ffffff")],
+        )
     style.configure("TNotebook", background=theme.panel, bordercolor=theme.lane_border)
     style.configure("TNotebook.Tab", background=theme.panel_alt, foreground=theme.text,
                     padding=(10, 4), font=font)
