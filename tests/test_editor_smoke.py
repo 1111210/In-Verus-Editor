@@ -192,6 +192,18 @@ class EditorSmokeTest(unittest.TestCase):
         slides = [n for n in self.document.chart.mouse_notes if isinstance(n, MouseSlide)]
         self.assertEqual(slides[1].direction, -1)
 
+    def test_slide_without_horizontal_grid_uses_click_x(self) -> None:
+        """未开启横向辅助网格时，滑键放在鼠标点击的横坐标上（不吸附网格线）。"""
+        self.chart.settings.horizontal_divisions = 0
+        self.controller.set_tool(config.TOOL_MOUSE_SLIDE)
+        self.click(self.view.norm_to_x(0.33), self.y_of_beat(3.0))
+        self.click(self.view.norm_to_x(0.61), self.y_of_beat(3.5))
+        slides = [n for n in self.document.chart.mouse_notes if isinstance(n, MouseSlide)]
+        self.assertEqual(len(slides), 1)
+        self.assertAlmostEqual(slides[0].x_start, 0.33, places=6)
+        self.assertAlmostEqual(slides[0].x_end, 0.61, places=6)
+        self.assertEqual(slides[0].direction, 1)
+
     # -------------------------------------------------------------- 选择 / 编辑
     def test_rubber_band_and_ctrl_xor(self) -> None:
         self.controller.set_tool(config.TOOL_LANE_TAP)

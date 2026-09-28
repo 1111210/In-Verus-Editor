@@ -57,6 +57,8 @@ python -m unittest discover -s tests -t . -v
 | `tests/test_chart_io.py` | 谱面 JSON 往返、音频复制与查找 |
 | `tests/test_demo_selftest.py` | 示例谱面结构、内置自检 |
 | `tests/test_editor_smoke.py` | 真实 Tk 画布渲染、全部放置工具、框选/Ctrl 对称差、粘贴流程、滚动吸附、缩放、轨道渲染 |
+| `tests/test_dialogs.py` | BPM 第 0 拍项不可删除/只可修改、默认速度组不可删除、物件编辑与缓动写入 |
+| `tests/test_app_flow.py` | 应用级：播放/暂停后判定线吸附、延迟补偿、演示模式只读、设置与保存 |
 
 ## 4. 人工验收（需要图形界面）
 
@@ -111,10 +113,25 @@ python tools/check_audio.py
 
 | 项目 | 命令 | 结果 |
 | --- | --- | --- |
-| 单元测试（含 Tk 画布冒烟测试） | `python -m unittest discover -s tests -t .` | Ran 70 tests — **OK** |
+| 单元测试（含 Tk 画布冒烟测试与应用级测试） | `python -m unittest discover -s tests -t .` | Ran 87 tests — **OK** |
 | 需求验收清单 | `python tools/acceptance.py` | 13 项全部 `[OK ]`，结论：全部通过 |
 | 音频后端 | `python tools/check_audio.py` | 9 项全部 `[OK ]`（pygame.mixer 真实播放，延迟补偿正确） |
 | 示例谱面生成 | `python run_editor.py --make-demo` | 生成 `charts/demo/demo.ivchart`（6K 32 / 区域 3 / 滑键 6 / 4 个速度组） |
 | 界面截图 | `python tools/screenshot_editor.py docs/images` | 3 张窗口截图（PrintWindow 抓取） |
 
 截图与测试均在真实 Tk 画布上执行，因此“渲染 → 交互 → 数据”整条链路都有证据。
+
+### 7.1 关于“流速可正可负”的专项验证
+
+速度组允许 `v` 取正数、0、负数并在各段叠加，因此物件位置**不是**判定时刻的单调函数：
+远处的物件可能正好被推回判定线上。相应的回归测试：
+
+| 测试 | 验证点 |
+| --- | --- |
+| `tests/test_speed.py::test_superposed_speeds_return_object_to_judgment_line` | `∫v = 0` 时判定时刻相差 20 拍的物件正好在判定线上；各段积分确定性校核 |
+| `tests/test_speed.py::test_position_is_not_monotonic_in_beat` | 相差 200 拍的判定时刻同样可以回到判定线 |
+| `tests/test_editor_smoke.py::test_far_note_pushed_back_to_judgment_line_is_drawn_and_hittable` | 该物件被**正常渲染**（下边缘压在判定线上）且**可点选** |
+| `tests/test_editor_smoke.py::test_note_flung_far_below_line_is_culled_by_pixels_only` | 被甩出画面的物件按**像素位置**剔除（而不是拍差阈值） |
+
+实现约束：`ui/renderer.py::_draw_notes` 先算位置再决定是否绘制；
+`ui/geometry.py` 与渲染共用同一套几何（含速度段边界折点采样 `sample_beats`）。

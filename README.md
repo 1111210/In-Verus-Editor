@@ -90,6 +90,11 @@ python -m unittest discover -s tests -t . -v
 | 10 播放 / 暂停 | `audio.py`、`app.py` | 任意位置起播、延迟补偿、暂停时判定线吸附网格 |
 | 11 演示模式 | `app.py::set_demo_mode` | 两平面叠加、只读、支持滚动 / 缩放 / 播放 / 暂停 |
 
+> 速度组的流速可正可负并叠加，因此**物件位置不是判定时刻的单调函数**（远处的物件可能被
+> 推回判定线上、近处的物件可能被甩出画面）。渲染剔除只看实际像素位置，命中测试与渲染
+> 共用同一套几何 —— 详见 [`docs/DESIGN.md`](docs/DESIGN.md) 的“非单调速度”一节与
+> [`docs/VERIFICATION.md`](docs/VERIFICATION.md) 的专项验证。
+
 完整逐条规格见 [`docs/SPEC.md`](docs/SPEC.md)，数据结构见 [`docs/CHART_FORMAT.md`](docs/CHART_FORMAT.md)，
 操作说明见 [`docs/USER_GUIDE.md`](docs/USER_GUIDE.md)，架构设计见 [`docs/DESIGN.md`](docs/DESIGN.md)。
 
