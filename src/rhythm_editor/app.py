@@ -9,7 +9,14 @@ from tkinter import filedialog, messagebox, ttk
 from typing import Dict, Optional, Tuple
 
 from . import config
-from .audio import AudioPlayer, audio_backend_available, audio_backend_name, audio_setup_hint
+from .audio import (
+    AudioPlayer,
+    audio_backend_available,
+    audio_backend_name,
+    audio_setup_hint,
+    audio_silent_reason,
+    write_startup_log,
+)
 from .io.chart_io import (
     chart_audio_path,
     copy_audio_into_chart_dir,
@@ -87,6 +94,7 @@ class EditorApp:
         else:
             self.status(f"音频后端：{audio_backend_name()}")
         self.status(f"解释器：{sys.executable}")
+        write_startup_log()
 
         if chart_path:
             self.load_chart_file(chart_path)
@@ -564,7 +572,8 @@ class EditorApp:
         self.audio.latency_ms = self.document.chart.settings.audio_latency_ms
         song_ms = timing.beat_to_song_ms(self.view.current_beat)
         self.audio.play(song_ms)
-        note = "" if self.audio.usable_audio else "（静音播放：未安装 pygame）"
+        reason = audio_silent_reason()
+        note = f"（静音播放：{reason}）" if reason else ""
         self.status(f"从第 {self.view.current_beat:.3f} 拍开始播放{note}")
 
     def pause(self) -> None:

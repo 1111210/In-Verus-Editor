@@ -105,6 +105,43 @@ def _silent_reason() -> str:
     return "未使用音频后端"
 
 
+def audio_silent_reason() -> str:
+    """对外：静音时的一句话原因（可用时为空串）。"""
+    return "" if audio_backend_state() == "ok" else _silent_reason()
+
+
+def write_startup_log() -> str:
+    """把音频自检写进 ``_diag/audio_startup.log``（排障用，失败也不影响运行）。
+
+    内容：时间、解释器、pygame / numpy 状态、失败原因、最终后端。
+    启动时都会写一次，用户报“没有声音”时直接看这个文件即可。
+    """
+    import datetime
+
+    root = os.path.dirname(os.path.dirname(os.path.dirname(os.path.abspath(__file__))))
+    target = os.path.join(root, "_diag", "audio_startup.log")
+    lines = [
+        f"----- {datetime.datetime.now().isoformat(timespec='seconds')} -----",
+        f"解释器：{sys.executable}",
+        f"Python：{sys.version.split()[0]}",
+        f"PYTHONHOME：{os.environ.get('PYTHONHOME', '(未设置)')}",
+        f"PYTHONPATH：{os.environ.get('PYTHONPATH', '(未设置)')}",
+        f"pygame：{'已安装 ' + _PYGAME.version.ver if _PYGAME is not None else '未安装'}"
+        + (f"（导入失败：{_PYGAME_ERROR}）" if _PYGAME_ERROR else ""),
+        f"numpy：{'已安装' if _NP is not None else '未安装'}",
+        f"音频设备：{_MIXER_ERROR or '正常'}",
+        f"状态：{audio_backend_state()} · 后端：{audio_backend_name()}",
+        "",
+    ]
+    try:
+        os.makedirs(os.path.dirname(target), exist_ok=True)
+        with open(target, "a", encoding="utf-8") as handle:
+            handle.write("\n".join(lines))
+    except OSError:  # pragma: no cover - 只读目录等
+        pass
+    return target
+
+
 def audio_backend_available() -> bool:
     return _PYGAME is not None
 
