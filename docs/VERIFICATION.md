@@ -210,7 +210,7 @@ python tools/check_audio.py
 | `tests/test_editor_smoke.py::test_note_layer_order_matches_readability_spec` | 六层绘制顺序（画布图元次序）符合规格 |
 | `tests/test_editor_smoke.py::test_hit_priority_follows_layer_order` | 命中优先级与图层一致（滑键 > 空域 > 单轨单键 > …） |
 | `tests/test_undo_records.py`（10 条） | 差量撤销：增删/粘贴/镜像/编辑/改组/改元数据与 BPM 的撤销重做等价性、记录量只随改动量增长、栈上限、选择还原 |
-| `tests/test_chart_io.py::test_legacy_ivchart_still_loads` | 旧版 `.ivchart` 仍可直接打开；默认保存为 `.json` |
+| `tests/test_chart_io.py::test_suffix` | 只支持 JSON：任何后缀都会被规范成 `.json` |
 | `tests/test_app_flow.py::test_fullscreen_toggle` | 全屏开关切换 |
 | `tests/test_app_flow.py::test_maximized_by_default` | 默认最大化（`-fullscreen` 属性为 0），不是无边框全屏 |
 | `tests/test_app_flow.py::test_toggle_maximize_and_fullscreen` | 最大化 / 还原 / 全屏互斥切换 |

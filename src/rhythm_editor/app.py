@@ -478,7 +478,6 @@ class EditorApp:
             title="打开谱面",
             filetypes=[
                 ("JSON 谱面", "*.json"),
-                ("旧版谱面 (.ivchart)", "*.ivchart"),
                 ("全部文件", "*.*"),
             ],
         )
@@ -842,7 +841,7 @@ def main(argv: Optional[list] = None) -> int:  # pragma: no cover - GUI 入口
     import argparse
 
     parser = argparse.ArgumentParser(description=f"{config.APP_TITLE} {config.VERSION}")
-    parser.add_argument("chart", nargs="?", help="要打开的谱面文件（.ivchart）")
+    parser.add_argument("chart", nargs="?", help="要打开的谱面文件（JSON，.json）")
     parser.add_argument("--demo", action="store_true", help="直接进入演示模式")
     parser.add_argument("--make-demo", action="store_true", help="生成示例谱面后退出")
     parser.add_argument("--windowed", action="store_true", help="以普通窗口启动（默认最大化）")

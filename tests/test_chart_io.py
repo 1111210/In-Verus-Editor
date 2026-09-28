@@ -20,13 +20,6 @@ from test_chart_document import make_chart  # noqa: E402
 
 
 class ChartIoTests(unittest.TestCase):
-
-    def test_legacy_ivchart_still_loads(self) -> None:
-        """旧版 .ivchart 文件仍是 JSON，可以直接打开。"""
-        path = os.path.join(self.tmp.name, "legacy.ivchart")
-        save_chart(self.chart, path)
-        chart, _raw = load_chart(path)
-        self.assertEqual(chart.to_dict(), self.chart.to_dict())
     def setUp(self) -> None:
         self.tmp = tempfile.TemporaryDirectory()
         self.addCleanup(self.tmp.cleanup)
@@ -35,8 +28,9 @@ class ChartIoTests(unittest.TestCase):
     def test_suffix(self) -> None:
         self.assertTrue(ensure_chart_suffix("song").endswith(".json"))
         self.assertTrue(ensure_chart_suffix("song.json").endswith(".json"))
-        # 旧版 .ivchart 仍然识别（打开旧文件不会再加后缀）
-        self.assertTrue(ensure_chart_suffix("song.ivchart").endswith(".ivchart"))
+        # 只支持 JSON：写别的后缀（含旧的 .ivchart）一律改成 .json
+        self.assertTrue(ensure_chart_suffix("song.ivchart").endswith("song.json"))
+        self.assertTrue(ensure_chart_suffix("song.txt").endswith("song.json"))
 
     def test_save_load_roundtrip(self) -> None:
         path = os.path.join(self.tmp.name, "chart.json")

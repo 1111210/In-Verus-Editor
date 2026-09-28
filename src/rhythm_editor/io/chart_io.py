@@ -16,10 +16,11 @@ from ..model.chart import Chart
 
 
 def ensure_chart_suffix(path: str) -> str:
+    """保证谱面文件名以 ``.json`` 结尾（只支持 JSON 格式）。"""
     root, ext = os.path.splitext(path)
-    known = config.CHART_EXTENSIONS + config.LEGACY_CHART_EXTENSIONS
-    if ext.lower() in known:
+    if ext.lower() == config.CHART_EXTENSION:
         return path
+    # 写成别的后缀（含旧的 .ivchart）时统一改成 .json
     return root + config.CHART_EXTENSION
 
 
