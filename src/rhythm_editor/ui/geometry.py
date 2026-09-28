@@ -40,11 +40,11 @@ def hit_signature(view: ViewState) -> tuple:
 def _depth(note: Note) -> int:
     """命中优先级 = 渲染图层顺序（越大越靠上）：
 
-    滑键 > 点击按键 > 空域 > 单轨单键 > 多轨单键 > 单轨长按 > 多轨长按。
+    点击按键 > 滑键 > 空域 > 单轨单键 > 多轨单键 > 单轨长按 > 多轨长按。
     """
-    if isinstance(note, MouseSlide):
-        return 7
     if isinstance(note, MouseClick):
+        return 7
+    if isinstance(note, MouseSlide):
         return 6
     if isinstance(note, MouseRegion):
         return 5
@@ -132,12 +132,12 @@ def slide_bounds(note: MouseSlide, chart: Chart, view: ViewState) -> Bounds:
 
 
 def click_bounds(note: MouseClick, chart: Chart, view: ViewState) -> Bounds:
-    """鼠标点击按键的命中框：与渲染一致的长方形（宽度 = 2×半宽，高度固定）。"""
+    """鼠标点击按键的命中框：与渲染一致的长方形（宽度 = 2×半宽，高度固定、竖向居中）。"""
     group = chart.group_by_id(note.group)
     y = view.note_y(note.beat, group)
     half = max(1.0, float(note.radius) * view.layout.mouse_width)
     x = view.norm_to_x(note.center)
-    return x - half, y - TAP_MIN_PX, x + half, y
+    return x - half, y - TAP_MIN_PX / 2.0, x + half, y + TAP_MIN_PX / 2.0
 
 
 def region_polygon(note: MouseRegion, chart: Chart, view: ViewState, samples: int = REGION_SAMPLES) -> List[Point]:

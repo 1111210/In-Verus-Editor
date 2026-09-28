@@ -222,32 +222,48 @@ class ClickToolTests(unittest.TestCase):
         self.assertAlmostEqual(slides[0].x_end, 1.3, places=3)
 
     def test_render_style_and_fixed_diamond(self) -> None:
-        """渲染：与 6K 按键同款的长方形 + 固定大小实心菱形（菱形不随按键大小变化）。"""
+        """渲染：左右两条红色实线标范围（粗细同 6K 中心实线）+ 固定大小的红色实心菱形。"""
         small = MouseClick("S", 3.0, 0.3, 0.05)
         big = MouseClick("B", 5.0, 0.6, 0.25)
         self.chart.add(small)
         self.chart.add(big)
         self.view.set_beat(0.0)
         self.renderer.draw(self.chart, self.view, self.state)
-        body = dict(self.scene._items["click:S"][2][1])
-        self.assertEqual(body["fill"], DARK.click_fill)
-        self.assertEqual(body["stipple"], DARK.stipple_fill)
-        self.assertEqual(body["outline"], DARK.note_white, "外侧白边，与 6K 按键一致")
-        # 长方形：底边贴在判定时刻上、高度与 6K 单键相同
-        box = self.scene._items["click:S"][2][0]
-        self.assertAlmostEqual(box[3] - box[1], TAP_MIN_PX, places=6)
-        self.assertIn("click-ring:S", self.scene._items, "内侧亮红环")
-        self.assertIn("click-line:S", self.scene._items, "中间白色横线")
+
+        # 左右两条红色实线：粗细与 6K 按键中心实线相同，以判定时刻为垂直中点
+        left = self.scene._items["click-left:S"]
+        right = self.scene._items["click-right:S"]
+        left_coords, right_coords = left[2][0], right[2][0]
+        left_opts, right_opts = dict(left[2][1]), dict(right[2][1])
+        self.assertEqual(left_opts["fill"], DARK.click_edge)
+        self.assertEqual(right_opts["fill"], DARK.click_edge)
+        self.assertEqual(int(left_opts["width"]), DARK.note_line_width)
+        self.assertEqual(int(right_opts["width"]), DARK.note_line_width)
+        self.assertAlmostEqual(left_coords[3] - left_coords[1], TAP_MIN_PX, places=6)
+        self.assertAlmostEqual(
+            (left_coords[1] + left_coords[3]) / 2, self.view.beat_to_y(3.0), places=6
+        )
+        # 不再有填充 / 白边 / 中间白实线
+        self.assertNotIn("click:S", self.scene._items)
+        self.assertNotIn("click-ring:S", self.scene._items)
+        self.assertNotIn("click-line:S", self.scene._items)
+
         diamond_small = self.scene._items["click-diamond:S"][2][0]
         diamond_big = self.scene._items["click-diamond:B"][2][0]
         size_small = max(diamond_small[0::2]) - min(diamond_small[0::2])
         size_big = max(diamond_big[0::2]) - min(diamond_big[0::2])
         self.assertAlmostEqual(size_small, size_big, places=6, msg="菱形大小必须固定")
         self.assertAlmostEqual(size_small, 2 * config.CLICK_DIAMOND_RADIUS_PX, places=6)
-        # 长方形宽度随按键尺寸变化
-        body_small = self.scene._items["click:S"][2][0]
-        body_big = self.scene._items["click:B"][2][0]
-        self.assertLess(body_small[2] - body_small[0], body_big[2] - body_big[0])
+        # 菱形：红色实心（不透明）、中心正好落在判定时刻上
+        diamond_opts = dict(self.scene._items["click-diamond:S"][2][1])
+        self.assertEqual(diamond_opts["fill"], DARK.click_diamond)
+        self.assertNotIn("stipple", diamond_opts, "菱形必须不透明")
+        self.assertAlmostEqual(
+            (diamond_small[1] + diamond_small[5]) / 2, self.view.beat_to_y(3.0), places=6
+        )
+        # 两条实线的间距随按键尺寸变化
+        left_big = self.scene._items["click-left:B"][2][0]
+        self.assertLess(left_coords[0], left_big[0], "按键越大，左边界越靠左")
 
     def test_fallback_hit_path_and_box_selection(self) -> None:
         """兜底命中路径（无渲染缓存）也能选中长方形：点击落在框内、框外不命中。"""

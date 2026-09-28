@@ -54,7 +54,7 @@ def report() -> int:
         f"{counts['slide']} 个",
     )
     item(
-        "鼠标点击按键（半透明红长方形，与 6K 按键同款；中央菱形固定大小且不可编辑）",
+        "鼠标点击按键（左右红色实线标范围、粗细同 6K 中心实线 + 红色实心菱形，最上层）",
         any(
             isinstance(n, MouseClick)
             and n.radius >= config.MIN_CLICK_RADIUS

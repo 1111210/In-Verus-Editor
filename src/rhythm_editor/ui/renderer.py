@@ -8,7 +8,7 @@
 
 渲染顺序（自下而上）：
 背景 -> 区域底色 / 轨道 -> 时间网格 -> 合法区域边界 -> 横向辅助网格
--> 物件（多轨长按 -> 单轨长按 -> 多轨单键 -> 单轨单键 -> 空域 -> 点击按键 -> 滑键）
+-> 物件（多轨长按 -> 单轨长按 -> 多轨单键 -> 单轨单键 -> 空域 -> 滑键 -> 点击按键）
 -> 判定线 -> 区域标题 -> 预览幽灵 / 橡皮筋 -> HUD
 
 物件的七层顺序刻意“从大到小”摆放：即使谱面故意写成非法重叠，
@@ -491,10 +491,10 @@ class Renderer:
             (7, single_tap, lambda n, s: self._draw_lane_note(n, chart, view, s, y_min, y_max)),
             (8, lambda n: isinstance(n, MouseRegion),
                 lambda n, s: self._draw_region(n, chart, view, s, y_min, y_max, region_samples)),
-            (9, lambda n: isinstance(n, MouseClick),
-                lambda n, s: self._draw_click(n, chart, view, s, y_min, y_max)),
-            (10, lambda n: isinstance(n, MouseSlide),
+            (9, lambda n: isinstance(n, MouseSlide),
                 lambda n, s: self._draw_slide(n, chart, view, s, y_min, y_max)),
+            (10, lambda n: isinstance(n, MouseClick),
+                lambda n, s: self._draw_click(n, chart, view, s, y_min, y_max)),
         )
         for layer, matches, draw in layers:
             self.scene.set_layer(layer)
@@ -613,7 +613,11 @@ class Renderer:
         y_min: float = -1e9,
         y_max: float = 1e9,
     ) -> None:
-        """鼠标点击按键：与 6K 按键同款的长方形（半透明红）+ 中央固定大小的实心菱形。"""
+        """鼠标点击按键：左右两条红色实线标出范围 + 中央固定大小的红色实心菱形。
+
+        实线的粗细与 6K 按键的中心实线相同（``theme.note_line_width``），
+        整个物件**竖向居中**在判定时刻上（两条实线的中点与菱形中心都落在时间网格线上）。
+        """
         theme = self.theme
         group = self._group(chart, note)
         y = view.note_y(note.beat, group)
@@ -621,50 +625,30 @@ class Renderer:
             return
         x = view.norm_to_x(note.center)
         radius_px = max(1.0, float(note.radius) * view.layout.mouse_width)
-        # 与 6K 单键一致：底边贴在判定时刻上，高度固定
-        top, bottom = y - TAP_MIN_PX, y
+        # 高度与 6K 单键相同，且以判定时刻为垂直中点
+        top, bottom = y - TAP_MIN_PX / 2.0, y + TAP_MIN_PX / 2.0
         x0, x1 = x - radius_px, x + radius_px
         self._hit_entries.append(
             (note, (x0, top, x1, bottom), None)
         )
-        # 外侧白边 + 内侧亮红环（与 6K 单键的“白边 + 蓝环”同构）
-        self.scene.rect(
-            f"click:{note.id}",
-            x0,
-            top,
-            x1,
-            bottom,
-            fill=theme.click_fill,
-            outline=theme.note_white,
-            width=2,
-            stipple=theme.stipple_fill,
-        )
-        self.scene.rect(
-            f"click-ring:{note.id}",
-            x0 + 2,
-            top + 2,
-            x1 - 2,
-            bottom - 2,
-            fill="",
-            outline=theme.click_edge,
-            width=3,
-        )
-        # 中间的白色横线：与 6K 单键一致
-        middle = (top + bottom) / 2.0
+        # 左右两条红色实线（= 范围边界），粗细与 6K 按键中心实线一致
         self.scene.line(
-            f"click-line:{note.id}",
-            x0 + 2,
-            middle,
-            x1 - 2,
-            middle,
-            fill=theme.note_white,
+            f"click-left:{note.id}",
+            x0, top, x0, bottom,
+            fill=theme.click_edge,
             width=theme.note_line_width,
         )
-        # 中央实心菱形：尺寸固定，不随按键大小变化
+        self.scene.line(
+            f"click-right:{note.id}",
+            x1, top, x1, bottom,
+            fill=theme.click_edge,
+            width=theme.note_line_width,
+        )
+        # 中央红色实心菱形：尺寸固定（不随按键大小变化），中心落在判定时刻上
         d = float(config.CLICK_DIAMOND_RADIUS_PX)
         self.scene.polygon(
             f"click-diamond:{note.id}",
-            [(x - d, middle), (x, middle - d), (x + d, middle), (x, middle + d)],
+            [(x - d, y), (x, y - d), (x + d, y), (x, y + d)],
             fill=theme.click_diamond,
             outline="",
         )
@@ -1069,7 +1053,7 @@ class Renderer:
             y = view.note_y(pending.beat_start)
             x = view.norm_to_x(pending.x_start)
             d = float(config.CLICK_DIAMOND_RADIUS_PX)
-            top, bottom = y - TAP_MIN_PX, y
+            top, bottom = y - TAP_MIN_PX / 2.0, y + TAP_MIN_PX / 2.0
             if pending.step == 0:
                 self.scene.line(
                     "pending:click-guide",
@@ -1087,31 +1071,25 @@ class Renderer:
                 radius_px = max(
                     config.MIN_CLICK_RADIUS, abs(end - pending.x_start)
                 ) * layout.mouse_width
-                self.scene.rect(
-                    "pending:click",
-                    x - radius_px,
-                    top,
-                    x + radius_px,
-                    bottom,
-                    fill=theme.click_fill,
-                    outline=theme.pending,
-                    width=2,
-                    stipple=theme.stipple_soft,
-                )
-                self.scene.line(
-                    "pending:click-line",
-                    x - radius_px,
-                    (top + bottom) / 2.0,
-                    x + radius_px,
-                    (top + bottom) / 2.0,
-                    fill=theme.note_white,
-                    width=theme.note_line_width,
-                )
+                # 与成品一致：左右两条红色实线标出范围（虚线表示尚未放置）
+                for key, edge in (
+                    ("pending:click-left", x - radius_px),
+                    ("pending:click-right", x + radius_px),
+                ):
+                    self.scene.line(
+                        key,
+                        edge,
+                        top,
+                        edge,
+                        bottom,
+                        fill=theme.click_edge,
+                        width=theme.note_line_width,
+                        dash=(4, 3),
+                    )
             self.scene.polygon(
                 "pending:click-diamond",
-                [(x - d, (top + bottom) / 2.0), (x, (top + bottom) / 2.0 - d),
-                 (x + d, (top + bottom) / 2.0), (x, (top + bottom) / 2.0 + d)],
-                fill=theme.pending,
+                [(x - d, y), (x, y - d), (x + d, y), (x, y + d)],
+                fill=theme.click_diamond,
                 outline="",
             )
         if pending.hint:

@@ -283,7 +283,7 @@ class EditorSmokeTest(unittest.TestCase):
         self.assertGreater(order.index(note_item), order.index(pane_bg), "物件必须画在区域底色之上")
 
     def test_note_layer_order_matches_readability_spec(self) -> None:
-        """图层自下而上：多轨长按 → 单轨长按 → 多轨单键 → 单轨单键 → 空域 → 点击按键 → 滑键。"""
+        """图层自下而上：多轨长按 → 单轨长按 → 多轨单键 → 单轨单键 → 空域 → 滑键 → 点击按键。"""
         notes = [
             LaneNote("MH", 1, 4, 0.0, 4.0),          # 多轨长按
             LaneNote("SH", 2, 2, 0.0, 4.0),          # 单轨长按
@@ -306,8 +306,8 @@ class EditorSmokeTest(unittest.TestCase):
         self.assertLess(index("note:SH"), index("note:MT"))
         self.assertLess(index("note:MT"), index("note:ST"))
         self.assertLess(index("note:ST"), index("region:RG"))
-        self.assertLess(index("region:RG"), index("click:CK"))
-        self.assertLess(index("click:CK"), index("slide:SL"))
+        self.assertLess(index("region:RG"), index("slide:SL"))
+        self.assertLess(index("slide:SL"), index("click-left:CK"))
 
     def test_tap_note_style(self) -> None:
         """单键 / 多轨单键：外侧白色边 + 亮蓝色环 + 中间一条白色横线。"""
@@ -368,7 +368,7 @@ class EditorSmokeTest(unittest.TestCase):
         self.assertLess(index("note:HN"), index("note:TM"))
 
     def test_hit_priority_follows_layer_order(self) -> None:
-        """点击命中的优先顺序与图层一致：滑键 > 点击按键 > 空域 > 单轨单键 > 多轨单键 > 长按。"""
+        """点击命中的优先顺序与图层一致：点击按键 > 滑键 > 空域 > 单轨单键 > 多轨单键 > 长按。"""
         hold_multi = LaneNote("MH", 1, 4, 0.0, 4.0)
         hold_single = LaneNote("SH", 2, 2, 0.0, 4.0)
         tap_multi = LaneNote("MT", 1, 3, 2.0)
@@ -386,12 +386,12 @@ class EditorSmokeTest(unittest.TestCase):
         self.assertIn("ST", ids[:2])
         self.assertLess(ids.index("ST"), ids.index("SH"))
         self.assertLess(ids.index("ST"), ids.index("MH"))
-        # 鼠标平面：滑键最靠上，其次点击按键，再到空域
+        # 鼠标平面：点击按键最靠上，其次滑键，再到空域
         mouse_hits = notes_at(
             self.chart, self.view, self.view.norm_to_x(0.2), self.y_of_beat(2.0)
         )
         mouse_ids = [note.id for note in mouse_hits]
-        self.assertEqual(mouse_ids[:3], ["SL", "CK", "RG"])
+        self.assertEqual(mouse_ids[:3], ["CK", "SL", "RG"])
 
     def test_notes_hidden_after_judgment_time(self) -> None:
         """显示规则：判定线越过判定时刻后不再显示（长按 / 区域按结束时刻）。"""

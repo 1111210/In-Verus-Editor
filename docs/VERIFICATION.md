@@ -208,7 +208,7 @@ python tools/check_audio.py
 | `tests/test_perf_hit.py`（6 条） | 命中缓存：只含可见物件、命中测试不再触碰整张谱面、视图变化回退全量、框选复用缓存、签名随视图/谱面变化 |
 | `tests/test_sorted_cache.py`（7 条） | 排序缓存：复用同一列表、增删 / 编辑自动失效、显式失效、分类列表、快照后缓存重建 |
 | `tests/test_editor_smoke.py::test_note_layer_order_matches_readability_spec` | 七层绘制顺序（画布图元次序）符合规格 |
-| `tests/test_editor_smoke.py::test_hit_priority_follows_layer_order` | 命中优先级与图层一致（滑键 > 空域 > 单轨单键 > …） |
+| `tests/test_editor_smoke.py::test_hit_priority_follows_layer_order` | 命中优先级与图层一致（点击按键 > 滑键 > 空域 > 单轨单键 > …） |
 | `tests/test_undo_records.py`（10 条） | 差量撤销：增删/粘贴/镜像/编辑/改组/改元数据与 BPM 的撤销重做等价性、记录量只随改动量增长、栈上限、选择还原 |
 | `tests/test_editor_smoke.py::test_tap_note_style` | 单键图案：白边 + 亮蓝环 + 中间白横线（位置居中） |
 | `tests/test_editor_smoke.py::test_hold_note_style_and_constant_center_line` | 长按图案：两侧蓝线 + 白竖线（粗细与轨道数无关）+ 开头白横线贴在起始拍上 |
@@ -219,7 +219,7 @@ python tools/check_audio.py
 | `tests/test_app_flow.py::test_toggle_maximize_and_fullscreen` | 最大化 / 还原 / 全屏互斥切换 |
 | `tests/test_app_flow.py::test_menu_not_reconfigured_every_frame` | 菜单项只在状态变化时写入（频闪根因之一） |
 | `tests/test_app_flow.py::test_tick_skips_redraw_while_menu_is_posted` | 菜单展开期间不重绘画布（频闪根因之二） |
-| `tests/test_mouse_click.py`（18 条） | 鼠标点击按键：模型 / 序列化 / 镜像 / 复制粘贴 / 编辑撤销、与滑键同规则 + 同拍唯一、两次点击创建（中心 → 大小）、**启用横向网格才吸附并夹进 0..1、未启用时出界也照常放置**（滑键同样）、渲染为与 6K 按键同款的长方形 + 固定大小菱形、兜底命中 / 框选路径 |
+| `tests/test_mouse_click.py`（18 条） | 鼠标点击按键：模型 / 序列化 / 镜像 / 复制粘贴 / 编辑撤销、与滑键同规则 + 同拍唯一、两次点击创建（中心 → 大小）、**启用横向网格才吸附并夹进 0..1、未启用时出界也照常放置**（滑键同样）、渲染为左右红色实线（粗细同 6K 中心实线）+ 红色实心菱形且最上层、兜底命中 / 框选路径 |
 | `tests/test_app_flow.py::test_app_boots_with_chart` | 示例谱面物件总数与分类计数（含 4 个鼠标点击按键） |
 
 人工确认：`docs/images/editor_overview.png`（分栏 + 分组工具栏）、
