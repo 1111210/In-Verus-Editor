@@ -28,7 +28,7 @@ def hit_signature(view: ViewState) -> tuple:
     layout = view.layout
     return (
         round(float(view.current_beat), 6),
-        round(float(view.px_per_beat()), 6),
+        round(float(view.px_per_second()), 6),
         int(layout.width),
         int(layout.height),
         round(float(layout.judgment_y), 6),

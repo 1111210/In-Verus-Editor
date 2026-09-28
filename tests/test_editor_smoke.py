@@ -803,6 +803,68 @@ class EditorSmokeTest(unittest.TestCase):
         # 缩放后判定线仍在同一位置（只有时间尺度变化）
         self.assertAlmostEqual(self.view.beat_to_y(self.view.current_beat), self.view.layout.judgment_y, places=6)
 
+    def test_bpm_change_shows_up_on_the_axis_immediately(self) -> None:
+        """BPM 变更处之后的时间轴格子立刻按新 BPM 变密 / 变疏（不必等判定线过去）。"""
+        from rhythm_editor.model.timing import BpmSegment, TimingMap
+
+        self.chart.timing = TimingMap(
+            [BpmSegment(0.0, 120.0, 4), BpmSegment(8.0, 240.0, 4)]
+        )
+        self.view.set_beat(0.0, snap=False)
+        # 120 BPM：1 拍 = 0.5 s；240 BPM：1 拍 = 0.25 s -> 后者格子只有一半高
+        slow = self.view.beat_to_y(0.0) - self.view.beat_to_y(1.0)
+        fast = self.view.beat_to_y(8.0) - self.view.beat_to_y(9.0)
+        self.assertGreater(slow, 0.0)
+        self.assertAlmostEqual(fast, slow / 2.0, places=6)
+        # 而且现在就看得见：第 9 拍的位置已经按 240 BPM 算好
+        self.assertAlmostEqual(
+            self.view.beat_to_y(9.0),
+            self.view.layout.judgment_y - (4.0 + 0.25) * self.view.px_per_second(),
+            places=6,
+        )
+
+    def test_crossing_bpm_change_does_not_rescale_the_view(self) -> None:
+        """判定线跨过 BPM 变更时不再整屏突变：远处物件只按滚动量平移。"""
+        from rhythm_editor.model.timing import BpmSegment, TimingMap
+
+        self.chart.timing = TimingMap(
+            [BpmSegment(0.0, 120.0, 4), BpmSegment(8.0, 240.0, 4)]
+        )
+        self.view.set_beat(7.9, snap=False)
+        before = self.view.beat_to_y(20.0)
+        self.view.set_beat(8.1, snap=False)
+        after = self.view.beat_to_y(20.0)
+        # 0.2 拍的滚动最多让物件移动 0.2 拍的距离（不会因为换段而整体缩放）
+        limit = 0.2 * max(self.view.px_per_beat_at(7.9), self.view.px_per_beat_at(8.1)) + 1e-6
+        self.assertLess(abs(after - before), limit)
+        # 比例本身只由缩放决定，跨段不变
+        self.assertAlmostEqual(self.view.px_per_second(), self.view.px_per_second(), places=9)
+
+    def test_y_to_beat_roundtrip_across_bpm_segments(self) -> None:
+        from rhythm_editor.model.timing import BpmSegment, TimingMap
+
+        self.chart.timing = TimingMap(
+            [BpmSegment(0.0, 140.0, 4), BpmSegment(12.0, 220.0, 3)]
+        )
+        self.view.set_beat(6.0, snap=False)
+        for beat in (-2.0, 0.0, 5.5, 12.0, 18.25, 40.0):
+            self.assertAlmostEqual(self.view.y_to_beat(self.view.beat_to_y(beat)), beat, places=6)
+
+    def test_note_on_grid_stays_on_grid_when_bpm_changes(self) -> None:
+        """默认流速的物件必须精确落在时间网格线上（BPM 分段时也不许错位）。"""
+        from rhythm_editor.model.timing import BpmSegment, TimingMap
+
+        self.chart.timing = TimingMap(
+            [BpmSegment(0.0, 140.0, 4), BpmSegment(12.0, 220.0, 3)]
+        )
+        self.view.set_beat(8.0, snap=False)
+        for beat in (0.0, 4.0, 12.0, 15.0, 21.0):
+            self.assertAlmostEqual(
+                self.view.note_y(beat, self.chart.group_by_id(0)),
+                self.view.beat_to_y(beat),
+                places=6,
+            )
+
     def test_no_ruler_items_on_canvas(self) -> None:
         """总览条已移除：画布上不再有 ruler:* 图元（时间导航交给右侧滚动条）。"""
         self.draw()

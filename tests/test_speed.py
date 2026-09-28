@@ -7,9 +7,57 @@ import unittest
 sys.path.insert(0, os.path.join(os.path.dirname(os.path.dirname(os.path.abspath(__file__))), "src"))
 
 from rhythm_editor.model.speed import SpeedGroup, SpeedSegment
+from rhythm_editor.model.timing import BpmSegment, TimingMap
 
 
 class SpeedGroupTests(unittest.TestCase):
+    # ---------------------------------------------- 滚动距离（秒）：时间轴映射用
+    def test_scroll_seconds_equals_time_for_default_group(self) -> None:
+        """默认流速下，滚动距离就是两拍之间的秒数差。"""
+        timing = TimingMap([BpmSegment(0.0, 120.0, 4)])
+        group = SpeedGroup.default()
+        self.assertAlmostEqual(group.scroll_seconds(timing, 0.0, 4.0), 2.0)
+        self.assertAlmostEqual(group.scroll_seconds(timing, 4.0, 0.0), -2.0)
+        self.assertAlmostEqual(group.scroll_seconds(timing, 3.0, 3.0), 0.0)
+
+    def test_scroll_seconds_follows_bpm_changes(self) -> None:
+        """BPM 越高，同样的拍数对应的时间越短（时间轴格子更密）。"""
+        timing = TimingMap([BpmSegment(0.0, 120.0, 4), BpmSegment(8.0, 240.0, 4)])
+        group = SpeedGroup.default()
+        self.assertAlmostEqual(group.scroll_seconds(timing, 0.0, 8.0), 4.0)
+        self.assertAlmostEqual(group.scroll_seconds(timing, 8.0, 12.0), 1.0)
+        # 跨过变更点的积分 = 两段之和
+        self.assertAlmostEqual(group.scroll_seconds(timing, 4.0, 12.0), 3.0)
+
+    def test_scroll_seconds_scales_with_multiplier(self) -> None:
+        timing = TimingMap([BpmSegment(0.0, 120.0, 4)])
+        double = SpeedGroup(1, "x2", [SpeedSegment(0.0, 2.0)])
+        stop = SpeedGroup(2, "stop", [SpeedSegment(0.0, 0.0)])
+        back = SpeedGroup(3, "back", [SpeedSegment(0.0, -1.0)])
+        self.assertAlmostEqual(double.scroll_seconds(timing, 0.0, 4.0), 4.0)
+        self.assertAlmostEqual(stop.scroll_seconds(timing, 0.0, 4.0), 0.0)
+        self.assertAlmostEqual(back.scroll_seconds(timing, 0.0, 4.0), -2.0)
+
+    def test_scroll_seconds_merges_both_segment_kinds(self) -> None:
+        """流速段与 BPM 段边界不一致时按两套边界切开逐段积分。"""
+        timing = TimingMap([BpmSegment(0.0, 120.0, 4), BpmSegment(4.0, 60.0, 4)])
+        group = SpeedGroup(1, "mix", [SpeedSegment(0.0, 1.0), SpeedSegment(2.0, 2.0)])
+        # 0~2 拍：120BPM(0.5s/拍)、v=1 -> 1.0s；2~4 拍：v=2 -> 2.0s；
+        # 4~6 拍：60BPM(1s/拍)、v=2 -> 4.0s
+        self.assertAlmostEqual(group.scroll_seconds(timing, 0.0, 2.0), 1.0)
+        self.assertAlmostEqual(group.scroll_seconds(timing, 0.0, 4.0), 3.0)
+        self.assertAlmostEqual(group.scroll_seconds(timing, 0.0, 6.0), 7.0)
+
+    def test_scroll_seconds_fast_path_matches_general_path(self) -> None:
+        timing = TimingMap([BpmSegment(0.0, 120.0, 4), BpmSegment(8.0, 90.0, 3)])
+        group = SpeedGroup(1, "x", [SpeedSegment(0.0, 1.0), SpeedSegment(4.0, 1.5)])
+        # 同一段内（快速路径）与跨段（通用路径）都要一致
+        self.assertAlmostEqual(group.scroll_seconds(timing, 4.5, 7.5), 1.5 * 0.5 * 3.0)
+        self.assertAlmostEqual(
+            group.scroll_seconds(timing, 7.5, 10.0),
+            group.scroll_seconds(timing, 0.0, 10.0) - group.scroll_seconds(timing, 0.0, 7.5),
+        )
+
     def test_default_distance(self) -> None:
         group = SpeedGroup.default()
         self.assertAlmostEqual(group.distance(0.0, 4.0), 4.0)

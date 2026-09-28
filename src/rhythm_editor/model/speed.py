@@ -84,6 +84,41 @@ class SpeedGroup:
         """流速恒为 1（位置与时间网格完全一致），渲染时可以走快速路径。"""
         return self._identity
 
+    def scroll_seconds(self, timing, from_beat: float, to_beat: float) -> float:
+        """``∫ v(τ) · spb(τ) dτ``（秒）：物件在屏幕上走过的“滚动秒数”。
+
+        * ``v`` 是流速倍率（可为 0 或负数），``spb`` 是该拍所在 BPM 段的“每拍秒数”；
+        * 默认流速下就等于两拍之间的**秒数差** —— 所以 BPM 变更处时间轴格子大小
+          会立刻改变（高 BPM 的段落每拍更短）；
+        * 流速与 BPM 都是分段常数，跨段时按两套边界切开逐段积分。
+        """
+        from_beat = float(from_beat)
+        to_beat = float(to_beat)
+        if abs(to_beat - from_beat) < 1e-12:
+            return 0.0
+        if to_beat < from_beat:
+            return -self.scroll_seconds(timing, to_beat, from_beat)
+        # 快速路径：两端落在同一流速段、同一 BPM 段内 -> 分段常数直接相乘
+        if (
+            self.segment_at(from_beat) is self.segment_at(to_beat)
+            and timing.segment_at(from_beat) is timing.segment_at(to_beat)
+        ):
+            v = self.multiplier_at(from_beat)
+            return v * timing.seconds_per_beat(from_beat) * (to_beat - from_beat)
+        cuts = {from_beat, to_beat}
+        for segment in self.segments:
+            if from_beat < segment.start_beat < to_beat:
+                cuts.add(float(segment.start_beat))
+        for segment in timing.segments:
+            if from_beat < segment.start_beat < to_beat:
+                cuts.add(float(segment.start_beat))
+        points = sorted(cuts)
+        total = 0.0
+        for start, end in zip(points, points[1:]):
+            v = self.multiplier_at(start)
+            total += v * timing.seconds_per_beat(start) * (end - start)
+        return total
+
     # ------------------------------------------------------------------ 查询
     def segment_at(self, beat: float) -> SpeedSegment:
         segs = self.segments

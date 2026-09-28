@@ -167,12 +167,40 @@ class ViewState:
     def seconds_per_beat(self) -> float:
         return self.chart.timing.seconds_per_beat(self.current_beat)
 
-    def visible_beats(self) -> float:
-        return self.zoom_seconds / max(1e-6, self.seconds_per_beat())
+    def px_per_second(self) -> float:
+        """纵向比例：判定线以上固定显示 ``zoom_seconds`` 秒，因此是常数。
+
+        这是“BPM 变更处时间轴立刻改变大小”的关键 —— 比例只由缩放决定，
+        不随判定线所在的 BPM 段变化，所以判定线经过 BPM 变更时不会整屏突变；
+        每拍在屏幕上的长度则 = ``每秒像素 × 该段的每拍秒数``（BPM 越高格子越密）。
+        """
+        above = max(40.0, self.layout.judgment_y - self.layout.play_top)
+        return above / max(1e-6, self.zoom_seconds)
+
+    def px_per_beat_at(self, beat: float) -> float:
+        """该拍所在 BPM 段的“每拍像素长度”（高 BPM -> 更短）。"""
+        return self.chart.timing.seconds_per_beat(beat) * self.px_per_second()
 
     def px_per_beat(self) -> float:
-        above = max(40.0, self.layout.judgment_y - self.layout.play_top)
-        return above / max(1e-6, self.visible_beats())
+        """判定线所在处的一格有多长（渲染密度判断、命中签名用）。"""
+        return self.px_per_beat_at(self.current_beat)
+
+    def min_px_per_beat(self, beat_low: float, beat_high: float) -> float:
+        """可视范围内**最小**的每拍像素长度（最密的格子），用于决定画不画细分线。"""
+        timing = self.chart.timing
+        fastest = self.seconds_per_beat()
+        if beat_high > beat_low:
+            for segment in timing.segments:
+                if segment.start_beat <= beat_high and (
+                    segment.start_beat >= beat_low or segment is timing.segments[0]
+                ):
+                    fastest = min(fastest, 60.0 / max(1e-3, segment.bpm))
+        return fastest * self.px_per_second()
+
+    def visible_beats(self) -> float:
+        """当前可视窗口实际覆盖多少拍（按真实映射，BPM 不均匀也准确）。"""
+        low, high = self.beat_range()
+        return max(0.0, high - low)
 
     def zoom_by(self, factor: float) -> None:
         settings = self.chart.settings
@@ -189,24 +217,35 @@ class ViewState:
         return 1.0 / max(1, self.grid_division)
 
     def beat_to_y(self, beat: float) -> float:
-        """时间网格（默认流速）的映射：两个区域共用。"""
-        return self.layout.judgment_y - (float(beat) - self.current_beat) * self.px_per_beat()
+        """时间网格（默认流速）的映射：两个区域共用。
+
+        纵向按**秒**线性：`y = 判定线 − (两拍的秒数差) × 每秒像素`。
+        于是 BPM 变更处之后的格子立刻按新 BPM 变密 / 变疏，判定线经过时不会整屏突变。
+        """
+        timing = self.chart.timing
+        delta = timing.beat_to_seconds(beat) - timing.beat_to_seconds(self.current_beat)
+        return self.layout.judgment_y - delta * self.px_per_second()
 
     def y_to_beat(self, y: float) -> float:
-        return self.current_beat + (self.layout.judgment_y - float(y)) / self.px_per_beat()
+        timing = self.chart.timing
+        target = (
+            timing.beat_to_seconds(self.current_beat)
+            + (self.layout.judgment_y - float(y)) / self.px_per_second()
+        )
+        return timing.seconds_to_beat(target)
 
     def note_y(self, beat: float, group: SpeedGroup | None = None) -> float:
         """物件映射：判定时刻一定落在判定线上，其余时刻由速度组反推。"""
         if group is None or group.is_identity:
             return self.beat_to_y(beat)
-        distance = group.distance(self.current_beat, float(beat))
-        return self.layout.judgment_y - distance * self.px_per_beat()
+        distance = group.scroll_seconds(self.chart.timing, self.current_beat, float(beat))
+        return self.layout.judgment_y - distance * self.px_per_second()
 
     def beat_range(self) -> Tuple[float, float]:
-        ppb = self.px_per_beat()
-        up = (self.layout.judgment_y - self.layout.play_top) / ppb
-        down = (self.layout.play_bottom - self.layout.judgment_y) / ppb
-        return self.current_beat - down, self.current_beat + up
+        return (
+            self.y_to_beat(self.layout.play_bottom),
+            self.y_to_beat(self.layout.play_top),
+        )
 
     def scroll_beats(self, delta: float, snap: bool = True) -> None:
         self.current_beat += float(delta)
@@ -222,26 +261,45 @@ class ViewState:
 
     # ---------------------------------------------------------- 竖向滚动条
     def scroll_doc_range(self) -> Tuple[float, float]:
-        """滚动条代表的“文档范围”（拍）：谱面起点到终点，两端各留一点余量。"""
+        """滚动条代表的“文档范围”（**秒**）：谱面起点到终点，两端各留一点余量。"""
+        timing = self.chart.timing
         low, high = self.chart.beat_bounds()
-        pad = max(1.0, self.visible_beats() * 0.25)
-        return min(0.0, low) - pad, max(high, 1.0) + pad
+        low_s = timing.beat_to_seconds(min(0.0, low))
+        high_s = timing.beat_to_seconds(max(high, 1.0))
+        window_low, window_high = self.beat_range()
+        span = max(1e-6, timing.beat_to_seconds(window_high) - timing.beat_to_seconds(window_low))
+        pad = max(self.seconds_per_beat(), span * 0.25)
+        return low_s - pad, high_s + pad
 
     def scroll_fractions(self) -> Tuple[float, float]:
         """当前可视时间窗口在文档范围内的位置（0..1），用于设置滚动条滑块。"""
+        timing = self.chart.timing
         low, high = self.scroll_doc_range()
         span = max(1e-6, high - low)
-        window_low, window_high = self.beat_range()
+        window_low = timing.beat_to_seconds(self.y_to_beat(self.layout.play_bottom))
+        window_high = window_low + self.visible_seconds()
         first = min(max((window_low - low) / span, 0.0), 1.0)
         last = min(max((window_high - low) / span, first + 0.01), 1.0)
         return first, last
 
     def set_from_fraction(self, fraction: float) -> None:
         """把可视窗口的“低端”（较早的一侧）移到文档的指定比例处。"""
+        timing = self.chart.timing
         low, high = self.scroll_doc_range()
         window_low = low + float(fraction) * (high - low)
-        below = (self.layout.play_bottom - self.layout.judgment_y) / max(1e-6, self.px_per_beat())
-        self.set_beat(window_low + below)
+        self.set_beat(timing.seconds_to_beat(window_low + self.seconds_below()))
+
+    def visible_seconds(self) -> float:
+        """可视窗口一共覆盖多少秒（判定线以上固定为 ``zoom_seconds``）。"""
+        return (
+            self.layout.play_bottom - self.layout.play_top
+        ) / max(1e-6, self.px_per_second())
+
+    def seconds_below(self) -> float:
+        """判定线下面那一段可视区对应多少秒。"""
+        return (
+            self.layout.play_bottom - self.layout.judgment_y
+        ) / max(1e-6, self.px_per_second())
 
     # ------------------------------------------------------------------ 横向
     def norm_to_x(self, value: float) -> float:

@@ -192,11 +192,16 @@ class TimingMap:
             hi = min(end_beat, seg_end)
             if hi < lo - 1e-9:
                 continue
+            # 每逢 BPM 变更一定有一根小节线（即使这一段关闭了小节线）
+            if start_beat - 1e-9 <= seg.start_beat <= end_beat + 1e-9:
+                lines.append(round(seg.start_beat, 9))
             step = float(seg.beats_per_bar)
             if step <= 0:
-                continue      # 关闭小节线
+                continue      # 关闭小节线：段内不再有额外的小节线
             n = int((lo - seg.start_beat) / step)
             b = seg.start_beat + n * step
+            if b <= seg.start_beat + 1e-9:
+                b = seg.start_beat + step      # 起点已经加过了，从下一条开始
             while b < lo - 1e-9:
                 b += step
             while b <= hi + 1e-9:
@@ -219,34 +224,34 @@ class TimingMap:
         return seg
 
     def has_bars_at(self, beat: float) -> bool:
-        """该拍所在段落是否画小节线（``beats_per_bar == 0`` 表示关闭）。"""
+        """该拍所在段落是否画**段内**小节线（``beats_per_bar == 0`` 表示关闭）。
+
+        注意：即使关闭，BPM 变更处仍然有一根小节线（见 :meth:`bar_lines`）。
+        """
         return int(self.segment_at(beat).beats_per_bar) > 0
 
     def bar_start_at_or_before(self, beat: float) -> float:
         """返回 ``beat`` 之前（含）最近的一条小节线。
 
         * 每逢 BPM 变更一定新开一小节 —— 所以每条 BPM 记录的起点都是小节线；
-        * 关闭小节线的段落内不产生小节线，此时返回之前最后一条小节线；
+        * 关闭小节线的段落内只有起点那一条线，段内后续拍都算在“这一节”里；
         * 一条都没有时返回第 0 拍。
         """
         beat = float(beat)
-        found: Optional[float] = None
+        found = float(self.segments[0].start_beat)
         for seg in self.segments:
             if seg.start_beat > beat + 1e-9:
                 break
-            if int(seg.beats_per_bar) <= 0:
-                continue
+            found = seg.start_beat
             step = float(seg.beats_per_bar)
+            if step <= 0:
+                continue
             n = math.floor((beat - seg.start_beat) / step + 1e-9)
             found = seg.start_beat + max(0, n) * step
-        if found is not None:
-            return found
-        return float(self.segments[0].start_beat)
+        return found
 
     def is_bar_start(self, beat: float, tol: float = 1e-6) -> bool:
-        """``beat`` 是否正好落在小节线上（关闭小节线的段落内一律为否）。"""
-        if not self.has_bars_at(beat):
-            return False
+        """``beat`` 是否正好落在小节线上（BPM 变更处一定有）。"""
         return abs(self.bar_start_at_or_before(beat) - float(beat)) <= tol
 
     def bar_index_at(self, beat: float) -> Tuple[int, float]:
@@ -265,12 +270,16 @@ class TimingMap:
                 if step > 0:
                     # 不完整的小节也算一节：ceil（BPM 变更处新开一小节）
                     span = float(seg_end) - seg.start_beat
-                    bars += max(0, math.ceil(span / step - 1e-9))
+                    bars += max(1, math.ceil(span / step - 1e-9))
+                else:
+                    # 关闭小节线的段落：只有变更处那一条线，整段算作一节
+                    bars += 1
                 continue
+            local = max(0.0, beat - seg.start_beat)
             step = float(seg.beats_per_bar)
             if step <= 0:
-                return bars, 0.0     # 该段关闭小节线
-            local = max(0.0, beat - seg.start_beat)
+                # 该段关闭小节线：这一节从变更处开始，一直延伸下去
+                return bars, local
             return bars + int(local // step), local % step
         return bars, 0.0
 

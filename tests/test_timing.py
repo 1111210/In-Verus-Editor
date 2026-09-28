@@ -113,21 +113,28 @@ class TimingTests(unittest.TestCase):
         self.assertEqual(timing.bar_index_at(8.0), (2, 0.0))
 
     def test_zero_beats_per_bar_disables_bar_lines(self) -> None:
-        """每小节 0 拍 = 关闭小节线：该段没有小节线，也没有小节编号。"""
+        """每小节 0 拍 = 关闭小节线：段内不再画线，但 BPM 变更处那条线一定在。"""
         timing = TimingMap([BpmSegment(0.0, 120.0, 4), BpmSegment(8.0, 90.0, 0)])
         self.assertEqual(int(timing.segments[1].beats_per_bar), 0)
         self.assertFalse(timing.has_bars_at(9.0))
-        # 关闭段落内没有任何小节线；第 8 拍那条属于上一段的网格（上一小节的结束线）
+        # 段内没有额外的小节线，但变更点（第 8 拍）一定有一条
+        self.assertEqual(timing.bar_lines(0.0, 20.0), [0.0, 4.0, 8.0])
         self.assertEqual(timing.bar_lines(8.5, 20.0), [])
-        self.assertEqual(timing.bar_lines(8.0, 20.0), [8.0])
-        self.assertEqual(timing.bar_index_at(9.0), (2, 0.0))
+        self.assertTrue(timing.is_bar_start(8.0))
+        self.assertFalse(timing.is_bar_start(9.0))
+        # 这一节从变更处开始一直延伸：第 8 拍是第 3 小节的第一拍，第 9 拍是它的第 2 拍
+        self.assertEqual(timing.bar_index_at(8.0), (2, 0.0))
+        self.assertEqual(timing.bar_index_at(9.0), (2, 1.0))
         # 之后重新打开小节线：从该段起点重新起算
         timing2 = TimingMap(
             [BpmSegment(0.0, 120.0, 4), BpmSegment(8.0, 90.0, 0), BpmSegment(20.0, 90.0, 3)]
         )
         self.assertTrue(timing2.has_bars_at(20.0))
+        self.assertIn(20.0, timing2.bar_lines(19.0, 27.0))
         self.assertTrue(timing2.is_bar_start(23.0))
         self.assertEqual(timing2.bar_lines(19.0, 27.0), [20.0, 23.0, 26.0])
+        # 0-8 是 2 节，关闭的 8-20 算一整节，所以第 20 拍是第 4 小节的第一拍
+        self.assertEqual(timing2.bar_index_at(20.0), (3, 0.0))
 
     def test_bar_lines_inside_segment(self) -> None:
         timing = TimingMap([BpmSegment(0.0, 120.0, 3)])

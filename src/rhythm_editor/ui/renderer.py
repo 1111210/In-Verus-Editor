@@ -360,7 +360,8 @@ class Renderer:
     ) -> None:
         theme = self.theme
         layout = view.layout
-        ppb = view.px_per_beat()
+        # 密度用“可视范围内最密的一格”（最快 BPM）判断，避免高速段笔画太密
+        ppb = view.min_px_per_beat(beat_low, beat_high)
         division = max(1, view.grid_division)
         sub_step = 1.0 / division
         draw_sub = (ppb / division) >= 7.0
@@ -1183,15 +1184,14 @@ class Renderer:
         theme = self.theme
         layout = view.layout
         timing = chart.timing
-        if timing.has_bars_at(view.current_beat):
-            bar_index, beat_in_bar = timing.bar_index_at(view.current_beat)
-            position = (
-                f"小节 {bar_index + 1} 第 {beat_in_bar + 1:.2f} 拍 · "
-                f"第 {view.current_beat:.3f} 拍"
-            )
-        else:
-            # 该段关闭小节线：只报拍号
-            position = f"第 {view.current_beat:.3f} 拍（小节线已关闭）"
+        bar_index, beat_in_bar = timing.bar_index_at(view.current_beat)
+        position = (
+            f"小节 {bar_index + 1} 第 {beat_in_bar + 1:.2f} 拍 · "
+            f"第 {view.current_beat:.3f} 拍"
+        )
+        if not timing.has_bars_at(view.current_beat):
+            # 段内小节线已关闭：这一节从最近的 BPM 变更处一直延伸下来
+            position += "（段内小节线已关闭）"
         text = (
             f"{timing.bpm_at(view.current_beat):.2f} BPM · "
             f"{position} · {view.time_label(view.current_beat)}"

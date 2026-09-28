@@ -113,7 +113,7 @@ python tools/check_audio.py
 
 | 项目 | 命令 | 结果 |
 | --- | --- | --- |
-| 单元测试（含 Tk 画布冒烟测试与应用级测试） | `python -m unittest discover -s tests -t .` | Ran 207 tests — **OK** |
+| 单元测试（含 Tk 画布冒烟测试与应用级测试） | `python -m unittest discover -s tests -t .` | Ran 225 tests — **OK** |
 | 需求验收清单 | `python tools/acceptance.py` | 14 项全部 `[OK ]`，结论：全部通过 |
 | 音频后端 | `python tools/check_audio.py` | 9 项全部 `[OK ]`（pygame.mixer 真实播放，延迟补偿正确） |
 | 示例谱面生成 | `python run_editor.py --make-demo` | 生成 `charts/demo/demo.json`（6K 32 / 区域 3 / 滑键 6 / 点击按键 4 / 4 个速度组） |
@@ -221,6 +221,12 @@ python tools/check_audio.py
 | `tests/test_app_flow.py::test_tick_skips_redraw_while_menu_is_posted` | 菜单展开期间不重绘画布（频闪根因之二） |
 | `tests/test_mouse_click.py`（18 条） | 鼠标点击按键：模型 / 序列化 / 镜像 / 复制粘贴 / 编辑撤销、与滑键同规则 + 同拍唯一、两次点击创建（中心 → 大小）、**启用横向网格才吸附并夹进 0..1、未启用时出界也照常放置**（滑键同样）、渲染为左右红色竖线 + 中间红色横线（粗细同 6K 中心实线）+ 红色实心菱形且最上层、兜底命中 / 框选路径 |
 | `tests/test_app_flow.py::test_app_boots_with_chart` | 示例谱面物件总数与分类计数（含 4 个鼠标点击按键） |
+| `tests/test_editor_smoke.py::test_bpm_change_shows_up_on_the_axis_immediately` | 纵向按秒线性：BPM 变更处之后的格子**立刻**变成新 BPM 的间距（240 BPM 的格子恰好是 120 BPM 的一半高） |
+| `tests/test_editor_smoke.py::test_crossing_bpm_change_does_not_rescale_the_view` | 判定线跨过 BPM 变更点时画面不整屏突变（远处物件只按滚动量平移） |
+| `tests/test_editor_smoke.py::test_y_to_beat_roundtrip_across_bpm_segments` | 分段映射求逆：`y_to_beat(beat_to_y(b)) == b`（跨 BPM 段、负数拍） |
+| `tests/test_editor_smoke.py::test_note_on_grid_stays_on_grid_when_bpm_changes` | 默认流速的物件在 BPM 分段时仍精确压在网格线上 |
+| `tests/test_speed.py`（+5 条） | `scroll_seconds()`：默认流速 = 秒数差、跟随 BPM 段、倍率缩放（0 / 负数）、流速段与 BPM 段边界取并集积分、快速路径与通用路径一致 |
+| `tests/test_timing.py::test_zero_beats_per_bar_disables_bar_lines` | 每小节 0 拍：段内不再划线，但 **BPM 变更处那条小节线一定在**（小节编号继续累计） |
 
 人工确认：`docs/images/editor_overview.png`（分栏 + 分组工具栏）、
 `docs/images/maximized_editor.png`（默认启动状态）、`docs/images/fullscreen_editor.png`（全屏）、

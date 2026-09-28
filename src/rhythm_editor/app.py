@@ -682,15 +682,12 @@ class EditorApp:
         """给数据面板用的提示：当前判定线在第几拍（便于照着填数据）。"""
         timing = self.document.chart.timing
         beat = self.view.current_beat
-        if not timing.has_bars_at(beat):
-            return (
-                f"当前判定线：第 {beat:.3f} 拍"
-                f"（小节线已关闭 · {self.view.time_label(beat)}）"
-            )
         bar, in_bar = timing.bar_index_at(beat)
+        bars_note = "" if timing.has_bars_at(beat) else "段内小节线已关闭 · "
         return (
             f"当前判定线：第 {beat:.3f} 拍"
-            f"（小节 {bar + 1} 第 {in_bar + 1:.2f} 拍 · {self.view.time_label(beat)}）"
+            f"（小节 {bar + 1} 第 {in_bar + 1:.2f} 拍 · {bars_note}"
+            f"{self.view.time_label(beat)}）"
         )
 
     def show_guide(self) -> None:
