@@ -113,7 +113,7 @@ python tools/check_audio.py
 
 | 项目 | 命令 | 结果 |
 | --- | --- | --- |
-| 单元测试（含 Tk 画布冒烟测试与应用级测试） | `python -m unittest discover -s tests -t .` | Ran 161 tests — **OK** |
+| 单元测试（含 Tk 画布冒烟测试与应用级测试） | `python -m unittest discover -s tests -t .` | Ran 167 tests — **OK** |
 | 需求验收清单 | `python tools/acceptance.py` | 13 项全部 `[OK ]`，结论：全部通过 |
 | 音频后端 | `python tools/check_audio.py` | 9 项全部 `[OK ]`（pygame.mixer 真实播放，延迟补偿正确） |
 | 示例谱面生成 | `python run_editor.py --make-demo` | 生成 `charts/demo/demo.ivchart`（6K 32 / 区域 3 / 滑键 6 / 4 个速度组） |
@@ -205,6 +205,7 @@ python tools/check_audio.py
 | `tests/test_app_flow.py::test_scrollbars_use_white_thumb_black_trough` | 滚动条白滑块 / 黑背景 |
 | `tests/test_editor_smoke.py::test_offscreen_regions_skip_boundary_computation` | 回归：屏幕外空域不计算边界形状（30 个远处空域 0 次采样） |
 | `tests/test_editor_smoke.py::test_region_samples_adapt_to_screen_height` | 空域采样点数随屏幕高度自适应 |
+| `tests/test_perf_hit.py`（6 条） | 命中缓存：只含可见物件、命中测试不再触碰整张谱面、视图变化回退全量、框选复用缓存、签名随视图/谱面变化 |
 | `tests/test_app_flow.py::test_fullscreen_toggle` | 全屏开关切换 |
 | `tests/test_app_flow.py::test_maximized_by_default` | 默认最大化（`-fullscreen` 属性为 0），不是无边框全屏 |
 | `tests/test_app_flow.py::test_toggle_maximize_and_fullscreen` | 最大化 / 还原 / 全屏互斥切换 |

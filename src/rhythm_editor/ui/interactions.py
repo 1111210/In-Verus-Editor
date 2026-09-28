@@ -143,7 +143,15 @@ class ToolController:
             self._rubber_origin = None
             self.state.rubber_band = None
             if width > 4 or height > 4:
-                found = notes_in_box(self.document.chart, self.view, ox, oy, x, y)
+                found = notes_in_box(
+                    self.document.chart,
+                    self.view,
+                    ox,
+                    oy,
+                    x,
+                    y,
+                    cache=self.state.hit_cache,
+                )
                 ids = [n.id for n in found]
                 if ctrl or self._rubber_ctrl:
                     self.document.xor_selection(ids)
@@ -171,7 +179,9 @@ class ToolController:
 
     # ------------------------------------------------------------------ 选择
     def _press_select(self, x: float, y: float, ctrl: bool) -> None:
-        hits = notes_at(self.document.chart, self.view, x, y)
+        hits = notes_at(
+            self.document.chart, self.view, x, y, cache=self.state.hit_cache
+        )
         if hits:
             note = hits[0]
             if ctrl:

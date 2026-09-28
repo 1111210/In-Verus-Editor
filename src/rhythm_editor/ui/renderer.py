@@ -31,7 +31,14 @@ from ..model.notes import (
     Note,
 )
 from ..model.speed import SpeedGroup
-from .geometry import SLIDE_MIN_PX, TAP_MIN_PX, note_in_time, sample_beats
+from .geometry import (
+    SLIDE_MIN_PX,
+    TAP_MIN_PX,
+    HitCache,
+    hit_signature,
+    note_in_time,
+    sample_beats,
+)
 from .scene import Scene
 from .theme import Theme
 from .view import ViewState
@@ -78,12 +85,15 @@ class RenderState:
     demo: bool = False
     playing: bool = False
     message: str = ""
+    # 上一帧画出来的物件几何（点击 / 框选直接复用，避免重算整张谱面）
+    hit_cache: Optional[HitCache] = None
 
 
 class Renderer:
     def __init__(self, scene: Scene, theme: Theme) -> None:
         self.scene = scene
         self.theme = theme
+        self._hit_entries: List[Tuple[Note, Tuple[float, float, float, float], Optional[List]]] = []
         try:
             self._small_font = tkfont.Font(family=theme.font_family, size=theme.font_small)
         except Exception:  # pragma: no cover - 无 Tk 环境
@@ -448,6 +458,13 @@ class Renderer:
         notes = chart.sorted_notes()
         region_count = sum(1 for n in notes if isinstance(n, MouseRegion))
         region_samples = REGION_SAMPLES if region_count <= 40 else 12
+        cache = state.hit_cache
+        if cache is None:
+            cache = HitCache()
+            state.hit_cache = cache
+        self._hit_entries = cache.entries
+        self._hit_entries.clear()
+        cache.signature = hit_signature(view)
         # 绘制顺序：停留区域（半透明，最底层）→ 6K 物件 → 滑键（最上层）
         layers = (
             (MouseRegion, 4, lambda n, s: self._draw_region(n, chart, view, s, y_min, y_max, region_samples)),
@@ -496,6 +513,7 @@ class Renderer:
             outline = theme.note_border
         if bottom < y_min or top > y_max:
             return
+        self._hit_entries.append((note, (x0, top, x1, bottom), None))
         key = f"note:{note.id}"
         self.scene.rect(key, x0, top, x1, bottom, fill=fill, outline=outline, width=1)
         if selected:
@@ -607,6 +625,18 @@ class Renderer:
         ys = [p[1] for p in points]
         if max(ys) < y_min or min(ys) > y_max:
             return
+        self._hit_entries.append(
+            (
+                note,
+                (
+                    min(p[0] for p in points),
+                    min(ys),
+                    max(p[0] for p in points),
+                    max(ys),
+                ),
+                points,
+            )
+        )
         self.scene.polygon(
             f"region:{note.id}",
             points,
@@ -666,6 +696,13 @@ class Renderer:
         x0, x1 = min(x_start, x_end), max(x_start, x_end)
         if x1 - x0 < 3.0:
             x1 = x0 + 3.0
+        self._hit_entries.append(
+            (
+                note,
+                (x0 - 1.5, y - SLIDE_MIN_PX / 2, x1 + 1.5, y + SLIDE_MIN_PX / 2),
+                None,
+            )
+        )
         self.scene.rect(
             f"slide:{note.id}",
             x0 - 1.5,

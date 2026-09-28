@@ -97,7 +97,15 @@ def bench(count: int, frames: int = 20) -> dict:
     t0 = time.perf_counter()
     for i in range(5):
         notes_at(chart, view, WIDTH / 2, 200 + i * 5)
-    hit_ms = (time.perf_counter() - t0) * 1000 / 5
+    hit_ms = (time.perf_counter() - t0) * 1000 / 5      # 无缓存（兜底路径）
+
+    # 有渲染缓存时（编辑器实际路径）：直接复用上一帧的可见物件几何
+    for i in range(5):
+        notes_at(chart, view, WIDTH / 2, 200 + i * 5, cache=state.hit_cache)
+    t0 = time.perf_counter()
+    for i in range(20):
+        notes_at(chart, view, WIDTH / 2, 200 + i * 2, cache=state.hit_cache)
+    hit_cached_ms = (time.perf_counter() - t0) * 1000 / 20
 
     # 编辑一次的开销：撤销快照 = 整谱深拷贝
     document = Document(chart)
@@ -116,6 +124,7 @@ def bench(count: int, frames: int = 20) -> dict:
         "sorted_ms": sorted_ms,
         "draw_ms": draw_ms,
         "hit_ms": hit_ms,
+        "hit_cached_ms": hit_cached_ms,
         "undo_ms": undo_ms,
         "bounds_ms": bounds_ms,
         "per_frame": per_frame,
@@ -131,14 +140,15 @@ def bench(count: int, frames: int = 20) -> dict:
 def main() -> int:
     counts = [int(a) for a in sys.argv[1:]] or [500, 2000, 8000]
     print(
-        f"{'物件数':>8} {'画布图元':>9} {'排序/帧':>10} {'整帧渲染':>10} {'命中一次':>10}"
+        f"{'物件数':>8} {'画布图元':>9} {'排序/帧':>10} {'整帧渲染':>10} {'命中(兜底)':>11} {'命中(缓存)':>11}"
         f" {'beat_bounds':>12} {'撤销快照':>10}   (静态帧的建/移/改/删)"
     )
     for count in counts:
         stats = bench(count)
         print(
             f"{stats['notes']:>8} {stats['items']:>9} "
-            f"{stats['sorted_ms']:>8.2f}ms {stats['draw_ms']:>8.2f}ms {stats['hit_ms']:>8.2f}ms"
+            f"{stats['sorted_ms']:>8.2f}ms {stats['draw_ms']:>8.2f}ms "
+            f"{stats['hit_ms']:>9.2f}ms {stats['hit_cached_ms']:>9.3f}ms"
             f" {stats['bounds_ms']:>10.2f}ms {stats['undo_ms']:>8.2f}ms"
             f"   {stats['per_frame']['created']}/{stats['per_frame']['moved']}"
             f"/{stats['per_frame']['configured']}/{stats['per_frame']['deleted']}"

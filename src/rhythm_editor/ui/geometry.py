@@ -5,6 +5,7 @@
 
 from __future__ import annotations
 
+from dataclasses import dataclass, field
 from typing import List, Optional, Sequence, Tuple
 
 from .. import config
@@ -20,6 +21,67 @@ MIN_SLIDE_PX = 18.0
 
 Bounds = Tuple[float, float, float, float]
 Point = Tuple[float, float]
+
+
+def hit_signature(view: ViewState) -> tuple:
+    """命中缓存的“有效性签名”：视图或物件数量一变就失效。"""
+    layout = view.layout
+    return (
+        round(float(view.current_beat), 6),
+        round(float(view.px_per_beat()), 6),
+        int(layout.width),
+        int(layout.height),
+        round(float(layout.judgment_y), 6),
+        len(view.chart.lane_notes),
+        len(view.chart.mouse_notes),
+    )
+
+
+def _depth(note: Note) -> int:
+    """命中优先级（与渲染层一致）：滑键 > 6K 物件 > 空域。"""
+    if isinstance(note, MouseSlide):
+        return 3
+    if isinstance(note, LaneNote):
+        return 2
+    return 1
+
+
+@dataclass
+class HitCache:
+    """上一帧渲染时算好的可见物件几何，供点击 / 框选复用。
+
+    渲染器每帧把“真正画出来的”物件（已经过可见性与显示规则过滤）连同它们的
+    包围盒（空域还带多边形）写进来，于是命中测试只需遍历屏幕内的物件，
+    不必再对整张谱面重算几何。
+    """
+
+    signature: tuple = ()
+    entries: List[Tuple[Note, Bounds, Optional[List[Point]]]] = field(default_factory=list)
+
+    def valid_for(self, view: ViewState) -> bool:
+        return bool(self.entries) and self.signature == hit_signature(view)
+
+    def query_point(self, x: float, y: float) -> List[Note]:
+        hits: List[Note] = []
+        for note, bounds, polygon in self.entries:
+            if polygon is not None:
+                if point_in_polygon(x, y, polygon):
+                    hits.append(note)
+            elif point_in_rect(x, y, bounds, pad=config.HIT_PADDING_PX):
+                hits.append(note)
+        hits.sort(key=lambda n: (_depth(n), n.head_beat), reverse=True)
+        return hits
+
+    def query_box(self, x0: float, y0: float, x1: float, y1: float) -> List[Note]:
+        left, right = min(x0, x1), max(x0, x1)
+        top, bottom = min(y0, y1), max(y0, y1)
+        found: List[Note] = []
+        for note, bounds, _polygon in self.entries:
+            bx0, by0, bx1, by1 = bounds
+            if bx1 < left or bx0 > right or by1 < top or by0 > bottom:
+                continue
+            found.append(note)
+        return found
 
 
 def lane_note_pads(note: LaneNote) -> Tuple[float, float]:
@@ -154,23 +216,18 @@ def notes_at(
     x: float,
     y: float,
     limit: Optional[int] = None,
+    cache: Optional["HitCache"] = None,
 ) -> List[Note]:
     """返回该点下的物件（上层优先）。"""
-
-    def depth(note: Note) -> int:
-        # 鼠标平面叠加在 6K 之上；停留区域范围大，放在最底层
-        if isinstance(note, MouseSlide):
-            return 3
-        if isinstance(note, LaneNote):
-            return 2
-        return 1
-
+    if cache is not None and cache.valid_for(view):
+        hits = cache.query_point(x, y)
+        return hits[:limit] if limit is not None else hits
     hits = [
         n
         for n in chart.all_notes()
         if note_in_time(n, view.current_beat) and note_hit(n, chart, view, x, y)
     ]
-    hits.sort(key=lambda n: (depth(n), n.head_beat), reverse=True)
+    hits.sort(key=lambda n: (_depth(n), n.head_beat), reverse=True)
     if limit is not None:
         return hits[:limit]
     return hits
@@ -183,7 +240,10 @@ def notes_in_box(
     y0: float,
     x1: float,
     y1: float,
+    cache: Optional["HitCache"] = None,
 ) -> List[Note]:
+    if cache is not None and cache.valid_for(view):
+        return cache.query_box(x0, y0, x1, y1)
     left, right = min(x0, x1), max(x0, x1)
     top, bottom = min(y0, y1), max(y0, y1)
     found: List[Note] = []
@@ -195,4 +255,3 @@ def notes_in_box(
             continue
         found.append(note)
     return found
-
