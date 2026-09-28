@@ -104,8 +104,7 @@ class ToolController:
         layout = self.view.layout
         if y >= layout.play_bottom:
             hold_pending = (
-                self.tool in (config.TOOL_LANE_HOLD, config.TOOL_LANE_HOLD_MULTI)
-                and self._stage == 1
+                self.tool == config.TOOL_LANE_HOLD and self._stage == 1
             )
             if hold_pending and not self.paste_mode:
                 self._place_lane_hold(x, y)
@@ -123,8 +122,6 @@ class ToolController:
         elif tool == config.TOOL_LANE_MULTI:
             self._place_lane_multi(x, y)
         elif tool == config.TOOL_LANE_HOLD:
-            self._place_lane_hold(x, y)
-        elif tool == config.TOOL_LANE_HOLD_MULTI:
             self._place_lane_hold(x, y)
         elif tool == config.TOOL_MOUSE_REGION:
             self._place_region(x, y)
@@ -244,7 +241,6 @@ class ToolController:
         self.cancel_pending()
 
     def _place_lane_hold(self, x: float, y: float) -> None:
-        multi = self.tool == config.TOOL_LANE_HOLD_MULTI
         if self._stage == 0:
             if not self._in_play(x, y):
                 self.status("请在游玩区域内点击长按起点")
@@ -256,26 +252,21 @@ class ToolController:
             self._stage = 1
             self._first_lane = lane
             self._first_beat = self.view.snap_beat(self.view.y_to_beat(y))
-            hint = (
-                "多轨长按：请点击结束轨道与结束时刻（Esc 取消）"
-                if multi
-                else "长按：请点击结束时刻（可滚动/缩放，任意位置点击均可，Esc 取消）"
-            )
+            hint = "长按：请点击结束轨道与结束时刻（可滚动/缩放，也可只调时间，Esc 取消）"
             self._set_hint(hint)
             self.status(hint)
             return
-        # 结束时刻：接受任意位置的点击（包括鼠标游玩区域）
+        # 结束轨道与结束时刻：任意位置点击都接受（点到鼠标区域时轨道保持不变）
         end = self.view.snap_beat(self.view.y_to_beat(y))
         start = self._first_beat or 0.0
         if end <= start:
             end = start + self.view.grid_step()
         start_lane = self._first_lane if self._first_lane is not None else 0
         end_lane = start_lane
-        if multi:
-            # 多轨长按：第二次点击的横坐标决定结束轨道
-            lane = self._lane_at(x)
-            if lane is not None:
-                end_lane = lane
+        # 第二次点击的横坐标决定结束轨道（不在 6K 区域内则沿用起始轨道）
+        lane = self._lane_at(x)
+        if lane is not None:
+            end_lane = lane
         note = LaneNote(
             self.document.chart.new_note_id("L"),
             min(start_lane, end_lane),
@@ -283,9 +274,9 @@ class ToolController:
             start,
             end,
         )
-        self.document.add_note(note, "放置多轨长按" if multi else "放置长按")
+        self.document.add_note(note, "放置长按")
         self.status(
-            f"已放置{'多轨长按' if multi else '长按'} {note.id}："
+            f"已放置长按 {note.id}："
             f"轨道 {note.lane_start + 1}-{note.lane_end + 1}，第 {start:g} → {end:g} 拍"
         )
         self.cancel_pending()
@@ -300,7 +291,8 @@ class ToolController:
             if self._stage == 0:
                 self._stage = 1
                 self._first_beat = beat
-                self._region_end_beat = beat
+                # 结束时间还没选：保持为空，让预览跟着光标走（否则预览高度为 0，看不见）
+                self._region_end_beat = None
                 self._set_hint("空域：请点击结束时间（Esc 取消）")
             else:
                 start = self._first_beat if self._first_beat is not None else beat
@@ -467,8 +459,7 @@ class ToolController:
                 pending.beat_start = self._first_beat
                 pending.beat_end = self._first_beat
                 pending.lane_end = lane if lane is not None else pending.lane_start
-        elif tool in (config.TOOL_LANE_HOLD, config.TOOL_LANE_HOLD_MULTI):
-            multi = tool == config.TOOL_LANE_HOLD_MULTI
+        elif tool == config.TOOL_LANE_HOLD:
             if self._stage == 0:
                 if lane is None:
                     pending.tool = ""
@@ -478,12 +469,12 @@ class ToolController:
                 pending.lane_end = lane
                 pending.beat_start = beat
                 pending.beat_end = beat
-                pending.hint = "多轨长按：点击起点" if multi else "长按：点击起点"
+                pending.hint = "长按：点击起点"
             else:
                 pending.lane_start = self._first_lane
                 pending.beat_start = self._first_beat
                 pending.beat_end = beat
-                pending.lane_end = lane if (multi and lane is not None) else self._first_lane
+                pending.lane_end = lane if lane is not None else self._first_lane
         elif tool == config.TOOL_MOUSE_REGION:
             if not in_play:
                 pending.tool = ""
@@ -499,9 +490,11 @@ class ToolController:
                 pending.hint = "空域：点击开始时间"
                 return
             pending.beat_start = self._first_beat
-            end = self._region_end_beat
-            if end is None:
+            if self._stage == 1 or self._region_end_beat is None:
+                # 正在选结束时间：结束拍跟随光标预览（至少一个网格格）
                 end = max(beat, (self._first_beat or 0.0) + self.view.grid_step())
+            else:
+                end = self._region_end_beat
             pending.beat_end = end
             cursor = self._norm_x(x) if self.view.in_mouse_area(x) else None
             left_start = self._region_left_start

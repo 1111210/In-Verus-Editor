@@ -75,7 +75,6 @@ TOOL_SELECT = "select"
 TOOL_LANE_TAP = "lane_tap"
 TOOL_LANE_MULTI = "lane_multi"
 TOOL_LANE_HOLD = "lane_hold"
-TOOL_LANE_HOLD_MULTI = "lane_hold_multi"
 TOOL_MOUSE_REGION = "mouse_region"
 TOOL_MOUSE_SLIDE = "mouse_slide"
 
@@ -83,8 +82,8 @@ TOOL_LABELS = {
     TOOL_SELECT: "选择/区域选择",
     TOOL_LANE_TAP: "单轨按键",
     TOOL_LANE_MULTI: "多轨按键",
-    TOOL_LANE_HOLD: "长按",
-    TOOL_LANE_HOLD_MULTI: "多轨长按",
+    # 长按与多轨长按已合并：同一个工具既可单轨也可跨轨
+    TOOL_LANE_HOLD: "长按（含多轨）",
     TOOL_MOUSE_REGION: "空域",
     TOOL_MOUSE_SLIDE: "左右滑键",
 }
@@ -94,7 +93,6 @@ TOOL_ORDER = (
     TOOL_LANE_TAP,
     TOOL_LANE_MULTI,
     TOOL_LANE_HOLD,
-    TOOL_LANE_HOLD_MULTI,
     TOOL_MOUSE_REGION,
     TOOL_MOUSE_SLIDE,
 )

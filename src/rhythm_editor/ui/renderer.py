@@ -485,7 +485,8 @@ class Renderer:
         bottom = max(y_head, y_tail)
         if note.is_hold:
             if abs(bottom - top) < TAP_MIN_PX:
-                bottom = top + TAP_MIN_PX
+                # 退化成一个点时向上补足：起始位置始终贴在它的时间网格线上
+                top = bottom - TAP_MIN_PX
             fill = theme.hold_pink
             outline = theme.hold_border
         else:
@@ -733,7 +734,7 @@ class Renderer:
                 stipple=theme.stipple_soft,
             )
         elif (
-            pending.tool in (config.TOOL_LANE_HOLD, config.TOOL_LANE_HOLD_MULTI)
+            pending.tool == config.TOOL_LANE_HOLD
             and pending.lane_start is not None
             and pending.beat_start is not None
         ):
@@ -745,7 +746,8 @@ class Renderer:
             y_tail = view.note_y(end)
             top, bottom = min(y_head, y_tail), max(y_head, y_tail)
             if bottom - top < TAP_MIN_PX:
-                bottom = top + TAP_MIN_PX
+                # 起始位置的预览向上补足，落在它的时间网格线上方（原来画到了下方）
+                top = bottom - TAP_MIN_PX
             self.scene.rect(
                 "pending:hold",
                 x0 + pad,

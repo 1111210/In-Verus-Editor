@@ -318,9 +318,9 @@ class EditorSmokeTest(unittest.TestCase):
         self.assertAlmostEqual(notes[0].beat_end, 6.0)
         self.assertEqual(notes[0].lane_start, 0)
 
-    def test_place_multi_lane_hold(self) -> None:
-        """多轨长按：起点定轨道与时间，第二次点击的横坐标定结束轨道、纵坐标定结束时间。"""
-        self.controller.set_tool(config.TOOL_LANE_HOLD_MULTI)
+    def test_place_hold_sets_end_lane_and_time(self) -> None:
+        """长按（含多轨）：起点定轨道与时间，第二次点击的横坐标定结束轨道、纵坐标定结束时间。"""
+        self.controller.set_tool(config.TOOL_LANE_HOLD)
         self.click(self.view.layout.lane_center(1), self.y_of_beat(4.0))
         self.assertTrue(self.state.pending.hint)
         self.click(self.view.layout.lane_center(4), self.y_of_beat(6.5))
@@ -337,6 +337,20 @@ class EditorSmokeTest(unittest.TestCase):
         self.click(self.view.layout.lane_center(3), self.y_of_beat(3.0))
         fixed = self.document.chart.lane_notes[1]
         self.assertAlmostEqual(fixed.beat_end - fixed.beat_start, self.view.grid_step())
+
+    def test_hold_preview_extends_upward_from_start_line(self) -> None:
+        """回归：长按起始位置的预览要画在时间网格线**上方**（原来画到了下方）。"""
+        self.chart.settings.horizontal_divisions = 0
+        self.controller.set_tool(config.TOOL_LANE_HOLD)
+        lane_x = self.view.layout.lane_center(2)
+        self.click(lane_x, self.y_of_beat(3.0))
+        self.controller.on_motion(lane_x, self.y_of_beat(3.0))   # 光标还停在同一拍
+        self.draw()
+        coords = self.scene._items["pending:hold"][2][0]
+        top, bottom = min(coords[1], coords[3]), max(coords[1], coords[3])
+        line_y = self.view.beat_to_y(3.0)
+        self.assertAlmostEqual(bottom, line_y, places=6, msg="预览底边应贴在起始拍网格线上")
+        self.assertGreater(bottom - top, 5.0, "预览应在网格线上方有可见高度")
 
     def test_place_region_uses_dialog_result(self) -> None:
         """空域新流程：先两次点击定时间，再四次点击定左右边界首尾，最后弹窗选线型。"""
@@ -394,6 +408,26 @@ class EditorSmokeTest(unittest.TestCase):
         self.assertAlmostEqual(pending.left.end, 0.4, places=6)
         self.assertAlmostEqual(pending.right.start, 0.7, places=6)
         self.assertAlmostEqual(pending.right.end, 1.0, places=6)    # 右边界终点仍未放置
+
+    def test_region_time_selection_preview_follows_cursor(self) -> None:
+        """回归：选结束时间时预览要跟随光标。
+
+        之前结束时间被固定在起始时间上，预览高度为 0，看起来像“没有预览”。
+        """
+        self.chart.settings.horizontal_divisions = 0
+        self.controller.set_tool(config.TOOL_MOUSE_REGION)
+        x = self.view.norm_to_x
+        self.controller.on_motion(x(0.5), self.y_of_beat(3.0))
+        self.assertGreater(self.state.pending.beat_end, self.state.pending.beat_start)
+        self.click(x(0.5), self.y_of_beat(3.0))        # 开始时间
+        self.controller.on_motion(x(0.5), self.y_of_beat(6.0))
+        pending = self.state.pending
+        self.assertAlmostEqual(pending.beat_start, 3.0, places=9)
+        self.assertAlmostEqual(pending.beat_end, 6.0, places=9)
+        self.draw()
+        self.assertIn("pending:region", self.scene._items)
+        ys = self.scene._items["pending:region"][2][0][1::2]
+        self.assertGreater(max(ys) - min(ys), 20.0, "预览要有可见高度")
 
     def test_place_slide_snaps_to_horizontal_grid(self) -> None:
         self.controller.set_tool(config.TOOL_MOUSE_SLIDE)
