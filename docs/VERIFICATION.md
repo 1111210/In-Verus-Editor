@@ -113,7 +113,7 @@ python tools/check_audio.py
 
 | 项目 | 命令 | 结果 |
 | --- | --- | --- |
-| 单元测试（含 Tk 画布冒烟测试与应用级测试） | `python -m unittest discover -s tests -t .` | Ran 98 tests — **OK** |
+| 单元测试（含 Tk 画布冒烟测试与应用级测试） | `python -m unittest discover -s tests -t .` | Ran 102 tests — **OK** |
 | 需求验收清单 | `python tools/acceptance.py` | 13 项全部 `[OK ]`，结论：全部通过 |
 | 音频后端 | `python tools/check_audio.py` | 9 项全部 `[OK ]`（pygame.mixer 真实播放，延迟补偿正确） |
 | 示例谱面生成 | `python run_editor.py --make-demo` | 生成 `charts/demo/demo.ivchart`（6K 32 / 区域 3 / 滑键 6 / 4 个速度组） |
@@ -147,7 +147,11 @@ python tools/check_audio.py
 | `tests/test_editor_smoke.py::test_layer_order_survives_layout_switch` | 切换布局后区域底色不会盖住物件（显式图层） |
 | `tests/test_app_flow.py::test_split_layout_and_demo_overlay` | 应用级：默认分栏，`Tab` 进入演示后叠加，退出后恢复分栏 |
 | `tests/test_app_flow.py::test_zoom_plus_button_is_always_available` | 缩放 `+` 按钮固定在右侧优先分配空间，不会被挤掉 |
-| `tests/test_app_flow.py::test_toolbar_groups_and_menubar` | 顶栏只有分组入口 + 播放/演示，并生成同名菜单栏 |
+| `tests/test_app_flow.py::test_toolbar_groups_without_menubar` | 顶栏只有分组入口 + 播放，且不再有系统菜单栏 / 演示按钮 / 缩放文字 |
+| `tests/test_app_flow.py::test_panel_groups_split` | 「面板」拆成谱面设置（元数据、BPM 与偏移）+ 速度组 + 编辑器设置 |
+| `tests/test_app_flow.py::test_help_menu_has_guide_and_shortcuts_only` | 帮助菜单只有操作指南与快捷键（无“关于”） |
+| `tests/test_app_flow.py::test_zoom_buttons_direction` | `+` 放大、`−` 缩小，与滚轮手感一致 |
+| `tests/test_editor_smoke.py::test_wheel_scrolls_exactly_one_grid_step` | 滚轮一格 = 一个网格格（细分改变后随之改变），且始终吸附网格 |
 | `tests/test_app_flow.py::test_fullscreen_toggle` | 全屏开关切换 |
 | `tests/test_app_flow.py::test_maximized_by_default` | 默认最大化（`-fullscreen` 属性为 0），不是无边框全屏 |
 | `tests/test_app_flow.py::test_toggle_maximize_and_fullscreen` | 最大化 / 还原 / 全屏互斥切换 |

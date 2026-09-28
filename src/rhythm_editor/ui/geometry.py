@@ -138,6 +138,16 @@ def note_hit(note: Note, chart: Chart, view: ViewState, x: float, y: float) -> b
     return point_in_rect(x, y, note_bounds(note, chart, view), pad=config.HIT_PADDING_PX)
 
 
+def note_in_time(note: Note, current_beat: float) -> bool:
+    """物件是否还没到判定时间（或正在判定中）。
+
+    显示规则：**判定线越过物件的判定时刻后就不再显示**。
+    长按与鼠标停留区域按结束时刻（``tail_beat``）计算，
+    因此按住期间整条长按 / 整个区域依然可见。
+    """
+    return float(current_beat) <= float(note.tail_beat) + 1e-9
+
+
 def notes_at(
     chart: Chart,
     view: ViewState,
@@ -155,7 +165,11 @@ def notes_at(
             return 2
         return 1
 
-    hits = [n for n in chart.all_notes() if note_hit(n, chart, view, x, y)]
+    hits = [
+        n
+        for n in chart.all_notes()
+        if note_in_time(n, view.current_beat) and note_hit(n, chart, view, x, y)
+    ]
     hits.sort(key=lambda n: (depth(n), n.head_beat), reverse=True)
     if limit is not None:
         return hits[:limit]
@@ -174,6 +188,8 @@ def notes_in_box(
     top, bottom = min(y0, y1), max(y0, y1)
     found: List[Note] = []
     for note in chart.all_notes():
+        if not note_in_time(note, view.current_beat):
+            continue
         bx0, by0, bx1, by1 = note_bounds(note, chart, view)
         if bx1 < left or bx0 > right or by1 < top or by0 > bottom:
             continue

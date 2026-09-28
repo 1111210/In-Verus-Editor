@@ -784,15 +784,38 @@ class NoteEditDialog(BaseDialog):
 
 # ---------------------------------------------------------------- 帮助
 class HelpDialog(BaseDialog):
-    title_text = "操作指南 / 快捷键"
+    """纯文本帮助窗口（操作指南 / 快捷键共用同一套界面）。"""
+
+    title_text = "操作指南"
     ok_text = "关闭"
 
+    def __init__(self, parent: tk.Misc, theme: Theme, title: str = "操作指南",
+                 content: str = "") -> None:
+        self.title_text = title
+        self.content = content or GUIDE_TEXT
+        super().__init__(parent, theme)
+
     def _build(self) -> None:
-        text = tk.Text(self.body, width=76, height=26, wrap="word", background=self.theme.bg,
-                       foreground=self.theme.text, insertbackground=self.theme.text,
-                       relief="flat", font=self.theme.font(self.theme.font_normal))
-        text.pack(fill="both", expand=True)
-        text.insert("1.0", HELP_TEXT)
+        frame = ttk.Frame(self.body)
+        frame.pack(fill="both", expand=True)
+        text = tk.Text(
+            frame,
+            width=74,
+            height=26,
+            wrap="word",
+            background=self.theme.bg,
+            foreground=self.theme.text,
+            insertbackground=self.theme.text,
+            relief="flat",
+            padx=10,
+            pady=8,
+            font=self.theme.font(self.theme.font_normal),
+        )
+        scroll = ttk.Scrollbar(frame, orient="vertical", command=text.yview)
+        text.configure(yscrollcommand=scroll.set)
+        text.pack(side="left", fill="both", expand=True)
+        scroll.pack(side="right", fill="y")
+        text.insert("1.0", self.content)
         text.configure(state="disabled")
 
     def _ok(self) -> None:
@@ -800,7 +823,12 @@ class HelpDialog(BaseDialog):
         self.destroy()
 
 
-HELP_TEXT = """【放置工具】
+GUIDE_TEXT = """【界面】
+编辑器把两个平面左右分栏：左边 6K 下落式、右边鼠标平面，两者共用同一条判定线
+（同一个时间刻度）与同一套时间网格，所以滚动 / 缩放永远同步。
+按 Tab 进入演示模式后，两个平面叠加显示（鼠标平面压在中四条轨道上）并且不可编辑。
+
+【放置工具】（顶栏「放置 ▾」菜单，或按数字键 1-6 切换）
 1 单轨按键：点击 6K 区域 -> 在对应轨道放置按键，时间自动吸附网格。
 2 多轨按键：先点击一条轨道，再点击另一条轨道 -> 生成跨越这两条轨道的多轨按键；
    时间以第一次点击为准。
@@ -810,20 +838,70 @@ HELP_TEXT = """【放置工具】
    左/右边界的首尾位置与线型（线性 / 缓入 / 缓出）。
 5 左右滑键：先点击设定时间与横向位置，再点击第二次决定滑动方向；
    开启横向辅助网格时会吸附到网格线上。
-Esc 取消当前放置流程；切换工具同样会放弃未完成的操作。
+Esc 取消当前放置流程；切换工具同样会放弃未完成的操作。放置过程中会显示幽灵预览。
 
 【选择与编辑】
 选择工具下拖动 = 区域选择；Ctrl + 点击/框选 = 与上次选择做对称差（两次都选中的取消选择）。
-Ctrl+C 复制，Ctrl+V 进入粘贴模式（点击目标时间，轨道/横向位置保持不变）。
-M 镜像（沿游玩区域中轴线），E 编辑选中物件（仅单选时可用），Delete 删除，Ctrl+A 全选。
+顶栏「编辑 ▾」菜单里可以复制、粘贴（点击目标时间，轨道/横向位置保持不变）、
+沿游玩区中轴线镜像、编辑选中物件（仅单选时可用）、删除与全选。
 
 【视图】
-滚轮：前后滚动时间（两个区域同步，判定线永远吸附到网格）。
-Ctrl + 滚轮 或 +/-：缩放（改变屏幕上同时显示的时间长度）。
-Shift + 滚轮 / Home / End：快速跳到开头/结尾。
-点击底部总览条：跳转到对应时间。空格：播放/暂停（暂停时判定线吸附到网格）。
+滚轮：每次滚动时间网格的一格（1 / 网格细分 拍）；Shift + 滚轮一次滚动 1 拍。
+滚动后判定线会自动吸附回网格，不会停在格子之间。
+Ctrl + 滚轮、顶栏右侧的 − / + 按钮，或「视图 ▾ → 缩放」都能缩放：
++ 放大（屏幕内时间变少、物件变大），− 缩小（屏幕内时间变多）。
+点击底部总览条可以跳转到对应时间；Home / End 跳到开头 / 结尾。
 
 【速度组】
-工具栏「速度组」中可新建/复制/删除组，编辑流速列表（从某拍开始，流速 = 默认速度 × 倍率，
+顶栏「速度组」按钮里可新建/复制/删除组，编辑流速列表（从某拍开始，流速 = 默认速度 × 倍率，
 支持 0 与负数实现停留/反向），并把当前选择加入组。删除组时组内物件回到默认组。
+流速可正可负并会叠加，因此物件位置不是判定时刻的单调函数：远处的物件也可能被推回
+判定线上，编辑器始终按 ∫v 的结果显示。
+
+【播放与演示】
+空格播放 / 暂停；暂停时判定线会自动吸附到时间轴刻度上。
+「编辑器设置」里的系统音频延迟用于对齐画面与声音（蓝牙耳机常见 120~250 ms）。
+演示模式在「视图 ▾」菜单里；进入后工具栏隐藏、画面只读，支持滚动、缩放与播放 / 暂停，
+按 Tab 或 Esc 返回编辑。
+"""
+
+SHORTCUTS_TEXT = """【工具切换】
+1  选择 / 区域选择
+2  单轨按键
+3  多轨按键
+4  长按
+5  鼠标停留区域
+6  左右滑键
+Esc  取消当前放置流程（演示模式下为退出演示）
+Tab  进入 / 退出演示模式
+
+【编辑】
+Ctrl+C  复制选中物件
+Ctrl+V  进入粘贴模式，点击目标时间完成粘贴（轨道 / 横向位置不变）
+Ctrl+Z  撤销
+Ctrl+Y / Ctrl+Shift+Z  重做
+Ctrl+A  全选
+M  沿游玩区域中轴线镜像
+E  编辑选中物件（仅单选时可用）
+Delete / Backspace  删除选中物件
+G  显示 / 隐藏横向辅助网格
+
+【文件】
+Ctrl+N  新建谱面
+Ctrl+O  打开谱面
+Ctrl+S  保存
+Ctrl+Shift+S  另存为
+
+【视图与播放】
+滚轮  时间轴前进 / 后退一格（1 / 网格细分 拍，自动吸附网格）
+Shift + 滚轮  一次滚动 1 拍
+Ctrl + 滚轮  缩放
++ / =  放大（屏幕内时间变少、物件变大）
+-  缩小（屏幕内时间变多）
+← / →  按网格步进
+PageUp / PageDown  半屏滚动
+Home / End  跳到开头 / 结尾
+空格  播放 / 暂停（暂停时判定线吸附网格）
+F10  最大化 / 还原窗口
+F11  无边框全屏切换
 """

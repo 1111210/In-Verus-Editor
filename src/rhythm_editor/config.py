@@ -47,7 +47,8 @@ JUDGMENT_LINE_RATIO = 0.80
 # 交互
 MIN_SLIDE_SPAN = 0.06
 HIT_PADDING_PX = 3
-SCROLL_WHEEL_BEATS_RATIO = 0.18   # 滚轮一格滚动的可视拍数比例
+SCROLL_WHEEL_SNAP = True          # 滚轮滚动后仍然吸附到时间网格（更保险）
+SCROLL_WHEEL_FAST_BEATS = 1.0     # Shift + 滚轮：一次滚动 1 拍
 PENDING_COLOR = "#ffd166"
 
 # 缓动类型

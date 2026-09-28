@@ -147,12 +147,16 @@ class ToolController:
             self.view.zoom_by(config.ZOOM_STEP ** (-notches))
             self.status(f"缩放：可视 {self.view.zoom_seconds:.3g} 秒 ≈ {self.view.visible_beats():.2f} 拍")
             return
-        if shift:
-            self.view.scroll_beats(notches * self.view.visible_beats() * 0.6)
-        else:
-            self.view.scroll_beats(-notches * self.view.visible_beats() * config.SCROLL_WHEEL_BEATS_RATIO)
+        # 滚轮一格 = 时间网格一格（1 / grid_division 拍）；Shift 加快到 1 拍。
+        # scroll_beats 默认 snap=True，即使有零碎滚动量也会落回网格，避免判定线偏离刻度。
+        per_notch = config.SCROLL_WHEEL_FAST_BEATS if shift else self.view.grid_step()
+        self.view.scroll_beats(-notches * per_notch, snap=config.SCROLL_WHEEL_SNAP)
+        unit = f"{config.SCROLL_WHEEL_FAST_BEATS:g} 拍（Shift 加速）" if shift else (
+            f"1/{self.view.grid_division} 拍"
+        )
         self.status(
-            f"判定线：第 {self.view.current_beat:.3f} 拍 · {self.view.time_label(self.view.current_beat)}"
+            f"判定线：第 {self.view.current_beat:.3f} 拍（每次滚轮 = {unit}）"
+            f" · {self.view.time_label(self.view.current_beat)}"
         )
 
     # ------------------------------------------------------------------ 选择

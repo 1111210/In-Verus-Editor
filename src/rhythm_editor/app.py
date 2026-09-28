@@ -348,17 +348,6 @@ class EditorApp:
         self.document.clear_selection()
         self.status("已清空选择")
 
-    def show_about(self) -> None:
-        messagebox.showinfo(
-            "关于",
-            f"{config.APP_TITLE} {config.VERSION}\n"
-            f"{config.APP_SUBTITLE}\n\n"
-            f"布局：编辑时左右分栏（6K / 鼠标平面），演示模式叠加显示\n"
-            f"音频后端：{audio_backend_name()}\n"
-            f"谱面格式：{config.CHART_FORMAT} v{config.CHART_FORMAT_VERSION}",
-            parent=self.root,
-        )
-
     def _scroll_steps(self, direction: int) -> None:
         self.view.scroll_beats(direction * self.view.grid_step())
         self.status(f"判定线：第 {self.view.current_beat:.3f} 拍")
@@ -551,8 +540,16 @@ class EditorApp:
         if changed:
             self.status("速度组已更新")
 
-    def show_help(self) -> None:
-        run_dialog(HelpDialog, self.root, self.theme)
+    def show_guide(self) -> None:
+        """操作指南（与快捷键拆成两个独立窗口）。"""
+        from .ui.dialogs import GUIDE_TEXT
+
+        run_dialog(HelpDialog, self.root, self.theme, "操作指南", GUIDE_TEXT)
+
+    def show_shortcuts(self) -> None:
+        from .ui.dialogs import SHORTCUTS_TEXT
+
+        run_dialog(HelpDialog, self.root, self.theme, "快捷键", SHORTCUTS_TEXT)
 
     def _region_editor(self, beat_start: float, beat_end: float) -> Optional[Dict]:
         """停留区域：先取时间，再用对话框设置两条边界的首尾位置与线型。"""

@@ -93,12 +93,62 @@ class AppFlowTest(unittest.TestCase):
         self.assertEqual(plus.winfo_manager(), "pack")
         self.assertEqual(container.pack_info()["side"], "right")
 
-    def test_toolbar_groups_and_menubar(self) -> None:
-        labels = set(self.app.toolbar._group_buttons)
-        self.assertTrue({"文件", "编辑", "放置", "视图", "面板", "帮助"} <= labels)
-        self.assertIsNotNone(self.app.toolbar.menubar)
-        # 顶栏只保留分组 + 播放/演示，不再是一长串按钮
+    def test_toolbar_groups_without_menubar(self) -> None:
+        toolbar = self.app.toolbar
+        labels = set(toolbar._group_buttons)
+        # 面板已拆成「谱面设置 / 速度组 / 编辑器设置」；帮助保留
+        self.assertTrue({"文件", "编辑", "放置", "视图", "谱面设置", "帮助"} <= labels)
+        self.assertFalse(hasattr(toolbar, "menubar"), "不再保留系统菜单栏")
+        self.assertEqual(str(self.app.root.cget("menu")), "")
+        # 顶栏只保留分组 + 播放；演示模式、缩放文字都移到二级菜单 / 去掉了
         self.assertTrue(hasattr(self.app.toolbar, "btn_play"))
+        self.assertFalse(hasattr(toolbar, "btn_demo"))
+        self.assertFalse(hasattr(toolbar, "lbl_zoom"))
+
+    def test_panel_groups_split(self) -> None:
+        """谱面设置（元数据/偏移）、速度组、编辑器设置三个入口。"""
+        toolbar = self.app.toolbar
+        chart_menu = toolbar._menus["谱面设置"]
+        labels = [
+            chart_menu.entrycget(i, "label")
+            for i in range(chart_menu.index("end") + 1)
+            if chart_menu.type(i) == "command"
+        ]
+        self.assertEqual(labels, ["元数据设置…", "BPM 与偏移…"])
+        direct = [button.cget("text") for button, _ in toolbar._direct_buttons]
+        self.assertIn("速度组", direct)
+        self.assertIn("编辑器设置", direct)
+
+    def test_help_menu_has_guide_and_shortcuts_only(self) -> None:
+        menu = self.app.toolbar._menus["帮助"]
+        labels = [
+            menu.entrycget(i, "label")
+            for i in range(menu.index("end") + 1)
+            if menu.type(i) == "command"
+        ]
+        self.assertEqual(labels, ["操作指南…", "快捷键…"])
+        self.assertNotIn("关于", labels)
+
+    def test_zoom_buttons_direction(self) -> None:
+        """+ 放大（可视时间变少、物件变大），− 缩小，与直觉一致。"""
+        toolbar = self.app.toolbar
+        plus = minus = None
+        for child in toolbar.winfo_children():
+            for sub in child.winfo_children():
+                if isinstance(sub, ttk.Button):
+                    if sub.cget("text") == "+":
+                        plus = sub
+                    elif sub.cget("text") == "−":
+                        minus = sub
+        self.assertIsNotNone(plus)
+        self.assertIsNotNone(minus)
+        before = self.app.view.zoom_seconds
+        plus.invoke()
+        self.assertLess(self.app.view.zoom_seconds, before, "+ 应该放大（可视时间变少）")
+        plus.invoke()
+        zoomed_in = self.app.view.zoom_seconds
+        minus.invoke()
+        self.assertGreater(self.app.view.zoom_seconds, zoomed_in, "− 应该缩小（可视时间变多）")
 
     def test_menu_not_reconfigured_every_frame(self) -> None:
         """回归测试：菜单项只在状态变化时才写入，避免展开中的二级菜单频闪。"""

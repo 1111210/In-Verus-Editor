@@ -165,6 +165,54 @@ class EditorSmokeTest(unittest.TestCase):
         note_item = self.scene._items[f"note:{note_id}"][0]
         self.assertGreater(order.index(note_item), order.index(pane_bg), "物件必须画在区域底色之上")
 
+    def test_notes_hidden_after_judgment_time(self) -> None:
+        """显示规则：判定线越过判定时刻后不再显示（长按 / 区域按结束时刻）。"""
+        from rhythm_editor.ui.geometry import lane_note_bounds, notes_at
+
+        tap = LaneNote("L1", 1, 1, 4.0)
+        hold = LaneNote("L2", 2, 2, 4.0, 6.0)
+        region = MouseRegion("M1", 4.0, 6.0, BoundaryCurve(0.0, 0.0), BoundaryCurve(1.0, 1.0))
+        slide = MouseSlide("M2", 4.0, 0.2, 0.6)
+        for note in (tap, hold, region, slide):
+            self.chart.add(note)
+
+        def key_of(note) -> str:
+            if isinstance(note, LaneNote):
+                return f"note:{note.id}"
+            if isinstance(note, MouseRegion):
+                return f"region:{note.id}"
+            return f"slide:{note.id}"
+
+        # 判定之前：四个物件都在
+        self.view.set_beat(4.0)
+        self.draw()
+        for note in (tap, hold, region, slide):
+            self.assertIn(key_of(note), self.scene._items)
+
+        # 越过 4 拍：单点物件消失，长按 / 停留区域（结束于 6 拍）仍在
+        self.view.set_beat(4.25)
+        self.draw()
+        self.assertNotIn("note:L1", self.scene._items)
+        self.assertNotIn("slide:M2", self.scene._items)
+        self.assertIn("note:L2", self.scene._items)
+        self.assertIn("region:M1", self.scene._items)
+
+        # 越过 6 拍：全部不再显示
+        self.view.set_beat(6.25)
+        self.draw()
+        for key in ("note:L1", "note:L2", "region:M1", "slide:M2"):
+            self.assertNotIn(key, self.scene._items)
+
+        # 已经判过的物件也不能再被点选
+        bounds = lane_note_bounds(tap, self.chart, self.view)
+        hits = notes_at(
+            self.chart,
+            self.view,
+            (bounds[0] + bounds[2]) / 2,
+            (bounds[1] + bounds[3]) / 2,
+        )
+        self.assertFalse(any(note.id == "L1" for note in hits))
+
     # -------------------------------------------------------------- 放置
     def test_place_lane_tap(self) -> None:
         self.controller.set_tool(config.TOOL_LANE_TAP)
@@ -312,6 +360,29 @@ class EditorSmokeTest(unittest.TestCase):
         self.assertAlmostEqual(self.view.current_beat * 4, round(self.view.current_beat * 4))
         self.controller.on_wheel(-1.0, False, False)
         self.assertAlmostEqual(self.view.current_beat, 0.0)
+
+    def test_wheel_scrolls_exactly_one_grid_step(self) -> None:
+        """滚轮一格 = 时间网格一格（1 / 网格细分 拍），并且总是吸附到网格。"""
+        self.chart.settings.grid_division = 4
+        self.view.set_beat(8.0)
+        self.controller.on_wheel(1.0, False, False)
+        self.assertAlmostEqual(self.view.current_beat, 7.75, places=9)
+        self.controller.on_wheel(1.0, False, False)
+        self.assertAlmostEqual(self.view.current_beat, 7.5, places=9)
+        self.controller.on_wheel(-2.0, False, False)
+        self.assertAlmostEqual(self.view.current_beat, 8.0, places=9)
+        # 细分变细后：“一格”跟着变细
+        self.chart.settings.grid_division = 8
+        self.controller.on_wheel(1.0, False, False)
+        self.assertAlmostEqual(self.view.current_beat, 7.875, places=9)
+        # Shift + 滚轮 = 一次 1 拍
+        self.controller.on_wheel(-1.0, False, True)
+        self.assertAlmostEqual(self.view.current_beat, 8.875, places=9)
+        # 总是落在网格上
+        for _ in range(3):
+            self.controller.on_wheel(1.0, False, False)
+            steps = self.view.current_beat * self.chart.settings.grid_division
+            self.assertAlmostEqual(steps, round(steps), places=6)
 
     def test_zoom_changes_pixels_per_beat(self) -> None:
         before = self.view.px_per_beat()

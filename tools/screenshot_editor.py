@@ -41,7 +41,8 @@ def main() -> int:
     root = app.root
     root.geometry("1280x800+60+30")
     app.document.chart.settings.zoom_seconds = 6.0
-    app.view.set_beat(20.0)
+    # 物件在判定时间之后不再显示，因此截图位置选在物件密集处
+    app.view.set_beat(14.0)
     taken = []
 
     def shot(name: str) -> None:

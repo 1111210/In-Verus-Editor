@@ -1,14 +1,16 @@
-"""工具栏与菜单栏：把相似的工具合并成分组，具体功能收进二级菜单。
+"""顶部工具栏：把相似的工具合并成分组，具体功能收进二级菜单。
 
-顶栏只保留 **几个分组入口 + 播放/暂停 + 演示模式 + 快速缩放**：
+顶栏只保留 **几个分组入口 + 播放/暂停 + 快速缩放**（全部是黑底按钮，弹出的二级菜单也是黑底）：
 
 * 文件   —— 新建 / 打开 / 保存 / 另存为
 * 编辑   —— 撤销 / 重做 / 复制 / 粘贴 / 镜像 / 编辑物件 / 删除 / 全选
 * 放置   —— 选择、单轨、多轨、长按、停留区域、左右滑键（二级菜单里可勾选）
 * 视图   —— 缩放、时间网格细分、横向辅助网格、跳转、全屏
-* 面板   —— 元数据 / BPM 与偏移 / 编辑器设置 / 速度组
+* 谱面设置 —— 元数据、BPM 与偏移
+* 速度组 / 编辑器设置 —— 单击直接打开对应面板
+* 帮助   —— 操作指南、快捷键
 
-同样的分组也会挂到窗口菜单栏上（演示模式下工具栏会隐藏，菜单栏仍然可用）。
+不保留系统菜单栏；演示模式下工具栏会隐藏，此时可用 `Tab` / `Esc` 返回编辑。
 """
 
 from __future__ import annotations
@@ -42,6 +44,9 @@ class Group:
 
     label: str
     entries: List[Entry] = field(default_factory=list)
+    # 有些分组只有一个动作：工具栏上直接做成按钮，菜单栏里仍是一个单项菜单
+    direct_command: Optional[Callable[[], None]] = None
+    enabled: Optional[Callable[[], bool]] = None
 
 
 class Toolbar(ttk.Frame):
@@ -53,14 +58,13 @@ class Toolbar(ttk.Frame):
         self._registered: List[Tuple[tk.Menu, int, Entry, Optional[tk.Variable], object]] = []
         self._vars: Dict[str, tk.Variable] = {}
         self._group_buttons: Dict[str, tk.Menubutton] = {}
+        self._direct_buttons: List[Tuple[ttk.Button, Optional[Callable[[], bool]]]] = []
+        self._last_direct_state: List[Optional[str]] = []
         self._menus: Dict[str, tk.Menu] = {}
-        self._menubar_menus: Dict[str, tk.Menu] = {}
         # 缓存上一次真正写入菜单/按钮的值：每帧无脑 entryconfigure 会导致菜单频闪
         self._last_entry_state: List[Optional[Tuple[str, Optional[bool]]]] = []
         self._last_labels: Dict[Tuple[str, int], str] = {}
         self._last_play_text: Optional[str] = None
-        self._last_demo_text: Optional[Tuple[str, str]] = None
-        self._last_zoom_text: Optional[str] = None
         self._last_place_text: Optional[str] = None
         # 原生弹出菜单期间暂停画布重绘（见 is_menu_posted 的说明）
         self._menu_open = False
@@ -68,7 +72,6 @@ class Toolbar(ttk.Frame):
         self._menu_open_timeout = 15.0
         self._groups = self._build_groups()
         self._build_widgets()
-        self._build_menubar()
 
     # ------------------------------------------------------------------ 菜单定义
     def _build_groups(self) -> List[Group]:
@@ -164,20 +167,29 @@ class Toolbar(ttk.Frame):
                   checked=lambda: app.fullscreen),
         ])
 
-        panel_group = Group("面板", [
+        # 原「面板」拆成三栏：谱面设置（元数据 / 偏移）、速度组、编辑器设置
+        chart_group = Group("谱面设置", [
             Entry("元数据设置…", app.edit_metadata, enabled=not_demo),
             Entry("BPM 与偏移…", app.edit_timing, enabled=not_demo),
-            Entry(separator=True),
-            Entry("编辑器设置…", app.edit_settings),
-            Entry("速度组…", app.edit_speed_groups, enabled=not_demo),
         ])
+        speed_group = Group("速度组", direct_command=app.edit_speed_groups, enabled=not_demo)
+        editor_group = Group("编辑器设置", direct_command=app.edit_settings)
 
         help_group = Group("帮助", [
-            Entry("操作指南 / 快捷键…", app.show_help),
-            Entry("关于", app.show_about),
+            Entry("操作指南…", app.show_guide),
+            Entry("快捷键…", app.show_shortcuts),
         ])
 
-        return [file_group, edit_group, place_group, view_group, panel_group, help_group]
+        return [
+            file_group,
+            edit_group,
+            place_group,
+            view_group,
+            chart_group,
+            speed_group,
+            editor_group,
+            help_group,
+        ]
 
     # ------------------------------------------------------------------ 构建
     def _build_widgets(self) -> None:
@@ -187,28 +199,28 @@ class Toolbar(ttk.Frame):
         right.pack(side="right")
         self._group_buttons["帮助"] = self._make_menubutton(right, self._groups[-1])
         self._group_buttons["帮助"].pack(side="right", padx=(8, 0))
-        ttk.Button(right, text="+", width=3, command=lambda: app.zoom(config.ZOOM_STEP)).pack(
+        # 「+」= 放大（屏幕内时间变少、物件变大），与直觉一致；滚轮方向保持不变
+        ttk.Button(right, text="+", width=3, command=lambda: app.zoom(1 / config.ZOOM_STEP)).pack(
             side="right", padx=(4, 0)
         )
-        self.lbl_zoom = ttk.Label(right, text="", width=14, anchor="center")
-        self.lbl_zoom.pack(side="right", padx=4)
-        ttk.Button(right, text="−", width=3, command=lambda: app.zoom(1 / config.ZOOM_STEP)).pack(
+        ttk.Button(right, text="−", width=3, command=lambda: app.zoom(config.ZOOM_STEP)).pack(
             side="right"
         )
-        ttk.Label(right, text="缩放").pack(side="right", padx=(0, 6))
 
         for group in self._groups[:-1]:
-            button = self._make_menubutton(self, group)
-            self._group_buttons[group.label] = button
+            if group.direct_command is not None:
+                button = ttk.Button(self, text=group.label, command=group.direct_command)
+                self._direct_buttons.append((button, group.enabled))
+            else:
+                button = self._make_menubutton(self, group)
+                self._group_buttons[group.label] = button
             button.pack(side="left", padx=(0, 4))
             if group.label == "放置":
-                # 播放 / 演示 放在放置菜单之后，作为最常用的两个动作
+                # 播放放在放置菜单之后，作为最常用的动作（演示模式只在「视图」菜单里）
                 self.btn_play = ttk.Button(
                     self, text="▶ 播放", style="Accent.TButton", command=app.toggle_play
                 )
                 self.btn_play.pack(side="left", padx=(6, 4))
-                self.btn_demo = ttk.Button(self, text="演示模式", command=app.toggle_demo)
-                self.btn_demo.pack(side="left", padx=(0, 4))
             if group.label != "视图":
                 continue
 
@@ -229,6 +241,8 @@ class Toolbar(ttk.Frame):
         self._menus[group.label] = menu
         button = ttk.Menubutton(parent, text=f"{group.label} ▾", menu=menu, style="Tool.TMenubutton")
         button.bind("<ButtonPress-1>", self.mark_menu_open, add="+")
+        menu.bind("<Unmap>", self.mark_menu_closed, add="+")
+        menu.bind("<Motion>", self.mark_menu_open, add="+")
         return button
 
     def _fill_menu(self, menu: tk.Menu, entries: List[Entry]) -> None:
@@ -266,40 +280,6 @@ class Toolbar(ttk.Frame):
                 menu.add_command(label=entry.label, command=entry.command, accelerator=accelerator)
                 self._registered.append((menu, (index + 1) if index is not None else 0, entry, None, False))
 
-    def _build_menubar(self) -> None:
-        """窗口菜单栏：与工具栏分组一一对应（演示模式下仍然可用）。"""
-        menubar = tk.Menu(
-            self.root,
-            tearoff=0,
-            background=self.theme.panel_alt,
-            foreground=self.theme.text,
-            activebackground=self.theme.accent,
-            activeforeground=self.theme.bg,
-            font=self.theme.font(self.theme.font_normal),
-        )
-        for group in self._groups:
-            menu = tk.Menu(
-                menubar,
-                tearoff=0,
-                background=self.theme.panel_alt,
-                foreground=self.theme.text,
-                activebackground=self.theme.accent,
-                activeforeground=self.theme.bg,
-                disabledforeground=self.theme.text_dim,
-                font=self.theme.font(self.theme.font_normal),
-            )
-            self._fill_menu(menu, group.entries)
-            self._menubar_menus[group.label] = menu
-            menu.bind("<Unmap>", self.mark_menu_closed, add="+")
-            menu.bind("<Motion>", self.mark_menu_open, add="+")
-            menubar.add_cascade(label=group.label, menu=menu)
-        menubar.bind("<ButtonPress-1>", self.mark_menu_open, add="+")
-        try:
-            self.root.configure(menu=menubar)
-        except tk.TclError:  # pragma: no cover
-            pass
-        self.menubar = menubar
-
     # ------------------------------------------------------------------ 同步
     def mark_menu_open(self, _event=None) -> None:
         """记录“刚展开了菜单”。"""
@@ -328,7 +308,7 @@ class Toolbar(ttk.Frame):
         if (time.monotonic() - self._menu_open_at) > self._menu_open_timeout:
             self._menu_open = False
             return False
-        for menu in list(self._menus.values()) + list(self._menubar_menus.values()):
+        for menu in self._menus.values():
             try:
                 if menu.winfo_ismapped():
                     return True
@@ -373,19 +353,13 @@ class Toolbar(ttk.Frame):
             if text != self._last_play_text:
                 self.btn_play.configure(text=text)
                 self._last_play_text = text
-        if hasattr(self, "btn_demo"):
-            desired = (
-                "退出演示" if app.demo_mode else "演示模式",
-                "Accent.TButton" if app.demo_mode else "TButton",
-            )
-            if desired != self._last_demo_text:
-                self.btn_demo.configure(text=desired[0], style=desired[1])
-                self._last_demo_text = desired
-        layout_name = "分栏（编辑）" if view.split_layout else "叠加（演示）"
-        zoom_text = f"{view.zoom_seconds:.3g} 秒 · {layout_name}"
-        if zoom_text != self._last_zoom_text:
-            self.lbl_zoom.configure(text=zoom_text)
-            self._last_zoom_text = zoom_text
+        if len(self._last_direct_state) != len(self._direct_buttons):
+            self._last_direct_state = [None] * len(self._direct_buttons)
+        for position, (button, enabled) in enumerate(self._direct_buttons):
+            state = "normal" if (enabled is None or enabled()) else "disabled"
+            if state != self._last_direct_state[position]:
+                button.configure(state=state)
+                self._last_direct_state[position] = state
 
     def _set_label(self, group_label: str, command_index: int, text: str) -> None:
         """按命令序号修改某个分组菜单（含菜单栏副本）的条目文字。"""
@@ -393,7 +367,7 @@ class Toolbar(ttk.Frame):
         if self._last_labels.get(key) == text:
             return
         self._last_labels[key] = text
-        for menu in (self._menus.get(group_label), self._menubar_menus.get(group_label)):
+        for menu in (self._menus.get(group_label),):
             if menu is None:
                 continue
             try:

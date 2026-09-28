@@ -29,7 +29,7 @@ from ..model.notes import (
     Note,
 )
 from ..model.speed import SpeedGroup
-from .geometry import SLIDE_MIN_PX, TAP_MIN_PX, ruler_to_x, sample_beats
+from .geometry import SLIDE_MIN_PX, TAP_MIN_PX, note_in_time, ruler_to_x, sample_beats
 from .scene import Scene
 from .theme import Theme
 from .view import ViewState
@@ -395,6 +395,9 @@ class Renderer:
         重要：速度组的流速可正可负，一个物件的屏幕位置完全由 ∫v 决定，
         因此**判定时刻很远的物件可能被速度叠加推回判定线附近，判定时刻很近的物件也可能
         被甩出画面**。所以这里绝不能用“拍差”做剔除，只能按实际算出的像素位置判断可见性。
+
+        唯一的例外是**判定时间**：一旦判定线越过了物件的判定时刻（长按 / 停留区域按结束
+        时刻算），该物件就不再显示 —— 这是显示规则，与它的位置无关。
         """
         margin = 80.0
         y_min = view.layout.play_top - margin
@@ -411,8 +414,11 @@ class Renderer:
         for note_type, layer, draw in layers:
             self.scene.set_layer(layer)
             for note in notes:
-                if isinstance(note, note_type):
-                    draw(note, note.id in state.selection)
+                if not isinstance(note, note_type):
+                    continue
+                if not note_in_time(note, view.current_beat):
+                    continue  # 判定时间已过 -> 不再显示
+                draw(note, note.id in state.selection)
 
     def _draw_lane_note(
         self,
