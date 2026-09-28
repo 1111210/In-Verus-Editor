@@ -1,0 +1,228 @@
+"""BPM 列表与偏移：拍号 <-> 秒 的双向换算。
+
+设计约定
+--------
+* 时间轴以 **拍（beat）** 为基本单位，歌曲位置以 **秒** 表示。
+* ``beat_to_seconds(b)`` 返回从歌曲开始（第 0 拍）到第 ``b`` 拍经过的秒数。
+* 偏移 ``offset_ms``：把歌曲“提前播放”的毫秒数。即第 0 拍对应的歌曲位置是
+  ``offset_ms`` 毫秒。因此判定线位于第 b 拍时，歌曲播放位置为
+  ``beat_to_seconds(b) * 1000 + offset_ms``。
+* BPM 只影响“拍 -> 秒”的换算，**不影响**物件运动速度（见 ``speed.py``）。
+"""
+
+from __future__ import annotations
+
+from dataclasses import dataclass
+from typing import Dict, Iterable, Iterator, List, Sequence, Tuple
+
+INF = float("inf")
+
+
+@dataclass
+class BpmSegment:
+    """一条 BPM 记录：从第 ``start_beat`` 拍开始，BPM 为 ``bpm``，每小节 ``beats_per_bar`` 拍。"""
+
+    start_beat: float = 0.0
+    bpm: float = 120.0
+    beats_per_bar: int = 4
+
+    def to_dict(self) -> Dict[str, object]:
+        return {
+            "start_beat": float(self.start_beat),
+            "bpm": float(self.bpm),
+            "beats_per_bar": int(self.beats_per_bar),
+        }
+
+    @classmethod
+    def from_dict(cls, data: Dict[str, object]) -> "BpmSegment":
+        return cls(
+            start_beat=float(data.get("start_beat", 0.0)),
+            bpm=float(data.get("bpm", 120.0)),
+            beats_per_bar=int(data.get("beats_per_bar", 4)),
+        )
+
+
+class TimingMap:
+    """BPM 列表 + 偏移的换算器（纯函数式，可安全拷贝）。"""
+
+    def __init__(
+        self,
+        segments: Sequence[BpmSegment] | None = None,
+        offset_ms: float = 0.0,
+    ) -> None:
+        self.offset_ms = float(offset_ms)
+        self.segments: List[BpmSegment] = []
+        self.set_segments(segments or [BpmSegment()])
+
+    # ------------------------------------------------------------------ 规整
+    def set_segments(self, segments: Iterable[BpmSegment]) -> None:
+        cleaned: List[BpmSegment] = []
+        for seg in segments:
+            cleaned.append(
+                BpmSegment(
+                    start_beat=max(0.0, float(seg.start_beat)),
+                    bpm=max(1e-3, float(seg.bpm)),
+                    beats_per_bar=max(1, int(seg.beats_per_bar)),
+                )
+            )
+        cleaned.sort(key=lambda s: s.start_beat)
+        # 去重：同一拍起点只保留最后写入的一条
+        unique: List[BpmSegment] = []
+        for seg in cleaned:
+            if unique and abs(unique[-1].start_beat - seg.start_beat) < 1e-9:
+                unique[-1] = seg
+            else:
+                unique.append(seg)
+        if not unique:
+            unique = [BpmSegment()]
+        # 第 0 拍必须是第一项（从第 0 拍开始的一项不允许删除）
+        if unique[0].start_beat > 1e-9:
+            unique[0] = BpmSegment(0.0, unique[0].bpm, unique[0].beats_per_bar)
+        self.segments = unique
+
+    def copy(self) -> "TimingMap":
+        return TimingMap([BpmSegment(s.start_beat, s.bpm, s.beats_per_bar) for s in self.segments],
+                         self.offset_ms)
+
+    # ------------------------------------------------------------------ 查询
+    def bpm_at(self, beat: float) -> float:
+        seg = self.segment_at(beat)
+        return seg.bpm
+
+    def beats_per_bar_at(self, beat: float) -> int:
+        return self.segment_at(beat).beats_per_bar
+
+    def seconds_per_beat(self, beat: float) -> float:
+        return 60.0 / self.bpm_at(beat)
+
+    def segment_at(self, beat: float) -> BpmSegment:
+        segs = self.segments
+        if beat < segs[0].start_beat:
+            return segs[0]
+        current = segs[0]
+        for seg in segs:
+            if seg.start_beat <= beat + 1e-12:
+                current = seg
+            else:
+                break
+        return current
+
+    def segment_index_at(self, beat: float) -> int:
+        idx = 0
+        for i, seg in enumerate(self.segments):
+            if seg.start_beat <= beat + 1e-12:
+                idx = i
+            else:
+                break
+        return idx
+
+    def segment_end(self, index: int) -> float:
+        if 0 <= index < len(self.segments) - 1:
+            return self.segments[index + 1].start_beat
+        return INF
+
+    # ------------------------------------------------------------------ 换算
+    def beat_to_seconds(self, beat: float) -> float:
+        beat = float(beat)
+        segs = self.segments
+        if beat < segs[0].start_beat:
+            return (beat - segs[0].start_beat) * 60.0 / segs[0].bpm
+        total = 0.0
+        for i, seg in enumerate(segs):
+            if beat <= seg.start_beat:
+                break
+            end = self.segment_end(i)
+            span = min(beat, end) - seg.start_beat
+            total += span * 60.0 / seg.bpm
+            if beat <= end:
+                break
+        return total
+
+    def seconds_to_beat(self, seconds: float) -> float:
+        seconds = float(seconds)
+        segs = self.segments
+        first_sec = 0.0
+        if seconds < first_sec:
+            return segs[0].start_beat + (seconds - first_sec) * segs[0].bpm / 60.0
+        elapsed = 0.0
+        beat = segs[0].start_beat
+        for i, seg in enumerate(segs):
+            span_seconds = (60.0 / seg.bpm)
+            end = self.segment_end(i)
+            length_beats = (end - seg.start_beat) if end != INF else INF
+            if length_beats == INF:
+                return seg.start_beat + (seconds - elapsed) / span_seconds
+            seg_seconds = length_beats * span_seconds
+            if seconds < elapsed + seg_seconds:
+                return seg.start_beat + (seconds - elapsed) / span_seconds
+            elapsed += seg_seconds
+            beat = end
+        return segs[-1].start_beat + (seconds - elapsed) * 0.0
+
+    # ------------------------------------------- 歌曲位置（毫秒，含偏移）
+    def beat_to_song_ms(self, beat: float) -> float:
+        """判定线位于第 ``beat`` 拍时，歌曲应播放到的位置（毫秒）。"""
+        return self.beat_to_seconds(beat) * 1000.0 + self.offset_ms
+
+    def song_ms_to_beat(self, song_ms: float) -> float:
+        return self.seconds_to_beat((float(song_ms) - self.offset_ms) / 1000.0)
+
+    # ------------------------------------------------------------------ 网格
+    @staticmethod
+    def snap_beat(beat: float, division: int) -> float:
+        division = max(1, int(division))
+        return round(float(beat) * division) / division
+
+    # ------------------------------------------------------------------ 小节
+    def bar_lines(self, start_beat: float, end_beat: float) -> List[float]:
+        """返回 [start_beat, end_beat] 内的小节线拍位置（每个 BPM 段重新起算）。"""
+        lines: List[float] = []
+        if end_beat < start_beat:
+            return lines
+        for i, seg in enumerate(self.segments):
+            seg_end = self.segment_end(i)
+            lo = max(start_beat, seg.start_beat)
+            hi = min(end_beat, seg_end)
+            if hi < lo - 1e-9:
+                continue
+            step = float(seg.beats_per_bar)
+            n = int((lo - seg.start_beat) / step)
+            b = seg.start_beat + n * step
+            while b < lo - 1e-9:
+                b += step
+            while b <= hi + 1e-9:
+                lines.append(round(b, 9))
+                b += step
+        return lines
+
+    def bar_index_at(self, beat: float) -> Tuple[int, float]:
+        """返回 (小节序号（从 0 开始，跨段累计）, 该小节内位置)。"""
+        bars = 0
+        for i, seg in enumerate(self.segments):
+            seg_end = self.segment_end(i)
+            if beat >= seg_end:
+                span = seg_end - seg.start_beat
+                bars += int(round(span / seg.beats_per_bar))
+                continue
+            local = max(0.0, beat - seg.start_beat)
+            step = float(seg.beats_per_bar)
+            return bars + int(local // step), local % step
+        return bars, 0.0
+
+    # ------------------------------------------------------------------ 序列化
+    def to_dict(self) -> Dict[str, object]:
+        return {
+            "offset_ms": self.offset_ms,
+            "bpm_segments": [s.to_dict() for s in self.segments],
+        }
+
+    @classmethod
+    def from_dict(cls, data: Dict[str, object] | None) -> "TimingMap":
+        data = data or {}
+        segs = [BpmSegment.from_dict(d) for d in data.get("bpm_segments", [])]  # type: ignore[arg-type]
+        return cls(segs or [BpmSegment()], float(data.get("offset_ms", 0.0)))
+
+    # ------------------------------------------------------------------ 工具
+    def iter_bar_starts(self, start_beat: float, end_beat: float) -> Iterator[float]:
+        for b in self.bar_lines(start_beat, end_beat):
+            yield b

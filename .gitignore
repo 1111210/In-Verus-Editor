@@ -1,0 +1,34 @@
+# Python
+__pycache__/
+*.py[cod]
+*.egg-info/
+.pytest_cache/
+.mypy_cache/
+
+# Virtual environment
+.venv/
+venv/
+env/
+
+# Editor / OS
+.vscode/
+.idea/
+.DS_Store
+Thumbs.db
+
+# Runtime artifacts
+*.log
+_build/
+dist/
+build/
+
+# Audio copied next to charts is user content; keep the repo small
+charts/**/*.mp3
+charts/**/*.ogg
+charts/**/*.wav
+charts/**/*.flac
+charts/**/*.m4a
+
+
+# Local scratch
+scratch/
