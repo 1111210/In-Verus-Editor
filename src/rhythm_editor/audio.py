@@ -32,6 +32,8 @@ def _fmt_rate(rate: float) -> str:
 
 _PYGAME = None
 _PYGAME_ERROR: Optional[str] = None
+_MIXER_ERROR: Optional[str] = None
+"""pygame 装了但音频设备打不开时的原因（用于区分解释器问题与设备问题）。"""
 try:  # pragma: no cover - 依赖运行环境
     import pygame  # type: ignore
 
@@ -66,15 +68,41 @@ def audio_backend_name() -> str:
 
 
 def audio_setup_hint() -> str:
-    """没有 pygame 时给用户一条能照着做的提示（正常情况返回空串）。"""
-    if _PYGAME is not None:
-        return ""
-    detail = f"（{_PYGAME_ERROR}）" if _PYGAME_ERROR else ""
-    return (
-        f"未检测到 pygame{detail}：用 run_editor.bat 启动（会自动使用项目里的 .venv），"
-        f"或执行 pip install -r requirements.txt；"
-        f"当前解释器：{sys.executable}"
-    )
+    """音频不可用时给用户一条能照着做的提示（正常情况返回空串）。"""
+    if _PYGAME is None:
+        detail = f"（{_PYGAME_ERROR}）" if _PYGAME_ERROR else ""
+        return (
+            f"未检测到 pygame{detail}：用 run_editor.bat 启动（会自动使用项目里的 .venv），"
+            f"或执行 pip install -r requirements.txt；"
+            f"当前解释器：{sys.executable}"
+        )
+    if _MIXER_ERROR:
+        return (
+            f"pygame 已安装，但音频设备打不开（{_MIXER_ERROR}）："
+            f"检查系统输出设备 / 关掉独占声卡的软件后重试，"
+            f"或在「编辑器设置 → 重新初始化音频设备」重试；"
+            f"当前解释器：{sys.executable}"
+        )
+    return ""
+
+
+def audio_backend_state() -> str:
+    """音频状态：``ok`` / ``missing``（没 pygame）/ ``device``（设备打不开）。"""
+    if _PYGAME is None:
+        return "missing"
+    if _MIXER_ERROR:
+        return "device"
+    return "ok"
+
+
+def _silent_reason() -> str:
+    """静音回退的原因（给人看的一句话）。"""
+    state = audio_backend_state()
+    if state == "missing":
+        return "未安装 pygame"
+    if state == "device":
+        return "音频设备不可用"
+    return "未使用音频后端"
 
 
 def audio_backend_available() -> bool:
@@ -459,11 +487,15 @@ class AudioPlayer:
     # ------------------------------------------------------------------ 后端
     @staticmethod
     def _create_plain_backend():
+        global _MIXER_ERROR
         if _PYGAME is not None:
             try:
-                return PygameBackend()
-            except Exception:
-                pass
+                backend = PygameBackend()
+            except Exception as exc:  # pragma: no cover - 依赖音频设备
+                _MIXER_ERROR = f"{type(exc).__name__}: {exc}".strip()
+            else:
+                _MIXER_ERROR = None
+                return backend
         return SilentBackend()
 
     def _select_backend(self):
@@ -495,13 +527,11 @@ class AudioPlayer:
     def status_text(self) -> str:
         if self.path is None:
             if not self.usable_audio:
-                return f"音频后端：silent（未安装 pygame，静音）· {_fmt_rate(self.rate)}"
+                return f"音频后端：silent（{_silent_reason()}，静音）· {_fmt_rate(self.rate)}"
             return f"音频后端：{self.backend.name}（未载入歌曲）· {_fmt_rate(self.rate)}"
         base = os.path.basename(self.path)
         if not self.usable_audio:
-            return (
-                f"音频后端：silent（未安装 pygame，静音播放）· {base} · {_fmt_rate(self.rate)}"
-            )
+            return f"音频后端：silent（{_silent_reason()}，静音播放）· {base} · {_fmt_rate(self.rate)}"
         tone = "· 不变调" if self.stretch_active else ""
         return f"音频后端：{self.backend.name} · {base} · {_fmt_rate(self.rate)}{tone}"
 
@@ -539,6 +569,22 @@ class AudioPlayer:
             except Exception:
                 pass
         self.path = None
+
+    def retry_backend(self) -> bool:
+        """重新初始化音频设备（插好耳机 / 关掉独占声卡的软件后可以重试）。
+
+        返回重试后是否可用；原来载入的歌曲会自动重新载入。
+        """
+        path = self.path
+        rate = self.rate
+        self.unload()
+        self._plain_backend = self._create_plain_backend()
+        self._stretch_backend = None
+        self.backend = self._plain_backend
+        self.rate = rate
+        if path:
+            return self.load(path)
+        return self.usable_audio
 
     # ------------------------------------------------------------------ 倍速
     def set_rate(self, rate: float) -> None:

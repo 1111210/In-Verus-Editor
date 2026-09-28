@@ -6,6 +6,13 @@
 
 * 根因：编辑器被**另一个解释器**启动了（例如系统 `C:\Python314\python.exe`），
   而 `pygame-ce` 只装在项目 `.venv` 里，于是自动退化成静音时钟后端。
+* **区分两种静音原因**：以前只要后端是 silent 就写“未安装 pygame”，即使 pygame 装了、
+  只是音频设备打不开也会误报。现在 `audio_backend_state()` 分成
+  `missing`（没 pygame）与 `device`（设备不可用）两种，状态栏分别显示
+  “未安装 pygame” / “音频设备不可用”，提示里带上失败原因与当前解释器路径。
+* **可重试**：`AudioPlayer.retry_backend()` +「编辑器设置 → 重新初始化音频设备」按钮，
+  插好耳机 / 释放独占声卡后不必重启；启动状态栏还会打印当前解释器路径，
+  一眼能看出是在 `.venv` 还是系统 Python 里跑。
 * `run_editor.py` 现在会在当前解释器没有 pygame、且项目里存在 `.venv` 时
   **自动改用 `.venv` 的解释器重新启动自己**（`VERUS_NO_VENV=1` 可关闭，
   已重启过则不会循环）；`run_editor.bat` 本来就优先用 `.venv`。

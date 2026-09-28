@@ -8,6 +8,7 @@ from __future__ import annotations
 
 import math
 import os
+import sys
 import tkinter as tk
 from tkinter import filedialog, messagebox, simpledialog, ttk
 from typing import Any, Callable, Dict, List, Optional, Sequence, Tuple
@@ -370,8 +371,15 @@ class BpmDialog(BaseDialog):
 class SettingsDialog(BaseDialog):
     title_text = "编辑器设置"
 
-    def __init__(self, parent: tk.Misc, theme: Theme, chart: Chart) -> None:
+    def __init__(
+        self,
+        parent: tk.Misc,
+        theme: Theme,
+        chart: Chart,
+        on_retry_audio: Optional[Callable[[], bool]] = None,
+    ) -> None:
         self.chart = chart
+        self.on_retry_audio = on_retry_audio
         self.settings = EditorSettings(
             zoom_seconds=chart.settings.zoom_seconds,
             grid_division=chart.settings.grid_division,
@@ -415,7 +423,48 @@ class SettingsDialog(BaseDialog):
             style="Dim.TLabel",
             wraplength=520,
         ).grid(row=1, column=0, columnspan=2, sticky="w", pady=(4, 0))
+
+        # 音频后端诊断：状态栏显示 silent 时可以在这里看清原因并重试
+        from ..audio import audio_backend_name, audio_backend_state
+
+        backend_box = ttk.LabelFrame(body, text="音频后端", padding=8)
+        backend_box.pack(fill="x", pady=(8, 0))
+        state = audio_backend_state()
+        state_text = {
+            "ok": f"{audio_backend_name()}（可发声）",
+            "missing": "silent · 未安装 pygame（用 run_editor.bat 或 pip install -r requirements.txt）",
+            "device": "silent · pygame 已安装，但音频设备打不开（检查输出设备后点下面的按钮重试）",
+        }.get(state, state)
+        ttk.Label(
+            backend_box,
+            text=f"当前：{state_text}\n解释器：{sys.executable}",
+            style="Dim.TLabel",
+            wraplength=520,
+        ).pack(anchor="w")
+        self.audio_retry_status = ttk.Label(backend_box, text="", style="Dim.TLabel", wraplength=520)
+        self.audio_retry_status.pack(anchor="w", pady=(4, 0))
+        self.btn_retry_audio = ttk.Button(
+            backend_box, text="重新初始化音频设备", command=self._retry_audio
+        )
+        self.btn_retry_audio.pack(anchor="w", pady=(6, 0))
         self._sync_scale_from_value()
+
+    def _retry_audio(self) -> None:
+        """重新初始化音频设备（插好耳机 / 释放独占声卡后无需重启编辑器）。"""
+        from ..audio import audio_backend_name, audio_setup_hint
+
+        if self.on_retry_audio is None:
+            return
+        ok = bool(self.on_retry_audio())
+        if ok:
+            self.audio_retry_status.configure(
+                text=f"✓ 已启用：{audio_backend_name()}", style="Dim.TLabel"
+            )
+        else:
+            self.audio_retry_status.configure(
+                text="✗ 仍然不可用 · " + (audio_setup_hint() or "音频后端不可用"),
+                style="Warn.TLabel",
+            )
 
     # -------------------------------------------------------------- 缩放
     @staticmethod

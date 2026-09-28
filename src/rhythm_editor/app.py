@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 import os
+import sys
 import tkinter as tk
 from tkinter import filedialog, messagebox, ttk
 from typing import Dict, Optional, Tuple
@@ -85,6 +86,7 @@ class EditorApp:
             self.status(f"音频后端：{audio_backend_name()} · {hint}")
         else:
             self.status(f"音频后端：{audio_backend_name()}")
+        self.status(f"解释器：{sys.executable}")
 
         if chart_path:
             self.load_chart_file(chart_path)
@@ -618,8 +620,25 @@ class EditorApp:
         self.view.set_beat(self.view.current_beat)
         self.status(f"BPM 列表已更新（{len(timing.segments)} 项），偏移 {timing.offset_ms:g} ms")
 
+    def retry_audio_backend(self) -> bool:
+        """重新初始化音频设备（插好耳机 / 释放独占声卡后不必重启编辑器）。"""
+        ok = self.audio.retry_backend()
+        hint = audio_setup_hint()
+        if ok:
+            self.status(f"音频后端已启用：{audio_backend_name()}")
+        else:
+            self.status(f"音频后端仍不可用：{hint or audio_backend_name()}")
+        self._sync_ui()
+        return ok
+
     def edit_settings(self) -> None:
-        result = run_dialog(SettingsDialog, self.root, self.theme, self.document.chart)
+        result = run_dialog(
+            SettingsDialog,
+            self.root,
+            self.theme,
+            self.document.chart,
+            self.retry_audio_backend,
+        )
         if not result:
             return
 
