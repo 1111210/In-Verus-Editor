@@ -113,11 +113,12 @@ python tools/check_audio.py
 
 | 项目 | 命令 | 结果 |
 | --- | --- | --- |
-| 单元测试（含 Tk 画布冒烟测试与应用级测试） | `python -m unittest discover -s tests -t .` | Ran 87 tests — **OK** |
+| 单元测试（含 Tk 画布冒烟测试与应用级测试） | `python -m unittest discover -s tests -t .` | Ran 94 tests — **OK** |
 | 需求验收清单 | `python tools/acceptance.py` | 13 项全部 `[OK ]`，结论：全部通过 |
 | 音频后端 | `python tools/check_audio.py` | 9 项全部 `[OK ]`（pygame.mixer 真实播放，延迟补偿正确） |
 | 示例谱面生成 | `python run_editor.py --make-demo` | 生成 `charts/demo/demo.ivchart`（6K 32 / 区域 3 / 滑键 6 / 4 个速度组） |
-| 界面截图 | `python tools/screenshot_editor.py docs/images` | 3 张窗口截图（PrintWindow 抓取） |
+| 界面截图 | `python tools/screenshot_editor.py docs/images` | 4 张窗口截图（含全屏，PrintWindow 抓取） |
+| 依赖安装 | `python -m pip install -r requirements.txt` | 已安装 `pygame-ce 2.5.8` |
 
 截图与测试均在真实 Tk 画布上执行，因此“渲染 → 交互 → 数据”整条链路都有证据。
 
@@ -135,3 +136,18 @@ python tools/check_audio.py
 
 实现约束：`ui/renderer.py::_draw_notes` 先算位置再决定是否绘制；
 `ui/geometry.py` 与渲染共用同一套几何（含速度段边界折点采样 `sample_beats`）。
+
+### 7.2 界面重构（分栏 / 叠加 / 全屏 / 工具栏）的验证
+
+| 测试 | 验证点 |
+| --- | --- |
+| `tests/test_editor_smoke.py::test_split_layout_geometry` | 编辑器分栏：两个区域不重叠、共用判定线 y、区域外点不到 6K 轨道 |
+| `tests/test_editor_smoke.py::test_overlay_layout_puts_mouse_area_on_middle_lanes` | 叠加布局：鼠标区域正好等于中间四条轨道 |
+| `tests/test_editor_smoke.py::test_layer_order_survives_layout_switch` | 切换布局后区域底色不会盖住物件（显式图层） |
+| `tests/test_app_flow.py::test_split_layout_and_demo_overlay` | 应用级：默认分栏，`Tab` 进入演示后叠加，退出后恢复分栏 |
+| `tests/test_app_flow.py::test_zoom_plus_button_is_always_available` | 缩放 `+` 按钮固定在右侧优先分配空间，不会被挤掉 |
+| `tests/test_app_flow.py::test_toolbar_groups_and_menubar` | 顶栏只有分组入口 + 播放/演示，并生成同名菜单栏 |
+| `tests/test_app_flow.py::test_fullscreen_toggle` | 全屏开关切换 |
+
+人工确认：`docs/images/editor_overview.png`（分栏 + 分组工具栏）、
+`docs/images/fullscreen_editor.png`（全屏）、`docs/images/demo_mode.png`（叠加演示）。

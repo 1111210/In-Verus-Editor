@@ -14,6 +14,7 @@ import unittest
 sys.path.insert(0, os.path.join(os.path.dirname(os.path.dirname(os.path.abspath(__file__))), "src"))
 
 import tkinter as tk
+from tkinter import ttk
 
 from rhythm_editor import config
 from rhythm_editor.app import EditorApp
@@ -31,7 +32,7 @@ class AppFlowTest(unittest.TestCase):
         except tk.TclError as exc:  # pragma: no cover - 无图形环境
             raise unittest.SkipTest(f"没有可用的图形环境：{exc}")
         chart = DEMO_CHART if os.path.isfile(DEMO_CHART) else None
-        self.app = EditorApp(chart, demo=False, width=1100, height=700)
+        self.app = EditorApp(chart, demo=False, width=1100, height=700, fullscreen=False)
         self.app.root.withdraw()
         self.app.root.update_idletasks()
         self.addCleanup(self._close)
@@ -50,6 +51,71 @@ class AppFlowTest(unittest.TestCase):
         self.assertIn("demo.ivchart", self.app.root.title())
         self.assertEqual(self.app.controller.tool, config.TOOL_SELECT)
         self.assertIn("音频后端", self.app.info_var.get())
+        # 编辑器默认是左右分栏，不是叠加
+        self.assertTrue(self.app.view.split_layout)
+        self.assertFalse(self.app.fullscreen)
+
+    def test_split_layout_and_demo_overlay(self) -> None:
+        view = self.app.view
+        layout = view.layout
+        # 两个区域不重叠，鼠标区域在右侧
+        self.assertLess(layout.pane_6k[1], layout.pane_mouse[0])
+        self.assertLess(layout.pane_mouse[0], layout.mouse_left)
+        self.assertLessEqual(layout.mouse_right, layout.pane_mouse[1])
+        # 在鼠标区域里点不到 6K 轨道
+        self.assertIsNone(layout.lane_at(view.norm_to_x(0.5)))
+        self.assertTrue(layout.in_6k_pane(layout.lane_center(0)))
+        # 规范化横坐标映射落在鼠标区域内
+        self.assertAlmostEqual(view.x_to_norm(view.norm_to_x(0.25)), 0.25, places=6)
+        # 演示模式：叠加到中间四条轨道
+        self.app.set_demo_mode(True)
+        self.assertFalse(view.split_layout)
+        self.assertAlmostEqual(layout.mouse_left, layout.lane_rects[1][0], places=6)
+        self.assertAlmostEqual(layout.mouse_right, layout.lane_rects[4][1], places=6)
+        self.assertEqual(layout.lane_at(view.norm_to_x(0.5)), 2)
+        self.app.set_demo_mode(False)
+        self.assertTrue(view.split_layout)
+
+    def test_zoom_plus_button_is_always_available(self) -> None:
+        """回归测试：缩放 + 按钮曾经会被挤掉，现在固定在右侧优先分配空间。"""
+        plus = None
+        container = None
+        for child in self.app.toolbar.winfo_children():
+            if not isinstance(child, ttk.Frame):
+                continue
+            for sub in child.winfo_children():
+                if isinstance(sub, ttk.Button) and sub.cget("text") == "+":
+                    plus, container = sub, child
+        self.assertIsNotNone(plus, "工具栏里应该有 + 缩放按钮")
+        self.assertEqual(plus.winfo_manager(), "pack")
+        self.assertEqual(container.pack_info()["side"], "right")
+
+    def test_toolbar_groups_and_menubar(self) -> None:
+        labels = set(self.app.toolbar._group_buttons)
+        self.assertTrue({"文件", "编辑", "放置", "视图", "面板", "帮助"} <= labels)
+        self.assertIsNotNone(self.app.toolbar.menubar)
+        # 顶栏只保留分组 + 播放/演示，不再是一长串按钮
+        self.assertTrue(hasattr(self.app.toolbar, "btn_play"))
+
+    def test_fullscreen_toggle(self) -> None:
+        before = self.app.fullscreen
+        self.app.toggle_fullscreen()
+        self.assertNotEqual(self.app.fullscreen, before)
+        self.app.toggle_fullscreen()
+        self.assertEqual(self.app.fullscreen, before)
+
+    def test_fullscreen_by_default(self) -> None:
+        """默认以全屏启动（构造函数参数 fullscreen=True）。"""
+        chart = DEMO_CHART if os.path.isfile(DEMO_CHART) else None
+        app = EditorApp(chart, demo=False, width=900, height=600, fullscreen=True)
+        try:
+            self.assertTrue(app.fullscreen)
+            self.assertEqual(int(app.root.attributes("-fullscreen")), 1)
+            app.root.withdraw()
+        finally:
+            app.audio.stop()
+            app.audio.unload()
+            app.root.destroy()
 
     def test_place_edit_and_undo_through_app(self) -> None:
         from rhythm_editor.model.notes import LaneNote

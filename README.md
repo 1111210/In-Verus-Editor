@@ -12,12 +12,13 @@
 python -m venv .venv
 .\.venv\Scripts\Activate.ps1
 
-# 2) 可选：安装音频后端（推荐；不装也能用，只是播放为静音时钟）
-pip install pygame-ce
+# 2) 安装依赖（pygame-ce：真实音频播放；不装也能用，只是播放为静音时钟）
+pip install -r requirements.txt
 
 # 3) 生成示例谱面并启动编辑器
 python run_editor.py --make-demo
-python run_editor.py charts/demo/demo.ivchart
+python run_editor.py charts/demo/demo.ivchart            # 默认全屏启动
+python run_editor.py charts/demo/demo.ivchart --windowed # 窗口模式（F11 随时切换）
 
 # 或者双击 run_editor.bat（会自动优先使用 .venv）
 ```
@@ -39,15 +40,20 @@ python -m unittest discover -s tests -t . -v
 
 ## 界面预览
 
-编辑器主界面（6K 下落式 + 叠加在中四条轨道上的鼠标平面、判定线、时间网格与底部总览条）：
+默认全屏启动。编辑器把两个平面**左右分栏**：左边 6K 下落式、右边鼠标平面，
+两边共用同一条判定线与同一套时间网格；顶部工具栏只有几个分组，具体功能收在二级菜单里：
 
 ![编辑器主界面](docs/images/editor_overview.png)
+
+全屏（F11 切换）：
+
+![全屏](docs/images/fullscreen_editor.png)
 
 放置流程中的幽灵预览（长按：起点已定，正在选择结束时刻，可滚动 / 缩放 / 点击任意位置）：
 
 ![放置预览](docs/images/placement.png)
 
-演示模式（两个平面叠加、只读，支持滚动 / 缩放 / 播放暂停）：
+演示模式才把鼠标平面**叠加**到 6K 的中间四条轨道上（只读，支持滚动 / 缩放 / 播放暂停）：
 
 ![演示模式](docs/images/demo_mode.png)
 
@@ -78,7 +84,7 @@ python -m unittest discover -s tests -t . -v
 
 | 需求 | 实现位置 | 说明 |
 | --- | --- | --- |
-| (1) UI：两个区域 + 工具栏 | `ui/toolbar.py`、`ui/renderer.py`、`ui/view.py` | 轨道边界、判定线、可调密度的节拍网格、合法区域边界、可选横向辅助网格、滚轮同步滚动、判定线永远吸附网格 |
+| (1) UI：两个区域 + 工具栏 | `ui/toolbar.py`、`ui/renderer.py`、`ui/view.py` | 编辑器左右分栏（左 6K / 右鼠标平面），演示模式叠加；轨道边界、判定线、可调密度的节拍网格、合法区域边界、可选横向辅助网格、滚轮同步滚动、判定线永远吸附网格；纯黑背景；默认全屏；工具栏分组 + 二级菜单 |
 | 2-1 元数据 + 音频复制 | `ui/dialogs.py::MetadataDialog`、`io/chart_io.py` | 选择音频后复制到谱面文件所在文件夹，并在谱面中记录文件名 |
 | 2-2 BPM 列表 + 偏移 | `ui/dialogs.py::BpmDialog`、`model/timing.py` | 每项：起始拍 / BPM / 每小节拍数；第 0 拍项不可删除；BPM **不影响**物件运动速度 |
 | 3 单轨 / 多轨 / 长按 | `ui/interactions.py` | 多轨以第一次点击时间轴为准；长按结束时刻可滚动缩放、可在任意位置（含鼠标区域）点击 |
@@ -127,7 +133,8 @@ tools/                   截图与验收辅助脚本
 
 * Python **3.10+**（开发与验证环境：Windows + Python 3.14 + Tk 9.0）
 * 界面使用标准库 `tkinter`；**不需要**任何第三方包即可完整编辑
-* 可选：`pygame-ce`（或 `pygame`）用于真实音频播放与 seek
+* 音频：`pygame-ce`（`requirements.txt` 里已列出，`pip install -r requirements.txt` 即可；
+  本仓库的 `.venv` 里已安装 2.5.8）
 
 若当前 Python 版本暂时没有 pygame 轮子，编辑器会自动退化为静音时钟后端，
 状态栏会明确提示；滚动、缩放、播放进度、编辑功能全部照常工作。

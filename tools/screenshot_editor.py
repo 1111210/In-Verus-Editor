@@ -32,7 +32,7 @@ def main() -> int:
     os.makedirs(out_dir, exist_ok=True)
     chart_path = write_demo_chart()
 
-    app = EditorApp(chart_path, demo=False, width=1280, height=800)
+    app = EditorApp(chart_path, demo=False, width=1280, height=800, fullscreen=False)
     root = app.root
     root.geometry("1280x800+60+30")
     app.document.chart.settings.zoom_seconds = 6.0
@@ -76,7 +76,12 @@ def main() -> int:
         app.controller.cancel_pending()
         app.set_tool(config.TOOL_SELECT)
         app.set_demo_mode(True)
-        root.after(250, lambda: (shot("demo_mode.png"), root.after(200, finish)))
+        root.after(250, lambda: (shot("demo_mode.png"), root.after(200, step_fullscreen)))
+
+    def step_fullscreen() -> None:
+        app.set_demo_mode(False)
+        app.toggle_fullscreen()
+        root.after(400, lambda: (shot("fullscreen_editor.png"), root.after(200, finish)))
 
     def finish() -> None:
         try:

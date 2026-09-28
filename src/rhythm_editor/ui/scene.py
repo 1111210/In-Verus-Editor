@@ -21,6 +21,26 @@ class Scene:
         self._used: set[str] = set()
         self._frames = 0
         self._unsupported: set[str] = set()
+        # 图层：先声明的层在下面。切换布局时画布对象可能被重新创建，
+        # 若不显式排序，新对象会跑到最上层（例如区域底色盖住物件）。
+        self._current_layer = 0
+        self._layers: set[int] = set()
+        self._z_dirty = False
+
+    def set_layer(self, layer: int) -> None:
+        self._current_layer = int(layer)
+        self._layers.add(self._current_layer)
+
+    def _layer_tag(self) -> str:
+        return f"__layer{self._current_layer}"
+
+    def _fix_z_order(self) -> None:
+        for layer in sorted(self._layers):
+            try:
+                self.canvas.tag_raise(f"__layer{layer}")
+            except tk.TclError:  # pragma: no cover
+                pass
+        self._z_dirty = False
 
     # ------------------------------------------------------------------ 兼容
     _OPTIONAL_OPTIONS = ("dash", "stipple", "arrowshape", "smooth", "outlineoffset")
@@ -49,6 +69,8 @@ class Scene:
         for key in stale:
             item_id, _, _ = self._items.pop(key)
             self.canvas.delete(item_id)
+        if self._z_dirty:
+            self._fix_z_order()
         self._frames += 1
 
     def clear(self) -> None:
@@ -68,12 +90,15 @@ class Scene:
     # ------------------------------------------------------------------ 基础图元
     def _put(self, key: str, kind: str, coords: Sequence[float], options: Dict[str, Any]) -> None:
         self._used.add(key)
+        tags = tuple(options.get("tags") or ()) + (self._layer_tag(),)
+        options["tags"] = tags
         spec = (tuple(round(float(c), 2) for c in coords), tuple(sorted(options.items())))
         entry = self._items.get(key)
         if entry is None or entry[1] != kind:
             if entry is not None:
                 self.canvas.delete(entry[0])
             item_id = self._create(kind, coords, options)
+            self._z_dirty = True
             self._items[key] = (item_id, kind, spec)
             return
         item_id, _, old_spec = entry

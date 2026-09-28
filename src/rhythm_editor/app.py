@@ -42,8 +42,9 @@ SHIFT_MASK = 0x0001
 
 class EditorApp:
     def __init__(self, chart_path: Optional[str] = None, demo: bool = False,
-                 width: int = 1360, height: int = 860) -> None:
+                 width: int = 1360, height: int = 860, fullscreen: bool = True) -> None:
         self.theme = DARK
+        self.fullscreen = bool(fullscreen)
         self.root = tk.Tk()
         self.root.title(f"{config.APP_TITLE} {config.VERSION}")
         self.root.geometry(f"{width}x{height}")
@@ -77,6 +78,11 @@ class EditorApp:
             self.load_chart_file(chart_path)
         if demo:
             self.set_demo_mode(True)
+        if self.fullscreen:
+            try:
+                self.root.attributes("-fullscreen", True)
+            except tk.TclError:  # pragma: no cover
+                pass
         self._sync_ui()
         self.root.after(16, self._tick)
 
@@ -133,6 +139,7 @@ class EditorApp:
         root.bind("<Control-m>", lambda e: self.mirror_selection())
         root.bind("<Control-e>", lambda e: self.edit_selected())
         root.bind("<Control-g>", lambda e: self.edit_settings())
+        root.bind("<F11>", lambda e: self.toggle_fullscreen())
         root.bind("m", lambda e: self._shortcut(self.mirror_selection))
         root.bind("e", lambda e: self._shortcut(self.edit_selected))
         root.bind("g", lambda e: self._shortcut(self.toggle_horizontal_grid))
@@ -183,8 +190,10 @@ class EditorApp:
     def _sync_ui(self) -> None:
         self.toolbar.sync()
         counts = self.document.chart.note_counts()
+        layout_name = "分栏（6K / 鼠标）" if self.view.split_layout else "叠加（演示）"
         self.info_var.set(
-            f"物件：6K {counts['lane']} · 区域 {counts['region']} · 滑键 {counts['slide']}"
+            f"布局：{layout_name}"
+            f"　|　物件：6K {counts['lane']} · 区域 {counts['region']} · 滑键 {counts['slide']}"
             f"　|　判定线：第 {self.view.current_beat:.3f} 拍"
             f"　|　{self.controller.selection_summary()}"
             f"　|　{self.audio.status_text}"
@@ -201,11 +210,15 @@ class EditorApp:
         if y >= self.view.layout.play_bottom:
             self.status("总览条：点击可跳转到对应时间")
             return
+        layout = self.view.layout
         beat = self.view.y_to_beat(y)
-        lane = self.view.layout.lane_at(x)
-        where = f"轨道 {lane + 1}" if lane is not None else "轨道外"
-        if self.view.in_mouse_area(x):
-            where += f" · 鼠标横向 {self.view.x_to_norm(x):+.3f}"
+        lane = layout.lane_at(x)
+        if lane is not None:
+            where = f"6K 轨道 {lane + 1}"
+        elif layout.in_mouse_pane(x):
+            where = f"鼠标平面 · 横向 {self.view.x_to_norm(x):+.3f}"
+        else:
+            where = "区域外"
         self.status(f"光标：{where} · 第 {beat:.3f} 拍（吸附 {self.view.snap_beat(beat):g}）· {self.view.time_label(beat)}")
 
     # ------------------------------------------------------------------ 事件
@@ -248,6 +261,37 @@ class EditorApp:
             self.status("已取消当前操作")
         elif self.demo_mode:
             self.set_demo_mode(False)
+
+    def toggle_fullscreen(self) -> None:
+        self.fullscreen = not self.fullscreen
+        try:
+            self.root.attributes("-fullscreen", self.fullscreen)
+        except tk.TclError:  # pragma: no cover
+            pass
+        self.status("已切换到全屏" if self.fullscreen else "已退出全屏（窗口模式）")
+
+    def reset_zoom(self) -> None:
+        self.document.chart.settings.zoom_seconds = config.DEFAULT_ZOOM_SECONDS
+        self.status(f"缩放已重置为 {config.DEFAULT_ZOOM_SECONDS:g} 秒")
+
+    def cancel_pending(self) -> None:
+        self.controller.cancel_pending()
+        self.status("已取消当前放置流程")
+
+    def clear_selection(self) -> None:
+        self.document.clear_selection()
+        self.status("已清空选择")
+
+    def show_about(self) -> None:
+        messagebox.showinfo(
+            "关于",
+            f"{config.APP_TITLE} {config.VERSION}\n"
+            f"{config.APP_SUBTITLE}\n\n"
+            f"布局：编辑时左右分栏（6K / 鼠标平面），演示模式叠加显示\n"
+            f"音频后端：{audio_backend_name()}\n"
+            f"谱面格式：{config.CHART_FORMAT} v{config.CHART_FORMAT_VERSION}",
+            parent=self.root,
+        )
 
     def _scroll_steps(self, direction: int) -> None:
         self.view.scroll_beats(direction * self.view.grid_step())
@@ -536,6 +580,8 @@ class EditorApp:
             return
         self.demo_mode = enabled
         self.render_state.demo = enabled
+        # 演示模式：鼠标平面叠加到 6K 的中间四条轨道；编辑器：左右两个独立区域
+        self.view.set_layout_mode(config.LAYOUT_OVERLAY if enabled else config.LAYOUT_SPLIT)
         self.controller.cancel_pending()
         if enabled:
             self.document.clear_selection()
@@ -561,6 +607,7 @@ def main(argv: Optional[list] = None) -> int:  # pragma: no cover - GUI 入口
     parser.add_argument("chart", nargs="?", help="要打开的谱面文件（.ivchart）")
     parser.add_argument("--demo", action="store_true", help="直接进入演示模式")
     parser.add_argument("--make-demo", action="store_true", help="生成示例谱面后退出")
+    parser.add_argument("--windowed", action="store_true", help="以窗口模式启动（默认全屏）")
     args = parser.parse_args(argv)
 
     if args.make_demo:
@@ -570,6 +617,6 @@ def main(argv: Optional[list] = None) -> int:  # pragma: no cover - GUI 入口
         print(f"示例谱面已生成：{path}")
         return 0
 
-    app = EditorApp(args.chart, demo=args.demo)
+    app = EditorApp(args.chart, demo=args.demo, fullscreen=not args.windowed)
     app.run()
     return 0

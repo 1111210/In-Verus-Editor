@@ -291,6 +291,9 @@ class ToolController:
         if not self._in_play(x, y):
             self.status("请在游玩区域内点击")
             return
+        if not self.view.in_mouse_area(x):
+            self.status("滑键需要放在鼠标平面的合法区域内（右侧区域）")
+            return
         if self._stage == 0:
             self._stage = 1
             self._first_beat = self.view.snap_beat(self.view.y_to_beat(y))
@@ -405,9 +408,9 @@ class ToolController:
                 pending.beat_start = self._first_beat
                 pending.beat_end = max(beat, (self._first_beat or 0.0) + self.view.grid_step())
         elif tool == config.TOOL_MOUSE_SLIDE:
-            if not in_play:
+            if not in_play or not self.view.in_mouse_area(x):
                 pending.tool = ""
-                pending.hint = ""
+                pending.hint = "滑键请在鼠标平面的合法区域内点击" if in_play else ""
                 return
             if self._stage == 0:
                 pending.beat_start = beat

@@ -100,12 +100,28 @@ y_note  = judgment_y − D(t) × 每拍像素
 
 ## 3. 渲染管线
 
+### 3.0 两种布局
+
+* `LAYOUT_SPLIT`（编辑器默认）：画布左右两个区域，`Layout.pane_6k` 与 `Layout.pane_mouse`
+  分别给出边界；`lane_rects` 只落在 6K 区域内，`mouse_left/mouse_right` 是鼠标区域里
+  0..1 合法区域的左右界。两个区域共用 `judgment_y` 与 `beat_to_y()`，所以时间轴严格同步。
+* `LAYOUT_OVERLAY`（演示模式）：`pane_mouse` 直接取中间四条轨道，鼠标平面叠加在 6K 上。
+
+`ViewState.set_layout_mode()` 切换时会 `recompute()`；`lane_at()` 在 6K 区域之外返回 `None`，
+因此放置类工具天然不会把 6K 物件放到鼠标区域里。
+
 `Scene`（`ui/scene.py`）是一个**带差分的画布封装**：
 
 * 每帧 `begin()` → 用稳定 key 声明图元（`rect/line/polyline/polygon/oval/text`）
   → `end()` 自动删除本帧未出现的图元；
 * 图元坐标与选项与上一帧完全相同时**不触碰** Tk 对象，只有变化时才 `coords/itemconfigure`；
 * 因此 60 FPS 下开销与“变化量”成正比，而不是与物件总数成正比。
+
+场景还维护**显式图层**（`set_layer`）：Tk 画布的对象层级由创建顺序决定，
+切换布局时某些对象会被删除再重建，如果不排序，新建的区域底色会跑到最上层把物件盖住。
+`Scene.end()` 在检测到重建后按图层号 `tag_raise`，保证
+「背景 < 区域底色/轨道 < 网格 < 合法区域与横向网格 < 物件 < 判定线 < 预览 < 总览条 < HUD」
+始终成立（对应回归测试 `test_layer_order_survives_layout_switch`）。
 
 绘制顺序：背景 → 轨道 → 合法区域边界 → 时间网格 → 横向辅助网格 → 物件
 → 判定线 → 幽灵预览 / 橡皮筋 → 总览条 → HUD 文字。

@@ -13,23 +13,24 @@ from .. import config
 @dataclass(frozen=True)
 class Theme:
     # 基础
-    bg: str = "#0f131b"
-    panel: str = "#151b26"
-    panel_alt: str = "#1b2230"
-    play_bg: str = "#101622"
-    lane_alt: str = "#131a27"
-    lane_alt2: str = "#161e2c"
-    lane_border: str = "#39455a"
-    lane_border_strong: str = "#55637d"
+    bg: str = "#000000"
+    panel: str = "#000000"
+    panel_alt: str = "#141414"
+    play_bg: str = "#000000"
+    pane_bg: str = "#050505"
+    lane_alt: str = "#000000"
+    lane_alt2: str = "#0a0a0a"
+    lane_border: str = "#2f2f2f"
+    lane_border_strong: str = "#4d4d4d"
 
-    grid_sub: str = "#1e2637"
-    grid_beat: str = "#2b3549"
-    grid_bar: str = "#4b5a78"
-    grid_label: str = "#6f7d95"
-    hgrid: str = "#31405c"
+    grid_sub: str = "#1a1a1a"
+    grid_beat: str = "#2b2b2b"
+    grid_bar: str = "#4f4f4f"
+    grid_label: str = "#808080"
+    hgrid: str = "#333333"
     legal_border: str = "#7fa8ff"
 
-    judge_line: str = "#f2f5fa"
+    judge_line: str = "#ffffff"
     judge_glow: str = "#7aa2ff"
 
     note_white: str = "#ffffff"
@@ -45,8 +46,8 @@ class Theme:
     select: str = "#ffd166"
     pending: str = config.PENDING_COLOR
     rubber: str = "#8fb4ff"
-    text: str = "#dbe3f0"
-    text_dim: str = "#8b97ad"
+    text: str = "#e8e8e8"
+    text_dim: str = "#909090"
     text_warn: str = "#ffb454"
     accent: str = "#59b0ff"
 

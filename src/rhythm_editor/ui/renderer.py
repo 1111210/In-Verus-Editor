@@ -1,8 +1,14 @@
 """把谱面与视图状态画到画布上。
 
+布局
+----
+* 编辑器（``LAYOUT_SPLIT``）：左右两个独立区域 —— 左边 6K 下落式、右边鼠标平面。
+  两个区域共用同一条判定线的 y 坐标与同一套时间网格，因此滚动 / 缩放同步。
+* 演示模式（``LAYOUT_OVERLAY``）：只有一个区域，鼠标平面叠加在 6K 的中间四条轨道上。
+
 渲染顺序（自下而上）：
-背景 -> 轨道 -> 鼠标合法区域 -> 时间网格 -> 横向辅助网格 -> 物件 -> 判定线
--> 预览/幽灵物件 -> 橡皮筋 -> 底部总览条 -> 画布内提示文字
+背景 -> 区域底色 / 轨道 -> 时间网格 -> 合法区域边界 -> 横向辅助网格 -> 物件
+-> 判定线 -> 区域标题 -> 预览幽灵 / 橡皮筋 -> 底部总览条 -> HUD
 """
 
 from __future__ import annotations
@@ -76,7 +82,6 @@ class Renderer:
     def __init__(self, scene: Scene, theme: Theme) -> None:
         self.scene = scene
         self.theme = theme
-        # 用于测量文本宽度（给画布内的提示文字加底色）
         try:
             self._small_font = tkfont.Font(family=theme.font_family, size=theme.font_small)
         except Exception:  # pragma: no cover - 无 Tk 环境
@@ -90,33 +95,143 @@ class Renderer:
     # ------------------------------------------------------------------ 主入口
     def draw(self, chart: Chart, view: ViewState, state: RenderState) -> None:
         scene = self.scene
-        theme = self.theme
         layout = view.layout
         scene.begin()
-        scene.rect("bg", 0, 0, layout.width, layout.height, fill=theme.play_bg, outline="")
-
+        scene.set_layer(0)
+        scene.rect("bg", 0, 0, layout.width, layout.height, fill=self.theme.play_bg, outline="")
         beat_low, beat_high = view.beat_range()
-        self._draw_lanes(view, theme)
-        self._draw_time_grid(chart, view, beat_low, beat_high)
+        if view.split_layout:
+            self._draw_split_view(chart, view, state, beat_low, beat_high)
+        else:
+            self._draw_overlay_view(chart, view, state, beat_low, beat_high)
         if state.show_ruler:
+            scene.set_layer(10)
             self._draw_ruler(chart, view, state)
-        self._draw_legal_area(view)
-        self._draw_horizontal_grid(chart, view)
-        self._draw_notes(chart, view, state)
-        self._draw_judgment_line(view, state)
-        if not state.demo:
-            self._draw_pending(chart, view, state)
-            self._draw_rubber_band(state)
+        scene.set_layer(11)
         self._draw_hud(chart, view, state)
         scene.end()
 
+    # ------------------------------------------------------------------ 两种布局
+    def _draw_split_view(
+        self, chart: Chart, view: ViewState, state: RenderState, beat_low: float, beat_high: float
+    ) -> None:
+        """编辑器布局：左 6K、右鼠标平面，两个区域各自绘制但共享时间轴。"""
+        layout = view.layout
+        theme = self.theme
+        self.scene.set_layer(0)
+        # 两个区域的底色（纯黑背景 + 细分隔线）
+        self.scene.rect(
+            "pane6:bg",
+            layout.pane_6k[0],
+            layout.play_top,
+            layout.pane_6k[1],
+            layout.play_bottom,
+            fill=theme.lane_alt,
+            outline="",
+        )
+        self.scene.rect(
+            "panem:bg",
+            layout.pane_mouse[0],
+            layout.play_top,
+            layout.pane_mouse[1],
+            layout.play_bottom,
+            fill=theme.pane_bg,
+            outline=theme.lane_border,
+            width=1,
+        )
+        self.scene.line(
+            "pane:divider",
+            layout.divider_x,
+            layout.play_top,
+            layout.divider_x,
+            layout.play_bottom,
+            fill=theme.lane_border_strong,
+            width=1,
+            dash=(4, 6),
+        )
+
+        self.scene.set_layer(1)
+        self._draw_lanes(view, theme, "lane")
+        self.scene.set_layer(2)
+        self._draw_time_grid(chart, view, beat_low, beat_high, *layout.pane_6k, "grid6", True, False)
+        self._draw_time_grid(chart, view, beat_low, beat_high, *layout.pane_mouse, "gridm", False, True)
+        self.scene.set_layer(3)
+        self._draw_legal_area(view, "mouse", label=None)
+        self._draw_horizontal_grid(chart, view)
+        self.scene.set_layer(4)
+        self._draw_notes(chart, view, state)
+        self.scene.set_layer(7)
+        self._draw_judgment_line(view, state, *layout.pane_6k, "judge", accent=False, label="判定线")
+        self._draw_judgment_line(
+            view, state, *layout.pane_mouse, "judge-mouse", accent=True, label="鼠标判定线"
+        )
+        self._draw_pane_titles(view)
+        if not state.demo:
+            self.scene.set_layer(8)
+            self._draw_pending(chart, view, state)
+            self.scene.set_layer(9)
+            self._draw_rubber_band(state)
+
+    def _draw_overlay_view(
+        self, chart: Chart, view: ViewState, state: RenderState, beat_low: float, beat_high: float
+    ) -> None:
+        """演示布局：鼠标平面叠加在 6K 的中间四条轨道上。"""
+        layout = view.layout
+        theme = self.theme
+        self.scene.set_layer(1)
+        self._draw_lanes(view, theme, "lane")
+        self.scene.set_layer(2)
+        self._draw_time_grid(
+            chart, view, beat_low, beat_high, layout.play_left, layout.play_right, "grid", True, True
+        )
+        self.scene.set_layer(3)
+        self._draw_legal_area(view, "mouse", label="鼠标平面合法区域 (0 .. 1)", label_anchor="ne")
+        self._draw_horizontal_grid(chart, view)
+        self.scene.set_layer(4)
+        self._draw_notes(chart, view, state)
+        self.scene.set_layer(7)
+        self._draw_judgment_line(
+            view, state, layout.play_left, layout.play_right, "judge", accent=False, label="判定线"
+        )
+        self._draw_judgment_line(
+            view, state, layout.mouse_left, layout.mouse_right, "judge-mouse", accent=True
+        )
+        if not state.demo:
+            self.scene.set_layer(8)
+            self._draw_pending(chart, view, state)
+            self.scene.set_layer(9)
+            self._draw_rubber_band(state)
+
+    def _draw_pane_titles(self, view: ViewState) -> None:
+        layout = view.layout
+        theme = self.theme
+        # 6K 区域的标题放在 HUD 下方，避免与 BPM 信息重叠
+        self.scene.text(
+            "pane6:title",
+            layout.pane_6k[0] + 6,
+            layout.play_top + 24,
+            "6K 下落式（轨道 1 - 6）",
+            fill=theme.text_dim,
+            font=theme.font(theme.font_small, bold=True),
+            anchor="nw",
+        )
+        self.scene.text(
+            "panem:title",
+            layout.pane_mouse[0] + 6,
+            layout.play_top + 4,
+            "鼠标平面 · 合法区域 0 .. 1",
+            fill=theme.legal_border,
+            font=theme.font(theme.font_small, bold=True),
+            anchor="nw",
+        )
+
     # ------------------------------------------------------------------ 轨道
-    def _draw_lanes(self, view: ViewState, theme: Theme) -> None:
+    def _draw_lanes(self, view: ViewState, theme: Theme, key_prefix: str = "lane") -> None:
         layout = view.layout
         for index, (x0, x1) in enumerate(layout.lane_rects):
             fill = theme.lane_alt if index % 2 == 0 else theme.lane_alt2
             self.scene.rect(
-                f"lane:{index}",
+                f"{key_prefix}:{index}",
                 x0,
                 layout.play_top,
                 x1,
@@ -126,39 +241,46 @@ class Renderer:
                 width=1,
             )
         self.scene.line(
-            "lane_frame",
-            layout.play_left,
+            f"{key_prefix}:frame",
+            layout.lane_rects[0][0],
             layout.play_top,
-            layout.play_right,
+            layout.lane_rects[-1][1],
             layout.play_top,
             fill=theme.lane_border_strong,
             width=1,
         )
 
-    def _draw_legal_area(self, view: ViewState) -> None:
+    def _draw_legal_area(
+        self,
+        view: ViewState,
+        key_prefix: str = "mouse",
+        label: Optional[str] = None,
+        label_anchor: str = "nw",
+    ) -> None:
         layout = view.layout
         theme = self.theme
-        key = "mouse:legal"
         self.scene.rect(
-            key,
+            f"{key_prefix}:legal",
             layout.mouse_left,
             layout.play_top,
             layout.mouse_right,
-            layout.judgment_y,
+            layout.play_bottom,
             fill="",
             outline=theme.legal_border,
             width=2,
             dash=(6, 4),
         )
-        self.scene.text(
-            "mouse:legal-label",
-            layout.mouse_right - 6,
-            layout.play_top + 4,
-            "鼠标平面合法区域 (0 .. 1)",
-            fill=theme.legal_border,
-            font=theme.font(theme.font_small),
-            anchor="ne",
-        )
+        if label:
+            x = layout.mouse_left + 6 if label_anchor.endswith("w") else layout.mouse_right - 6
+            self.scene.text(
+                f"{key_prefix}:legal-label",
+                x,
+                layout.play_top + 4,
+                label,
+                fill=theme.legal_border,
+                font=theme.font(theme.font_small),
+                anchor=label_anchor,
+            )
 
     def _draw_horizontal_grid(self, chart: Chart, view: ViewState) -> None:
         if not chart.settings.horizontal_grid_enabled or not view.show_horizontal_grid:
@@ -168,13 +290,12 @@ class Renderer:
         divisions = chart.settings.horizontal_divisions
         for i in range(divisions + 1):
             x = view.norm_to_x(i / divisions)
-            label = f"{i / divisions:.3g}"
             self.scene.line(
                 f"hgrid:{i}",
                 x,
                 layout.play_top,
                 x,
-                layout.judgment_y,
+                layout.play_bottom,
                 fill=theme.hgrid,
                 width=1,
                 dash=(2, 6),
@@ -183,14 +304,25 @@ class Renderer:
                 f"hgrid-label:{i}",
                 x + 3,
                 layout.judgment_y - 16,
-                label,
+                f"{i / divisions:.3g}",
                 fill=theme.text_dim,
                 font=theme.font(theme.font_small),
                 anchor="nw",
             )
 
     # ------------------------------------------------------------------ 网格
-    def _draw_time_grid(self, chart: Chart, view: ViewState, beat_low: float, beat_high: float) -> None:
+    def _draw_time_grid(
+        self,
+        chart: Chart,
+        view: ViewState,
+        beat_low: float,
+        beat_high: float,
+        x0: float,
+        x1: float,
+        key_prefix: str = "grid",
+        bar_labels: bool = True,
+        time_labels: bool = True,
+    ) -> None:
         theme = self.theme
         layout = view.layout
         ppb = view.px_per_beat()
@@ -198,7 +330,7 @@ class Renderer:
         sub_step = 1.0 / division
         draw_sub = (ppb / division) >= 7.0
         draw_beat = ppb >= 9.0
-        # 密度自适应：太密时只画拍线，再密时只画小节线，避免糊成一片
+        # 密度自适应：太密时只画拍线，再密时只画小节线
         if draw_sub:
             base_step = sub_step
         elif draw_beat:
@@ -226,28 +358,29 @@ class Renderer:
                 if not draw_sub:
                     continue
                 color, width = theme.grid_sub, 1
-            self.scene.line(f"grid:{i}", layout.play_left, y, layout.play_right, y, fill=color, width=width)
+            self.scene.line(f"{key_prefix}:{i}", x0, y, x1, y, fill=color, width=width)
             if is_bar:
-                bar_index, _ = chart.timing.bar_index_at(beat + 1e-9)
-                self.scene.text(
-                    f"grid-label:{i}",
-                    layout.play_left + 4,
-                    y + 2,
-                    f"小节 {bar_index + 1}",
-                    fill=theme.grid_label,
-                    font=theme.font(theme.font_small),
-                    anchor="nw",
-                )
-                seconds = chart.timing.beat_to_seconds(beat)
-                self.scene.text(
-                    f"grid-time:{i}",
-                    layout.play_right - 4,
-                    y + 2,
-                    f"{view.time_label(beat)}",
-                    fill=theme.grid_label,
-                    font=theme.font(theme.font_small),
-                    anchor="ne",
-                )
+                if bar_labels:
+                    bar_index, _ = chart.timing.bar_index_at(beat + 1e-9)
+                    self.scene.text(
+                        f"{key_prefix}-label:{i}",
+                        x0 + 4,
+                        y + 2,
+                        f"小节 {bar_index + 1}",
+                        fill=theme.grid_label,
+                        font=theme.font(theme.font_small),
+                        anchor="nw",
+                    )
+                if time_labels:
+                    self.scene.text(
+                        f"{key_prefix}-time:{i}",
+                        x1 - 4,
+                        y + 2,
+                        view.time_label(beat),
+                        fill=theme.grid_label,
+                        font=theme.font(theme.font_small),
+                        anchor="ne",
+                    )
 
     # ------------------------------------------------------------------ 物件
     def _group(self, chart: Chart, note: Note) -> SpeedGroup:
@@ -268,16 +401,15 @@ class Renderer:
         y_max = view.layout.height + margin
         notes = chart.sorted_notes()
         region_count = sum(1 for n in notes if isinstance(n, MouseRegion))
-        # 物件很多时适当降低区域采样数，保证帧率
         region_samples = REGION_SAMPLES if region_count <= 40 else 12
-        # 绘制顺序：停留区域（半透明，位于最底层）→ 6K 物件 → 滑键（最上层）
-        # 这样鼠标平面的半透明填充不会盖住 6K 的白色/粉色矩形，编辑时看得更清楚。
+        # 绘制顺序：停留区域（半透明，最底层）→ 6K 物件 → 滑键（最上层）
         layers = (
-            (MouseRegion, lambda n, s: self._draw_region(n, chart, view, s, y_min, y_max, region_samples)),
-            (LaneNote, lambda n, s: self._draw_lane_note(n, chart, view, s, y_min, y_max)),
-            (MouseSlide, lambda n, s: self._draw_slide(n, chart, view, s, y_min, y_max)),
+            (MouseRegion, 4, lambda n, s: self._draw_region(n, chart, view, s, y_min, y_max, region_samples)),
+            (LaneNote, 5, lambda n, s: self._draw_lane_note(n, chart, view, s, y_min, y_max)),
+            (MouseSlide, 6, lambda n, s: self._draw_slide(n, chart, view, s, y_min, y_max)),
         )
-        for note_type, draw in layers:
+        for note_type, layer, draw in layers:
+            self.scene.set_layer(layer)
             for note in notes:
                 if isinstance(note, note_type):
                     draw(note, note.id in state.selection)
@@ -308,7 +440,7 @@ class Renderer:
             fill = theme.hold_pink
             outline = theme.hold_border
         else:
-            top = min(y_head - TAP_MIN_PX, y_head)
+            top = y_head - TAP_MIN_PX
             bottom = y_head
             fill = theme.note_white
             outline = theme.note_border
@@ -391,12 +523,8 @@ class Renderer:
         half = len(points) // 2
         left_edge = points[:half]
         right_edge = list(reversed(points[half:]))
-        self.scene.polyline(
-            f"region-left:{note.id}", left_edge, fill=theme.region_edge, width=3, smooth=False
-        )
-        self.scene.polyline(
-            f"region-right:{note.id}", right_edge, fill=theme.region_edge, width=3, smooth=False
-        )
+        self.scene.polyline(f"region-left:{note.id}", left_edge, fill=theme.region_edge, width=3)
+        self.scene.polyline(f"region-right:{note.id}", right_edge, fill=theme.region_edge, width=3)
         self.scene.line(
             f"region-cap0:{note.id}",
             left_edge[0][0],
@@ -505,47 +633,36 @@ class Renderer:
             )
 
     # ------------------------------------------------------------------ 判定线
-    def _draw_judgment_line(self, view: ViewState, state: RenderState) -> None:
+    def _draw_judgment_line(
+        self,
+        view: ViewState,
+        state: RenderState,
+        x0: float,
+        x1: float,
+        key_prefix: str = "judge",
+        accent: bool = False,
+        label: Optional[str] = None,
+    ) -> None:
         theme = self.theme
-        layout = view.layout
-        y = layout.judgment_y
+        y = view.layout.judgment_y
         self.scene.line(
-            "judge",
-            layout.play_left,
+            key_prefix,
+            x0,
             y,
-            layout.play_right,
+            x1,
             y,
-            fill=theme.judge_line,
+            fill=theme.accent if accent else theme.judge_line,
             width=3,
         )
-        # 鼠标平面的判定线（与 6K 共用同一条线，这里用强调色标出叠加区间）
-        self.scene.line(
-            "judge-mouse",
-            layout.mouse_left,
-            y,
-            layout.mouse_right,
-            y,
-            fill=theme.accent,
-            width=3,
-        )
-        self.scene.text(
-            "judge-label",
-            layout.play_right - 4,
-            y - 16,
-            "判定线",
-            fill=theme.judge_line,
-            font=theme.font(theme.font_small, bold=True),
-            anchor="ne",
-        )
-        if state.playing:
+        if label:
             self.scene.text(
-                "playing-label",
-                layout.play_left + 4,
-                layout.play_top + 4,
-                "▶ 播放中",
-                fill=theme.accent,
-                font=theme.font(theme.font_normal, bold=True),
-                anchor="nw",
+                f"{key_prefix}-label",
+                x1 - 4,
+                y - 16,
+                label,
+                fill=theme.judge_line,
+                font=theme.font(theme.font_small, bold=True),
+                anchor="ne",
             )
 
     # ------------------------------------------------------------------ 预览
@@ -646,7 +763,7 @@ class Renderer:
             self.scene.text(
                 "pending:hint",
                 layout.play_left + 8,
-                layout.play_top + 26,
+                layout.play_top + 46,
                 pending.hint,
                 fill=theme.pending,
                 font=theme.font(theme.font_normal, bold=True),
@@ -658,9 +775,7 @@ class Renderer:
     def _draw_clipboard_ghost(self, chart: Chart, view: ViewState, pending: PendingPreview) -> None:
         from ..model.notes import note_from_dict
 
-        heads = []
-        for data in pending.clipboard:
-            heads.append(float(data.get("beat", data.get("beat_start", 0.0))))
+        heads = [float(d.get("beat", d.get("beat_start", 0.0))) for d in pending.clipboard]
         base = pending.clipboard_beat - (min(heads) if heads else 0.0)
         theme = self.theme
         for index, data in enumerate(pending.clipboard):
@@ -755,13 +870,14 @@ class Renderer:
     def _draw_hud(self, chart: Chart, view: ViewState, state: RenderState) -> None:
         theme = self.theme
         layout = view.layout
-        bar_index, _ = chart.timing.bar_index_at(view.current_beat)
-        _, beat_in_bar = chart.timing.bar_index_at(view.current_beat)
+        bar_index, beat_in_bar = chart.timing.bar_index_at(view.current_beat)
         text = (
             f"{chart.timing.bpm_at(view.current_beat):.2f} BPM · "
             f"小节 {bar_index + 1} 第 {beat_in_bar + 1:.2f} 拍 · "
             f"第 {view.current_beat:.3f} 拍 · {view.time_label(view.current_beat)}"
         )
+        if state.playing:
+            text = "▶ 播放中 · " + text
         hud_w = self._text_width(text) + 12
         self.scene.rect(
             "hud-time-bg",
@@ -786,8 +902,8 @@ class Renderer:
             self.scene.text(
                 "hud-demo",
                 layout.width / 2,
-                layout.play_top + 6,
-                "演示模式（不可编辑）",
+                layout.play_top + 30,
+                "演示模式（不可编辑 · 两个平面叠加显示）",
                 fill=theme.pending,
                 font=theme.font(theme.font_title, bold=True),
                 anchor="n",
@@ -796,7 +912,7 @@ class Renderer:
             self.scene.text(
                 "hud-message",
                 layout.width / 2,
-                layout.play_top + 30,
+                layout.play_top + 54,
                 state.message,
                 fill=theme.text_warn,
                 font=theme.font(theme.font_normal, bold=True),

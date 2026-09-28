@@ -122,6 +122,49 @@ class EditorSmokeTest(unittest.TestCase):
         # 判定线上的拍与网格完全重合：该拍的网格线 y 与判定线 y 相同
         self.assertAlmostEqual(self.view.beat_to_y(self.view.current_beat), self.view.layout.judgment_y, places=6)
 
+    def test_split_layout_geometry(self) -> None:
+        """编辑器布局：左 6K、右鼠标平面，两个区域互不重叠但共用判定线。"""
+        layout = self.view.layout
+        self.assertTrue(self.view.split_layout)
+        self.assertLess(layout.pane_6k[1], layout.pane_mouse[0])
+        self.assertIsNone(layout.lane_at(self.view.norm_to_x(0.5)))
+        self.assertFalse(layout.in_6k_pane(self.view.norm_to_x(0.5)))
+        self.assertTrue(layout.in_mouse_pane(self.view.norm_to_x(0.5)))
+        self.draw()
+        for key in ("pane6:bg", "panem:bg", "judge", "judge-mouse", "mouse:legal"):
+            self.assertIn(key, self.scene._items)
+        judge = self.scene._items["judge"][2][0]
+        judge_mouse = self.scene._items["judge-mouse"][2][0]
+        self.assertAlmostEqual(judge[1], judge_mouse[1], places=6)
+        self.assertLessEqual(judge[2], layout.pane_6k[1] + 1)
+        self.assertGreaterEqual(judge_mouse[0], layout.pane_mouse[0] - 1)
+
+    def test_overlay_layout_puts_mouse_area_on_middle_lanes(self) -> None:
+        self.view.set_layout_mode(config.LAYOUT_OVERLAY)
+        layout = self.view.layout
+        self.assertFalse(self.view.split_layout)
+        self.assertAlmostEqual(layout.mouse_left, layout.lane_rects[1][0], places=6)
+        self.assertAlmostEqual(layout.mouse_right, layout.lane_rects[4][1], places=6)
+        self.draw()
+        self.assertIn("judge", self.scene._items)
+        self.assertIn("judge-mouse", self.scene._items)
+        self.view.set_layout_mode(config.LAYOUT_SPLIT)
+
+    def test_layer_order_survives_layout_switch(self) -> None:
+        """回归测试：布局切换会重建区域底色对象，不能让它们盖住物件。"""
+        self.controller.set_tool(config.TOOL_LANE_TAP)
+        self.click(self.view.layout.lane_center(1), self.y_of_beat(2.0))
+        note_id = self.document.chart.lane_notes[0].id
+        self.draw()
+        self.view.set_layout_mode(config.LAYOUT_OVERLAY)
+        self.draw()
+        self.view.set_layout_mode(config.LAYOUT_SPLIT)
+        self.draw()
+        order = list(self.canvas.find_all())
+        pane_bg = self.scene._items["pane6:bg"][0]
+        note_item = self.scene._items[f"note:{note_id}"][0]
+        self.assertGreater(order.index(note_item), order.index(pane_bg), "物件必须画在区域底色之上")
+
     # -------------------------------------------------------------- 放置
     def test_place_lane_tap(self) -> None:
         self.controller.set_tool(config.TOOL_LANE_TAP)

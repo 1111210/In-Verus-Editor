@@ -18,6 +18,13 @@ MOUSE_LANE_FIRST = 1          # 鼠标平面覆盖 6 轨中的中间四条（索
 MOUSE_LANE_LAST = 4
 MOUSE_LANE_COUNT = MOUSE_LANE_LAST - MOUSE_LANE_FIRST + 1
 
+# 布局模式：编辑器里两个区域左右分开；演示模式下鼠标平面叠加到 6K 上
+LAYOUT_SPLIT = "split"
+LAYOUT_OVERLAY = "overlay"
+SPLIT_6K_RATIO = 0.56         # 6K 区域占两个区域总宽度的比例
+PANE_GAP = 16                 # 两个区域之间的间隔（像素）
+PANE_INSET_RATIO = 0.05       # 鼠标合法区域相对区域边框的内缩比例
+
 # 默认值：BPM 列表 / 偏移 / 网格 / 缩放 / 延迟
 DEFAULT_BPM = 120.0
 DEFAULT_BEATS_PER_BAR = 4

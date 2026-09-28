@@ -67,6 +67,27 @@ def apply_theme(root: tk.Misc, theme: Theme) -> ttk.Style:
     )
     style.map("Active.Tool.TButton", background=[("active", theme.judge_glow)])
     style.configure(
+        "Tool.TMenubutton",
+        background=theme.panel_alt,
+        foreground=theme.text,
+        bordercolor=theme.lane_border,
+        arrowcolor=theme.text,
+        padding=(10, 5),
+        font=font,
+    )
+    style.map(
+        "Tool.TMenubutton",
+        background=[("active", theme.lane_border)],
+        foreground=[("disabled", theme.text_dim)],
+    )
+    style.configure(
+        "TMenubutton",
+        background=theme.panel_alt,
+        foreground=theme.text,
+        padding=(8, 4),
+        font=font,
+    )
+    style.configure(
         "Accent.TButton",
         background=theme.accent,
         foreground=theme.bg,
