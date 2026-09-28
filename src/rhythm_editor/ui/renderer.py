@@ -610,6 +610,9 @@ class Renderer:
         y = view.note_y(note.beat, group)
         if y < y_min or y > y_max:
             return
+        leftward = note.direction < 0
+        fill = theme.slide_left_fill if leftward else theme.slide_fill
+        edge = theme.slide_left_edge if leftward else theme.slide_edge
         x_start = view.norm_to_x(note.x_start)
         x_end = view.norm_to_x(note.x_end)
         min_dx = max(18.0, config.MIN_SLIDE_SPAN * view.layout.mouse_width)
@@ -623,20 +626,22 @@ class Renderer:
             y - SLIDE_MIN_PX / 2,
             x1 + 4,
             y + SLIDE_MIN_PX / 2,
-            fill=theme.slide_fill,
-            outline=theme.slide_edge,
+            fill=fill,
+            outline=edge,
             width=2,
             stipple=theme.stipple_fill,
         )
-        arrow_from = x_start if x_end >= x_start else x_end
-        arrow_to = x_end if x_end >= x_start else x_start
+        # 箭头从起点指向终点：向左的滑键必须指向左（之前用 min/max 取端点，结果永远朝右）
+        direction = 1.0 if x_end >= x_start else -1.0
+        arrow_from = x_start
+        arrow_to = x_start + direction * max(abs(x_end - x_start), min_dx)
         self.scene.line(
             f"slide-arrow:{note.id}",
             arrow_from,
             y,
             arrow_to,
             y,
-            fill=theme.slide_edge,
+            fill=edge,
             width=3,
             arrow="last",
             arrowshape=(12, 14, 5),
@@ -788,17 +793,37 @@ class Renderer:
             y = view.note_y(pending.beat_start)
             x0 = view.norm_to_x(pending.x_start)
             x1 = view.norm_to_x(pending.x_end if pending.x_end is not None else pending.x_start)
+            leftward = x1 < x0
+            min_dx = max(18.0, config.MIN_SLIDE_SPAN * view.layout.mouse_width)
+            lo, hi = min(x0, x1), max(x0, x1)
+            if hi - lo < min_dx:
+                center = (lo + hi) / 2
+                lo, hi = center - min_dx / 2, center + min_dx / 2
             self.scene.rect(
                 "pending:slide",
-                min(x0, x1) - 4,
+                lo - 4,
                 y - SLIDE_MIN_PX / 2,
-                max(x0, x1) + 4,
+                hi + 4,
                 y + SLIDE_MIN_PX / 2,
                 fill=theme.pending,
                 outline=theme.pending,
                 width=2,
                 dash=(4, 3),
                 stipple=theme.stipple_soft,
+            )
+            # 预览同样画出方向箭头
+            arrow_from = x0
+            arrow_to = x0 + (-1.0 if leftward else 1.0) * max(abs(x1 - x0), min_dx)
+            self.scene.line(
+                "pending:slide-arrow",
+                arrow_from,
+                y,
+                arrow_to,
+                y,
+                fill=theme.pending,
+                width=3,
+                arrow="last",
+                arrowshape=(12, 14, 5),
             )
         if pending.hint:
             self.scene.text(

@@ -52,6 +52,14 @@ class DemoTests(unittest.TestCase):
         self.assertEqual(assigned, {n.id for n in chart.all_notes()})
         self.assertEqual(len(chart.timing.segments), 3)
 
+    def test_demo_chart_passes_auto_check(self) -> None:
+        """仓库自带的示例谱面必须通过「自动检查」。"""
+        from rhythm_editor.model.validate import validate_chart
+
+        chart = build_demo_chart()
+        issues = validate_chart(chart)
+        self.assertEqual(issues, [], [issue.message for issue in issues])
+
 
 if __name__ == "__main__":
     unittest.main()

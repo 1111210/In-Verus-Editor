@@ -19,6 +19,7 @@ from .model.chart import Chart, EditorSettings
 from .model.document import Document
 from .model.notes import BoundaryCurve, MouseRegion, Note
 from .model.timing import TimingMap
+from .model.validate import format_report, validate_chart
 from .ui.dialogs import (
     BpmDialog,
     HelpDialog,
@@ -629,6 +630,25 @@ class EditorApp:
         from .ui.dialogs import SHORTCUTS_TEXT
 
         run_dialog(HelpDialog, self.root, self.theme, "快捷键", SHORTCUTS_TEXT)
+
+    def auto_check_issues(self):
+        """当前的自动检查结果（纯数据，便于测试）。"""
+        return validate_chart(self.document.chart)
+
+    def run_auto_check(self) -> None:
+        """自动检查谱面：列出问题并选中相关物件。"""
+        from .ui.dialogs import HelpDialog
+
+        issues = self.auto_check_issues()
+        if issues:
+            note_ids = [nid for issue in issues for nid in issue.note_ids]
+            self.document.select_only(note_ids)
+            self.status(f"自动检查：发现 {len(issues)} 处问题（相关物件已选中）")
+        else:
+            self.document.clear_selection()
+            self.status("自动检查：未发现问题")
+        report = format_report(self.document.chart, issues)
+        run_dialog(HelpDialog, self.root, self.theme, "自动检查报告", report)
 
     def _region_editor(
         self,

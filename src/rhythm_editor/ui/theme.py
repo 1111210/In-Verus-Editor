@@ -42,6 +42,9 @@ class Theme:
     region_edge: str = "#3f8bff"
     slide_fill: str = "#25c06b"
     slide_edge: str = "#25e07f"
+    # 向左滑键：半透明黄色（与向右的绿色区分开）
+    slide_left_fill: str = "#e8c24a"
+    slide_left_edge: str = "#ffd666"
 
     select: str = "#ffd166"
     pending: str = config.PENDING_COLOR

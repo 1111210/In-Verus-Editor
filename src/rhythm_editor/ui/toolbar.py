@@ -102,6 +102,8 @@ class Toolbar(ttk.Frame):
             Entry(separator=True),
             Entry("删除", app.delete_selection, "Delete", enabled=has_selection),
             Entry("全选", app.select_all, "Ctrl+A", enabled=not_demo),
+            Entry(separator=True),
+            Entry("自动检查（谱面合法性）…", app.run_auto_check, enabled=not_demo),
         ])
 
         place_group = Group("放置", [

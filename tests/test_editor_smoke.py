@@ -475,6 +475,33 @@ class EditorSmokeTest(unittest.TestCase):
         self.assertEqual(slides[1].direction, 1, "第二次点击在右边 -> 向右滑")
         self.assertGreater(slides[1].x_end, slides[1].x_start)
 
+    def test_slide_arrow_points_to_swipe_direction(self) -> None:
+        """回归：向左滑键的箭头必须指向左（曾经用 min/max 取端点，永远朝右）。"""
+        right = MouseSlide("S1", 3.0, 0.2, 0.6)
+        left = MouseSlide("S2", 5.0, 0.8, 0.3)
+        self.chart.add(right)
+        self.chart.add(left)
+        self.view.set_beat(0.0)
+        self.draw()
+        right_arrow = self.scene._items["slide-arrow:S1"][2][0]
+        left_arrow = self.scene._items["slide-arrow:S2"][2][0]
+        self.assertLess(right_arrow[0], right_arrow[2], "向右滑键箭头应从左指向右")
+        self.assertGreater(left_arrow[0], left_arrow[2], "向左滑键箭头应从右指向左")
+
+    def test_left_slide_uses_yellow_color(self) -> None:
+        """向左滑键使用半透明黄色，向右保持绿色。"""
+        self.chart.add(MouseSlide("S1", 3.0, 0.2, 0.6))
+        self.chart.add(MouseSlide("S2", 5.0, 0.8, 0.3))
+        self.view.set_beat(0.0)
+        self.draw()
+        right_opts = dict(self.scene._items["slide:S1"][2][1])
+        left_opts = dict(self.scene._items["slide:S2"][2][1])
+        self.assertEqual(right_opts["fill"], DARK.slide_fill)
+        self.assertEqual(left_opts["fill"], DARK.slide_left_fill)
+        self.assertEqual(left_opts["outline"], DARK.slide_left_edge)
+        # 半透明：仍然是点阵填充
+        self.assertEqual(left_opts["stipple"], DARK.stipple_fill)
+
     # -------------------------------------------------------------- 选择 / 编辑
     def test_rubber_band_and_ctrl_xor(self) -> None:
         self.controller.set_tool(config.TOOL_LANE_TAP)

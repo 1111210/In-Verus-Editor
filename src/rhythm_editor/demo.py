@@ -62,7 +62,8 @@ def build_demo_chart() -> Chart:
     for beat in [4.0, 4.5, 5.0, 5.5, 6.0, 6.5, 7.0, 7.5]:
         tap(5 - int(beat * 2) % 6, beat)
     # 多轨按键
-    for beat, lanes in ((4.0, (1, 2)), (6.0, (4, 5)), (10.0, (0, 2)), (14.0, (3, 5))):
+    # 注意：要避开同拍/同时段其它轨道的按键与长按，保证示例谱面能通过「自动检查」
+    for beat, lanes in ((4.0, (1, 2)), (6.0, (3, 4)), (10.0, (0, 2)), (15.0, (3, 5))):
         note = LaneNote(chart.new_note_id("L"), lanes[0], lanes[1], beat, beat)
         chart.add(note)
     # 长按

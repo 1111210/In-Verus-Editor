@@ -113,7 +113,7 @@ python tools/check_audio.py
 
 | 项目 | 命令 | 结果 |
 | --- | --- | --- |
-| 单元测试（含 Tk 画布冒烟测试与应用级测试） | `python -m unittest discover -s tests -t .` | Ran 117 tests — **OK** |
+| 单元测试（含 Tk 画布冒烟测试与应用级测试） | `python -m unittest discover -s tests -t .` | Ran 138 tests — **OK** |
 | 需求验收清单 | `python tools/acceptance.py` | 13 项全部 `[OK ]`，结论：全部通过 |
 | 音频后端 | `python tools/check_audio.py` | 9 项全部 `[OK ]`（pygame.mixer 真实播放，延迟补偿正确） |
 | 示例谱面生成 | `python run_editor.py --make-demo` | 生成 `charts/demo/demo.ivchart`（6K 32 / 区域 3 / 滑键 6 / 4 个速度组） |
@@ -185,6 +185,11 @@ python tools/check_audio.py
 | `tests/test_editor_smoke.py::test_no_ruler_items_on_canvas` | 总览条已移除（画布上不再有 ruler:* 图元） |
 | `tests/test_editor_smoke.py::test_scrollbar_fractions_track_view` | 竖向滚动条滑块比例跟随可视窗口，拖动可跳转时间 |
 | `tests/test_app_flow.py::test_vertical_scrollbar_drives_timeline` | 应用级：拖动 / 翻页 / 步进滚动条都会移动判定线且吸附网格 |
+| `tests/test_validate.py`（14 条） | 自动检查：区间冲突规则、同轨道重叠、长按/多轨相交、端点紧贴放行、滑键与空域相交/紧贴/分离、报告文本 |
+| `tests/test_editor_smoke.py::test_slide_arrow_points_to_swipe_direction` | 回归：向左滑键箭头必须指向左 |
+| `tests/test_editor_smoke.py::test_left_slide_uses_yellow_color` | 向左滑键为半透明黄色，向右保持绿色 |
+| `tests/test_app_flow.py::test_auto_check_is_in_edit_menu_and_selects_issues` | 自动检查在「编辑」菜单里，运行后选中问题物件并弹出报告 |
+| `tests/test_demo_selftest.py::test_demo_chart_passes_auto_check` | 仓库自带示例谱面通过自动检查 |
 | `tests/test_app_flow.py::test_fullscreen_toggle` | 全屏开关切换 |
 | `tests/test_app_flow.py::test_maximized_by_default` | 默认最大化（`-fullscreen` 属性为 0），不是无边框全屏 |
 | `tests/test_app_flow.py::test_toggle_maximize_and_fullscreen` | 最大化 / 还原 / 全屏互斥切换 |

@@ -187,6 +187,45 @@ class AppFlowTest(unittest.TestCase):
         self.assertEqual(labels, ["操作指南…", "快捷键…"])
         self.assertNotIn("关于", labels)
 
+    def test_auto_check_is_in_edit_menu_and_selects_issues(self) -> None:
+        """自动检查放在「编辑」二级菜单里；运行时选中问题物件并弹出报告。"""
+        toolbar = self.app.toolbar
+        edit_menu = toolbar._menus["编辑"]
+        labels = [
+            edit_menu.entrycget(i, "label")
+            for i in range(edit_menu.index("end") + 1)
+            if edit_menu.type(i) == "command"
+        ]
+        self.assertTrue(any("自动检查" in label for label in labels), labels)
+
+        # 造一个冲突：同一轨道同一时刻两个按键
+        from rhythm_editor.model.notes import LaneNote
+
+        chart = self.app.document.chart
+        chart.add(LaneNote("L900", 0, 0, 40.0))
+        chart.add(LaneNote("L901", 0, 0, 40.0))
+        issues = self.app.auto_check_issues()
+        self.assertTrue(issues)
+
+        captured = {}
+
+        def fake_run_dialog(cls, parent, theme, title="", content="", *args, **kwargs):
+            captured["title"] = title
+            captured["content"] = content
+            return None
+
+        import rhythm_editor.app as app_module
+
+        original = app_module.run_dialog
+        app_module.run_dialog = fake_run_dialog  # type: ignore[assignment]
+        try:
+            self.app.run_auto_check()
+        finally:
+            app_module.run_dialog = original  # type: ignore[assignment]
+        self.assertEqual(captured["title"], "自动检查报告")
+        self.assertIn("L900", captured["content"])
+        self.assertEqual(self.app.document.selection, {"L900", "L901"})
+
     def test_zoom_buttons_direction(self) -> None:
         """+ 放大（可视时间变少、物件变大），− 缩小，与直觉一致。"""
         toolbar = self.app.toolbar

@@ -280,8 +280,8 @@
     {
       "id": "L18",
       "type": "lane",
-      "lane_start": 4,
-      "lane_end": 5,
+      "lane_start": 3,
+      "lane_end": 4,
       "beat_start": 6.0,
       "beat_end": 6.0,
       "group": 0
@@ -354,8 +354,8 @@
       "type": "lane",
       "lane_start": 3,
       "lane_end": 5,
-      "beat_start": 14.0,
-      "beat_end": 14.0,
+      "beat_start": 15.0,
+      "beat_end": 15.0,
       "group": 0
     },
     {
