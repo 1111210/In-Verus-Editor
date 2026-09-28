@@ -912,11 +912,6 @@ class EditorApp:
 def main(argv: Optional[list] = None) -> int:  # pragma: no cover - GUI 入口
     import argparse
 
-    # IDE / python -m 等入口也强制跑在项目 .venv 里（音频依赖装在那里）
-    from .venv_guard import ensure_project_venv
-
-    ensure_project_venv(argv=argv if argv is not None else sys.argv[1:])
-
     parser = argparse.ArgumentParser(description=f"{config.APP_TITLE} {config.VERSION}")
     parser.add_argument("chart", nargs="?", help="要打开的谱面文件（JSON，.json）")
     parser.add_argument("--demo", action="store_true", help="直接进入演示模式")

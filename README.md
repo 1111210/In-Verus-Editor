@@ -151,17 +151,17 @@ tools/                   截图与验收辅助脚本
 
 ### 状态栏显示「未安装 pygame / silent」怎么办
 
-编辑器**只在项目 `.venv` 里运行**：`run_editor.py`（以及 `python -m rhythm_editor.app`）
-发现当前解释器不是 `.venv` 时会**自动改用 `.venv` 重新启动**（无论它有没有 pygame），
-所以正常不会出现这个提示。补救手段：
+编辑器**不检查、也不切换解释器**：用哪个 Python 启动就用哪个（想要声音就让它装上
+`pygame-ce`，或者激活 `.venv` 再启动）。推荐做法：
 
-1. 双击 `run_editor.bat`，或 `python run_editor.py …`（会自动切到 `.venv`）。
+1. 双击 `run_editor.bat`（存在 `.venv` 时优先用它的解释器），
+   或先激活虚拟环境再 `python run_editor.py …`。
 2. 用 IDE（VS Code / PyCharm）运行时，把解释器选成 `.venv\Scripts\python.exe`。
-3. 没有 `.venv` 时它会打印创建命令（`python -m venv .venv` +
-   `.\.venv\Scripts\python.exe -m pip install -r requirements.txt`），照着做即可；
-   **不需要**给系统 Python 装依赖。
-4. 坚持用别的解释器调试：设 `VERUS_ALLOW_ANY_PYTHON=1` 跳过检查
-   （这时音频可能退化为静音）。
+3. 没有 `.venv` 就建一个：`python -m venv .venv` +
+   `.\.venv\Scripts\python.exe -m pip install -r requirements.txt`。
 
 自检命令：`.\.venv\Scripts\python.exe -c "import pygame; print(pygame.version.ver)"`
 （有输出 = 这个解释器能发声）。
+
+每次启动都会往 `_diag/audio_startup.log` 追加一行自检，写明**实际使用的 Python 路径**、
+pygame / numpy 是否装上、音频设备是否正常 —— 排查“没有声音”时先看这个文件。

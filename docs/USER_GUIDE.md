@@ -157,12 +157,14 @@ python run_editor.py charts/demo/demo.json --fullscreen  # 无边框全屏
 没有安装 `pygame-ce`，或谱面没有关联音频。状态栏右侧会显示当前音频后端与文件名。
 底部状态栏的提示会告诉你是**哪个解释器**缺依赖；按顺序试：
 
-1. 用 `run_editor.bat`（或 `python run_editor.py …`）启动 —— 发现当前解释器没有 pygame
-   时会自动改用项目里的 `.venv`；
+1. 用 `run_editor.bat` 启动（存在 `.venv` 时优先用它），或先激活 `.venv` 再
+   `python run_editor.py …`；
 2. 在 IDE 里把解释器切换成 `.venv\Scripts\python.exe`；
 3. 或者给当前解释器装依赖：`python -m pip install -r requirements.txt`。
 
 装好后重启编辑器，状态栏右侧会从 `silent` 变成 `pygame.mixer`。
+每次启动都会把**实际使用的 Python 路径**与音频自检写进 `_diag/audio_startup.log`，
+排查时直接看那个文件即可（编辑器本身不会检查或切换解释器）。
 
 若状态栏写的是 `silent（音频设备不可用）`，说明 pygame 装好了、只是**声卡没能打开**
 （被别的软件独占、没有输出设备、远程桌面会话等）。插好耳机 / 关掉独占声卡的软件后，

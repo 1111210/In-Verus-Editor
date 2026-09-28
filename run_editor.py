@@ -10,9 +10,8 @@
     python run_editor.py charts/demo/demo.json --fullscreen # 无边框全屏
     python run_editor.py --make-demo      # 只生成示例谱面
 
-编辑器**只在项目 ``.venv`` 里运行**：用别的解释器启动时，脚本会自动改用 ``.venv``
-里的解释器重新启动自己（``.venv`` 不存在时会打印创建命令并退出，不会去动系统 Python）。
-想用别的解释器调试，设 ``VERUS_ALLOW_ANY_PYTHON=1``。
+脚本本身不检查、也不切换解释器：用哪个 Python 启动就用哪个（想要音频后端就装好
+``pygame-ce``，或激活 ``.venv`` 后再运行；``run_editor.bat`` 会优先使用 ``.venv``）。
 """
 
 from __future__ import annotations
@@ -21,35 +20,12 @@ import os
 import sys
 
 
-def _venv_python(root: str) -> str:
-    """项目虚拟环境里的解释器路径（不存在时返回空串）。"""
-    src = os.path.join(root, "src")
-    if src not in sys.path:
-        sys.path.insert(0, src)
-    from rhythm_editor.venv_guard import venv_python
-
-    return venv_python(root)
-
-
-def _has_pygame() -> bool:
-    try:
-        import pygame  # noqa: F401
-    except Exception:
-        return False
-    return True
-
-
 def _bootstrap() -> None:
     root = os.path.dirname(os.path.abspath(__file__))
     src = os.path.join(root, "src")
 
     if src not in sys.path:
         sys.path.insert(0, src)
-
-    # 只用项目 .venv 跑（找不到 .venv 会给出创建命令并退出）
-    from rhythm_editor.venv_guard import ensure_project_venv
-
-    ensure_project_venv(entry=os.path.abspath(__file__))
 
 
 def main() -> int:

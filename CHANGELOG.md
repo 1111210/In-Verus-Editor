@@ -2,13 +2,15 @@
 
 ## 0.3.1 — 鼠标点击按键与鼠标平面的摆放规则
 
-### 编辑器只在项目 `.venv` 里运行（治本）
+### 运行解释器：不做主动检测，只留启动日志
 
-* 不再“给每个解释器都装一遍 pygame”：新增 `venv_guard.py`，
-  `run_editor.py` 与 `python -m rhythm_editor.app` 两个入口都会检查解释器 ——
-  只要 `.venv` 存在就用它的解释器**重新启动自己**（无论当前解释器有没有 pygame）；
-  `.venv` 不存在时打印创建命令并退出（**不去动系统 Python**）。
-  想用别的解释器调试：设 `VERUS_ALLOW_ANY_PYTHON=1`。
+* 曾经加过「强制跑在项目 `.venv`、否则重新启动自己」的检查，现已**整体移除**
+  （`src/rhythm_editor/venv_guard.py` 删除，`run_editor.py` 与 `app.main()` 恢复成
+  只把 `src` 加进搜索路径）。用哪个 Python 启动就用哪个，
+  `run_editor.bat` 仍然是“存在 `.venv` 就优先用”的便捷入口。
+* **保留启动自检日志**：每次启动把**实际使用的 Python 路径**、Python 版本、
+  PYTHONHOME/PYTHONPATH、pygame / numpy 状态、音频设备错误与最终后端追加写入
+  `_diag/audio_startup.log`，排查“没有声音”直接看这个文件。
 * 顺带修掉两处会误导人的提示：① 设备打不开时不再写“未安装 pygame”；
   ② 没载入歌曲时不再一律写 silent，而是“未载入歌曲，播放为静音时钟”。
 
@@ -35,9 +37,8 @@
 * **可重试**：`AudioPlayer.retry_backend()` +「编辑器设置 → 重新初始化音频设备」按钮，
   插好耳机 / 释放独占声卡后不必重启；启动状态栏还会打印当前解释器路径，
   一眼能看出是在 `.venv` 还是系统 Python 里跑。
-* `run_editor.py` 现在会在当前解释器没有 pygame、且项目里存在 `.venv` 时
-  **自动改用 `.venv` 的解释器重新启动自己**（`VERUS_NO_VENV=1` 可关闭，
-  已重启过则不会循环）；`run_editor.bat` 本来就优先用 `.venv`。
+* （历史）当时 `run_editor.py` 曾在缺 pygame 时自动改用 `.venv` 重启；
+  这类**主动检测已按需求移除**，见上面的「运行解释器」一节。
 * 缺依赖时的提示改为可照做的一条信息：`audio_setup_hint()` 会带上
   **当前解释器路径**与两种修法（run_editor.bat / pip install -r requirements.txt），
   启动状态栏与右侧状态条都会明确写“未安装 pygame，静音”。
