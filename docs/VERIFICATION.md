@@ -113,7 +113,7 @@ python tools/check_audio.py
 
 | 项目 | 命令 | 结果 |
 | --- | --- | --- |
-| 单元测试（含 Tk 画布冒烟测试与应用级测试） | `python -m unittest discover -s tests -t .` | Ran 111 tests — **OK** |
+| 单元测试（含 Tk 画布冒烟测试与应用级测试） | `python -m unittest discover -s tests -t .` | Ran 115 tests — **OK** |
 | 需求验收清单 | `python tools/acceptance.py` | 13 项全部 `[OK ]`，结论：全部通过 |
 | 音频后端 | `python tools/check_audio.py` | 9 项全部 `[OK ]`（pygame.mixer 真实播放，延迟补偿正确） |
 | 示例谱面生成 | `python run_editor.py --make-demo` | 生成 `charts/demo/demo.ivchart`（6K 32 / 区域 3 / 滑键 6 / 4 个速度组） |
@@ -161,6 +161,10 @@ python tools/check_audio.py
 | `tests/test_editor_smoke.py::test_place_region_uses_dialog_result` | 空域新流程：2 次定时间 + 4 次定左右边界首尾，弹窗收到四个位置并选择线型 |
 | `tests/test_editor_smoke.py::test_region_preview_defaults_for_unplaced_points` | 未放置的边界点按左 0 / 右 1 预览，等待中的点跟随光标 |
 | `tests/test_editor_smoke.py::test_hold_preview_extends_upward_from_start_line` | 回归：长按起始位置的预览画在时间网格线上方 |
+| `tests/test_editor_smoke.py::test_slide_direction_follows_click_order_when_snapped_to_same_line` | 回归：两次点击吸附到同一网格线时，方向仍按点击的左右关系判断 |
+| `tests/test_app_flow.py::test_edit_note_button_is_in_toolbar_not_menu` | 「编辑物件」在顶栏「编辑」右侧、不在二级菜单里，且仅单选时可用 |
+| `tests/test_app_flow.py::test_toolbar_scrolls_horizontally_when_narrow` | 窄窗口自动出现横向滚动条，宽窗口自动隐藏 |
+| `tests/test_app_flow.py::test_menu_protection_has_no_hold_time` | 菜单保护没有等待时间，交互后立即恢复重绘 |
 | `tests/test_app_flow.py::test_fullscreen_toggle` | 全屏开关切换 |
 | `tests/test_app_flow.py::test_maximized_by_default` | 默认最大化（`-fullscreen` 属性为 0），不是无边框全屏 |
 | `tests/test_app_flow.py::test_toggle_maximize_and_fullscreen` | 最大化 / 还原 / 全屏互斥切换 |

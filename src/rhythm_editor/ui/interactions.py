@@ -388,7 +388,11 @@ class ToolController:
             self.view.chart.settings.horizontal_divisions > 0
         ) else config.MIN_SLIDE_SPAN
         if abs(x_end - x_start) < 1e-9:
-            x_end = x_start + max(step, config.MIN_SLIDE_SPAN)
+            # 吸附后落在同一格：用**未吸附的点击位置**判断方向，再按方向补一个最小跨度，
+            # 这样“第二次点在左边就是向左滑”，不会一律变成向右。
+            raw = self.view.x_to_norm(x)
+            direction = -1.0 if raw < x_start else 1.0
+            x_end = x_start + direction * max(step, config.MIN_SLIDE_SPAN)
         note = MouseSlide(
             self.document.chart.new_note_id("M"),
             self._first_beat or 0.0,

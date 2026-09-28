@@ -63,6 +63,8 @@ class EditorApp:
         self._last_info = ""
         self._last_title = ""
         self._pending_frames = 0
+        self._closed = False
+        self._tick_id: Optional[str] = None
 
         self.scene = Scene(tk.Canvas(self.root, background=self.theme.play_bg, highlightthickness=0))
         self.renderer = Renderer(self.scene, self.theme)
@@ -87,7 +89,8 @@ class EditorApp:
         elif self.maximized:
             self.maximize_window()
         self._sync_ui()
-        self.root.after(16, self._tick)
+        self._tick_id = self.root.after(16, self._tick)
+        self.root.bind("<Destroy>", self._on_destroy)
 
     # ------------------------------------------------------------------ 布局
     def _build_layout(self) -> None:
@@ -145,6 +148,7 @@ class EditorApp:
         root.bind("<F11>", lambda e: self.toggle_fullscreen())
         root.bind("<F10>", lambda e: self.toggle_maximize())
         root.bind("<KeyPress>", lambda e: self.toolbar.mark_interaction(), add="+")
+        root.bind("<ButtonRelease-1>", lambda e: self.toolbar.mark_menu_closed(), add="+")
         root.bind("m", lambda e: self._shortcut(self.mirror_selection))
         root.bind("e", lambda e: self._shortcut(self.edit_selected))
         root.bind("g", lambda e: self._shortcut(self.toggle_horizontal_grid))
@@ -168,10 +172,12 @@ class EditorApp:
         self.root.mainloop()
 
     def _tick(self) -> None:
+        if self._closed:
+            return
         self._advance_playback()
         # 二级菜单展开时暂停画布重绘：否则画布每帧重画会把弹出的菜单"闪"掉
         if self.toolbar.is_menu_posted():
-            self.root.after(16, self._tick)
+            self._tick_id = self.root.after(16, self._tick)
             return
         state = self.render_state
         state.selection = set(self.document.selection)
@@ -180,7 +186,19 @@ class EditorApp:
         state.pending = self.controller.state.pending
         self.renderer.draw(self.document.chart, self.view, state)
         self._sync_ui()
-        self.root.after(16, self._tick)
+        self._tick_id = self.root.after(16, self._tick)
+
+    def _on_destroy(self, event=None) -> None:
+        """窗口销毁时取消待执行的重绘回调，避免 Tk 报 invalid command name。"""
+        if event is not None and getattr(event, "widget", None) is not self.root:
+            return
+        self._closed = True
+        if self._tick_id is not None:
+            try:
+                self.root.after_cancel(self._tick_id)
+            except (tk.TclError, ValueError):  # pragma: no cover
+                pass
+            self._tick_id = None
 
     def _advance_playback(self) -> None:
         if not self.audio.is_playing:

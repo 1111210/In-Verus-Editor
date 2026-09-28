@@ -3,7 +3,7 @@
 顶栏只保留 **几个分组入口 + 播放/暂停 + 快速缩放**（全部是黑底按钮，弹出的二级菜单也是黑底）：
 
 * 文件   —— 新建 / 打开 / 保存 / 另存为
-* 编辑   —— 撤销 / 重做 / 复制 / 粘贴 / 镜像 / 编辑物件 / 删除 / 全选
+* 编辑   —— 撤销 / 重做 / 复制 / 粘贴 / 镜像 / 删除 / 全选（编辑物件是顶栏独立按钮）
 * 放置   —— 选择、单轨、多轨、长按（含多轨）、空域、左右滑键（二级菜单里可勾选）
 * 视图   —— 缩放、时间网格细分、横向辅助网格、跳转、全屏
 * 谱面设置 —— 元数据、BPM 与偏移
@@ -15,7 +15,6 @@
 
 from __future__ import annotations
 
-import time
 import tkinter as tk
 from dataclasses import dataclass, field
 from tkinter import ttk
@@ -68,8 +67,6 @@ class Toolbar(ttk.Frame):
         self._last_place_text: Optional[str] = None
         # 原生弹出菜单期间暂停画布重绘（见 is_menu_posted 的说明）
         self._menu_open = False
-        self._menu_open_at = 0.0
-        self._menu_open_timeout = 15.0
         self._groups = self._build_groups()
         self._build_widgets()
 
@@ -102,7 +99,6 @@ class Toolbar(ttk.Frame):
             Entry("复制", app.copy_selection, "Ctrl+C", enabled=has_selection),
             Entry("粘贴（点击目标时间）", app.begin_paste, "Ctrl+V", enabled=has_clipboard),
             Entry("沿中轴线镜像", app.mirror_selection, "M", enabled=has_selection),
-            Entry("编辑选中物件…", app.edit_selected, "E", enabled=single_selection),
             Entry(separator=True),
             Entry("删除", app.delete_selection, "Delete", enabled=has_selection),
             Entry("全选", app.select_all, "Ctrl+A", enabled=not_demo),
@@ -168,6 +164,8 @@ class Toolbar(ttk.Frame):
         ])
 
         # 原「面板」拆成三栏：谱面设置（元数据 / 偏移）、速度组、编辑器设置
+        # 「编辑物件」从二级菜单移到顶栏：紧跟在「编辑」分组后面
+        edit_note_group = Group("编辑物件", direct_command=app.edit_selected, enabled=single_selection)
         chart_group = Group("谱面设置", [
             Entry("元数据设置…", app.edit_metadata, enabled=not_demo),
             Entry("BPM 与偏移…", app.edit_timing, enabled=not_demo),
@@ -183,6 +181,7 @@ class Toolbar(ttk.Frame):
         return [
             file_group,
             edit_group,
+            edit_note_group,
             chart_group,
             place_group,
             view_group,
@@ -194,35 +193,81 @@ class Toolbar(ttk.Frame):
     # ------------------------------------------------------------------ 构建
     def _build_widgets(self) -> None:
         app = self.app
-        # 先把右侧「快速缩放 + 帮助」打包，保证窗口变窄时 + 按钮也不会被挤掉
-        right = ttk.Frame(self)
-        right.pack(side="right")
-        self._group_buttons["帮助"] = self._make_menubutton(right, self._groups[-1])
+        # 右侧固定区（不参与横向滚动）：快速缩放 + 帮助，保证窗口再窄也不会被挤掉
+        self._right = ttk.Frame(self)
+        self._right.pack(side="right", fill="y")
+        self._group_buttons["帮助"] = self._make_menubutton(self._right, self._groups[-1])
         self._group_buttons["帮助"].pack(side="right", padx=(8, 0))
         # 「+」= 放大（屏幕内时间变少、物件变大），与直觉一致；滚轮方向保持不变
-        ttk.Button(right, text="+", width=3, command=lambda: app.zoom(1 / config.ZOOM_STEP)).pack(
-            side="right", padx=(4, 0)
+        ttk.Button(
+            self._right, text="+", width=3, command=lambda: app.zoom(1 / config.ZOOM_STEP)
+        ).pack(side="right", padx=(4, 0))
+        ttk.Button(
+            self._right, text="−", width=3, command=lambda: app.zoom(config.ZOOM_STEP)
+        ).pack(side="right")
+
+        # 左侧分组放在可横向滚动的视口里：窗口宽度不足时自动出现横向滚动条
+        self._strip_canvas = tk.Canvas(
+            self, height=34, highlightthickness=0, background=self.theme.panel, bd=0
         )
-        ttk.Button(right, text="−", width=3, command=lambda: app.zoom(config.ZOOM_STEP)).pack(
-            side="right"
-        )
+        self._strip_canvas.pack(side="top", fill="x", expand=True)
+        self._strip = ttk.Frame(self._strip_canvas)
+        self._strip_window = self._strip_canvas.create_window((0, 0), window=self._strip, anchor="nw")
+        self._hscroll = ttk.Scrollbar(self, orient="horizontal", command=self._strip_canvas.xview)
+        self._strip_canvas.configure(xscrollcommand=self._hscroll.set, xscrollincrement=40)
+        self._hscroll_visible = False
+        self._updating_scroll = False
+        self._strip_canvas.bind("<Configure>", lambda _e: self._update_scrollbar())
+        self._strip.bind("<Configure>", lambda _e: self._update_scrollbar())
+        self._strip_canvas.bind("<MouseWheel>", self._on_strip_wheel)
+        self._strip_canvas.bind("<Button-4>", lambda _e: self._strip_canvas.xview_scroll(-1, "units"))
+        self._strip_canvas.bind("<Button-5>", lambda _e: self._strip_canvas.xview_scroll(1, "units"))
 
         for group in self._groups[:-1]:
             if group.direct_command is not None:
-                button = ttk.Button(self, text=group.label, command=group.direct_command)
+                button = ttk.Button(self._strip, text=group.label, command=group.direct_command)
                 self._direct_buttons.append((button, group.enabled))
             else:
-                button = self._make_menubutton(self, group)
+                button = self._make_menubutton(self._strip, group)
                 self._group_buttons[group.label] = button
             button.pack(side="left", padx=(0, 4))
             if group.label == "放置":
                 # 播放放在放置菜单之后，作为最常用的动作（演示模式只在「视图」菜单里）
                 self.btn_play = ttk.Button(
-                    self, text="▶ 播放", style="Accent.TButton", command=app.toggle_play
+                    self._strip, text="▶ 播放", style="Accent.TButton", command=app.toggle_play
                 )
                 self.btn_play.pack(side="left", padx=(6, 4))
-            if group.label != "视图":
-                continue
+
+    # ------------------------------------------------------------------ 滚动
+    def _on_strip_wheel(self, event) -> None:
+        delta = event.delta
+        notches = delta / 120.0 if abs(delta) >= 120 else float(delta)
+        self._strip_canvas.xview_scroll(int(-notches), "units")
+
+    def _update_scrollbar(self) -> None:
+        """内容比视口宽时显示横向滚动条（窗口变窄时自动出现）。"""
+        if getattr(self, "_updating_scroll", False) or not hasattr(self, "_strip_canvas"):
+            return
+        self._updating_scroll = True
+        try:
+            self._strip.update_idletasks()
+            content_w = self._strip.winfo_reqwidth()
+            content_h = self._strip.winfo_reqheight()
+            view_w = self._strip_canvas.winfo_width()
+            width = max(content_w, view_w)
+            self._strip_canvas.itemconfigure(self._strip_window, width=width, height=content_h)
+            self._strip_canvas.configure(scrollregion=(0, 0, width, content_h))
+            self._strip_canvas.configure(height=max(28, content_h))
+            need = content_w > view_w + 2
+            if need and not self._hscroll_visible:
+                self._hscroll.pack(side="bottom", fill="x")
+                self._hscroll_visible = True
+            elif not need and self._hscroll_visible:
+                self._hscroll.pack_forget()
+                self._hscroll_visible = False
+                self._strip_canvas.xview_moveto(0.0)
+        finally:
+            self._updating_scroll = False
 
     def _make_menubutton(self, parent: tk.Misc, group: Group) -> tk.Menubutton:
         menu = tk.Menu(
@@ -284,37 +329,26 @@ class Toolbar(ttk.Frame):
     def mark_menu_open(self, _event=None) -> None:
         """记录“刚展开了菜单”。"""
         self._menu_open = True
-        self._menu_open_at = time.monotonic()
 
     def mark_menu_closed(self, _event=None) -> None:
         self._menu_open = False
 
     def mark_interaction(self, _event=None) -> None:
-        """用户继续操作（画布收到鼠标/键盘事件）时解除绘制保护。"""
-        if self._menu_open and (time.monotonic() - self._menu_open_at) > 0.5:
-            self._menu_open = False
+        """用户继续操作（鼠标 / 键盘事件）时**立即**解除绘制保护，没有任何保护时间。"""
+        self._menu_open = False
 
     def is_menu_posted(self) -> bool:
         """是否有二级菜单正在展开（用于暂停画布重绘，避免菜单频闪）。
 
         Tk 在 Windows 上使用的是原生弹出菜单：展开时既不触发 ``<Map>``，
-        ``winfo_ismapped()`` 也一直是 0，因此这里用“菜单按钮被按下 + 超时”来判定：
+        ``winfo_ismapped()`` 也一直是 0，因此这里只能按事件判定：
         * 按下分组按钮 / 菜单栏 -> ``mark_menu_open``；
-        * 画布重新收到鼠标或键盘事件（说明菜单已经关闭）-> ``mark_interaction``；
-        * 兜底超时，避免异常情况下一直不重绘。
+        * 菜单 ``<Unmap>``、或画布/窗口重新收到鼠标、滚轮、键盘事件
+          （说明菜单已经关闭）-> ``mark_interaction`` 立即解除。
+
+        这里**不设任何保护时长**：菜单关闭后第一个用户事件就会恢复重绘。
         """
-        if not self._menu_open:
-            return False
-        if (time.monotonic() - self._menu_open_at) > self._menu_open_timeout:
-            self._menu_open = False
-            return False
-        for menu in self._menus.values():
-            try:
-                if menu.winfo_ismapped():
-                    return True
-            except tk.TclError:  # pragma: no cover
-                continue
-        return True
+        return self._menu_open
 
     def sync(self) -> None:
         app = self.app

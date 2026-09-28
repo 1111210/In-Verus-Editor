@@ -456,6 +456,25 @@ class EditorSmokeTest(unittest.TestCase):
         self.assertAlmostEqual(slides[0].x_end, 0.61, places=6)
         self.assertEqual(slides[0].direction, 1)
 
+    def test_slide_direction_follows_click_order_when_snapped_to_same_line(self) -> None:
+        """回归：两次点击吸附到同一条网格线时，方向也要按点击的左右关系判断。"""
+        self.chart.settings.horizontal_divisions = 8
+        self.controller.set_tool(config.TOOL_MOUSE_SLIDE)
+        # 先点 0.26（吸附 0.25），再点 0.20（也吸附到 0.25）-> 应判定为向左
+        self.click(self.view.norm_to_x(0.26), self.y_of_beat(3.0))
+        self.click(self.view.norm_to_x(0.20), self.y_of_beat(3.5))
+        slides = [n for n in self.document.chart.mouse_notes if isinstance(n, MouseSlide)]
+        self.assertEqual(len(slides), 1)
+        self.assertAlmostEqual(slides[0].x_start, 0.25, places=6)
+        self.assertEqual(slides[0].direction, -1, "第二次点击在左边 -> 向左滑")
+        self.assertLess(slides[0].x_end, slides[0].x_start)
+        # 反向：先 0.20 再 0.26 -> 向右
+        self.click(self.view.norm_to_x(0.20), self.y_of_beat(5.0))
+        self.click(self.view.norm_to_x(0.26), self.y_of_beat(5.5))
+        slides = [n for n in self.document.chart.mouse_notes if isinstance(n, MouseSlide)]
+        self.assertEqual(slides[1].direction, 1, "第二次点击在右边 -> 向右滑")
+        self.assertGreater(slides[1].x_end, slides[1].x_start)
+
     # -------------------------------------------------------------- 选择 / 编辑
     def test_rubber_band_and_ctrl_xor(self) -> None:
         self.controller.set_tool(config.TOOL_LANE_TAP)

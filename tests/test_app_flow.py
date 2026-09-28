@@ -104,7 +104,8 @@ class AppFlowTest(unittest.TestCase):
         # 谱面设置要排在 编辑 与 放置 之间
         order = [group.label for group in toolbar._groups]
         self.assertEqual(
-            order, ["文件", "编辑", "谱面设置", "放置", "视图", "速度组", "编辑器设置", "帮助"]
+            order,
+            ["文件", "编辑", "编辑物件", "谱面设置", "放置", "视图", "速度组", "编辑器设置", "帮助"],
         )
         self.assertFalse(hasattr(toolbar, "menubar"), "不再保留系统菜单栏")
         self.assertEqual(str(self.app.root.cget("menu")), "")
@@ -126,6 +127,55 @@ class AppFlowTest(unittest.TestCase):
         direct = [button.cget("text") for button, _ in toolbar._direct_buttons]
         self.assertIn("速度组", direct)
         self.assertIn("编辑器设置", direct)
+
+    def test_edit_note_button_is_in_toolbar_not_menu(self) -> None:
+        """「编辑物件」移出二级菜单，作为顶栏按钮放在「编辑」右侧。"""
+        toolbar = self.app.toolbar
+        direct = [button.cget("text") for button, _ in toolbar._direct_buttons]
+        self.assertIn("编辑物件", direct)
+        edit_menu = toolbar._menus["编辑"]
+        labels = [
+            edit_menu.entrycget(i, "label")
+            for i in range(edit_menu.index("end") + 1)
+            if edit_menu.type(i) == "command"
+        ]
+        self.assertNotIn("编辑选中物件…", labels)
+        # 顺序：编辑 -> 编辑物件 -> 谱面设置 -> 放置
+        order = [group.label for group in toolbar._groups]
+        self.assertEqual(order[:4], ["文件", "编辑", "编辑物件", "谱面设置"])
+        # 只有一个物件被选中时才可用
+        group = next(g for g in toolbar._groups if g.label == "编辑物件")
+        self.assertFalse(group.enabled())
+        self.app.document.select_all()
+        self.assertFalse(group.enabled())
+        note = self.app.document.chart.lane_notes[0]
+        self.app.document.select_only([note.id])
+        self.assertTrue(group.enabled())
+
+    def test_toolbar_scrolls_horizontally_when_narrow(self) -> None:
+        """窗口宽度不足时工具栏自动出现横向滚动条，宽窗口时自动隐藏。"""
+        toolbar = self.app.toolbar
+        root = self.app.root
+        root.deiconify()
+        try:
+            toolbar._update_scrollbar()
+            # 用一个“视口明显比内容宽”的窗口
+            needed = (
+                toolbar._strip.winfo_reqwidth() + toolbar._right.winfo_reqwidth() + 80
+            )
+            root.geometry(f"{min(needed, root.winfo_screenwidth() - 40)}x700")
+            root.update()
+            toolbar._update_scrollbar()
+            wide = toolbar._hscroll_visible
+            root.geometry("560x700")
+            root.update()
+            toolbar._update_scrollbar()
+            narrow = toolbar._hscroll_visible
+        finally:
+            root.withdraw()
+        self.assertFalse(wide, "宽窗口不需要横向滚动条")
+        self.assertTrue(narrow, "窄窗口应自动出现横向滚动条")
+        self.assertEqual(toolbar._hscroll.winfo_manager(), "pack")
 
     def test_help_menu_has_guide_and_shortcuts_only(self) -> None:
         menu = self.app.toolbar._menus["帮助"]
@@ -200,6 +250,18 @@ class AppFlowTest(unittest.TestCase):
             self.assertEqual(app.scene.frames, frames, "菜单展开时不应重绘画布")
         finally:
             app.toolbar.is_menu_posted = original  # type: ignore[assignment]
+
+    def test_menu_protection_has_no_hold_time(self) -> None:
+        """回归：菜单保护没有任何等待时间 —— 一旦继续操作就立刻恢复重绘。"""
+        toolbar = self.app.toolbar
+        toolbar.mark_menu_open()
+        self.assertTrue(toolbar.is_menu_posted())
+        toolbar.mark_interaction()
+        self.assertFalse(toolbar.is_menu_posted(), "交互后应立即解除保护（无保护时间）")
+        # 菜单自己触发 <Unmap> 时同样立即解除
+        toolbar.mark_menu_open()
+        toolbar.mark_menu_closed()
+        self.assertFalse(toolbar.is_menu_posted())
 
     def test_fullscreen_toggle(self) -> None:
         before = self.app.fullscreen

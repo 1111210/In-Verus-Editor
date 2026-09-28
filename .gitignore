@@ -32,3 +32,4 @@ charts/**/*.m4a
 
 # Local scratch
 scratch/
+_diag/
