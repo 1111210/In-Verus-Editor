@@ -35,6 +35,8 @@ class Theme:
 
     note_white: str = "#ffffff"
     note_border: str = "#b9c6da"
+    note_blue: str = "#4da6ff"        # 按键的亮蓝色环 / 长按两侧边线
+    note_line_width: int = 3          # 白色横线 / 竖线粗细（单键与长按一致）
     hold_pink: str = "#ff8ec7"
     hold_border: str = "#ffc0e0"
 

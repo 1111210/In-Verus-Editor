@@ -113,7 +113,7 @@ python tools/check_audio.py
 
 | 项目 | 命令 | 结果 |
 | --- | --- | --- |
-| 单元测试（含 Tk 画布冒烟测试与应用级测试） | `python -m unittest discover -s tests -t .` | Ran 187 tests — **OK** |
+| 单元测试（含 Tk 画布冒烟测试与应用级测试） | `python -m unittest discover -s tests -t .` | Ran 189 tests — **OK** |
 | 需求验收清单 | `python tools/acceptance.py` | 13 项全部 `[OK ]`，结论：全部通过 |
 | 音频后端 | `python tools/check_audio.py` | 9 项全部 `[OK ]`（pygame.mixer 真实播放，延迟补偿正确） |
 | 示例谱面生成 | `python run_editor.py --make-demo` | 生成 `charts/demo/demo.json`（6K 32 / 区域 3 / 滑键 6 / 4 个速度组） |
@@ -210,6 +210,9 @@ python tools/check_audio.py
 | `tests/test_editor_smoke.py::test_note_layer_order_matches_readability_spec` | 六层绘制顺序（画布图元次序）符合规格 |
 | `tests/test_editor_smoke.py::test_hit_priority_follows_layer_order` | 命中优先级与图层一致（滑键 > 空域 > 单轨单键 > …） |
 | `tests/test_undo_records.py`（10 条） | 差量撤销：增删/粘贴/镜像/编辑/改组/改元数据与 BPM 的撤销重做等价性、记录量只随改动量增长、栈上限、选择还原 |
+| `tests/test_editor_smoke.py::test_tap_note_style` | 单键图案：白边 + 亮蓝环 + 中间白横线（位置居中） |
+| `tests/test_editor_smoke.py::test_hold_note_style_and_constant_center_line` | 长按图案：两侧蓝线 + 白竖线（粗细与轨道数无关）+ 开头白横线贴在起始拍上 |
+| `tests/test_editor_smoke.py::test_multi_holds_stack_by_lane_span` | 多轨层内排序：跨得越多越靠下层 |
 | `tests/test_chart_io.py::test_suffix` | 只支持 JSON：任何后缀都会被规范成 `.json` |
 | `tests/test_app_flow.py::test_fullscreen_toggle` | 全屏开关切换 |
 | `tests/test_app_flow.py::test_maximized_by_default` | 默认最大化（`-fullscreen` 属性为 0），不是无边框全屏 |

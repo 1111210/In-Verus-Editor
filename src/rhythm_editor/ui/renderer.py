@@ -495,11 +495,15 @@ class Renderer:
         )
         for layer, matches, draw in layers:
             self.scene.set_layer(layer)
-            for note in notes:
-                if not matches(note):
-                    continue
-                if not note_in_time(note, view.current_beat):
-                    continue  # 判定时间已过 -> 不再显示
+            visible = [
+                note
+                for note in notes
+                if matches(note) and note_in_time(note, view.current_beat)
+            ]
+            if layer in (4, 6):
+                # 多轨物件：跨的轨道越多越先画（越靠下层），同跨度保持时间顺序
+                visible.sort(key=lambda n: n.lane_end - n.lane_start, reverse=True)
+            for note in visible:
                 draw(note, note.id in state.selection)
 
     def _draw_lane_note(
@@ -526,18 +530,49 @@ class Renderer:
             if abs(bottom - top) < TAP_MIN_PX:
                 # 退化成一个点时向上补足：起始位置始终贴在它的时间网格线上
                 top = bottom - TAP_MIN_PX
-            fill = theme.hold_pink
-            outline = theme.hold_border
+            style = "hold"
         else:
             top = y_head - TAP_MIN_PX
             bottom = y_head
-            fill = theme.note_white
-            outline = theme.note_border
+            style = "tap"
         if bottom < y_min or top > y_max:
             return
         self._hit_entries.append((note, (x0, top, x1, bottom), None))
-        key = f"note:{note.id}"
-        self.scene.rect(key, x0, top, x1, bottom, fill=fill, outline=outline, width=1)
+        if style == "hold":
+            # 长按：两侧蓝色边线 + 中间白色竖线（粗细固定，不随跨轨道数变化）
+            self.scene.line(
+                f"note-side-l:{note.id}", x0, top, x0, bottom,
+                fill=theme.note_blue, width=3,
+            )
+            self.scene.line(
+                f"note-side-r:{note.id}", x1, top, x1, bottom,
+                fill=theme.note_blue, width=3,
+            )
+            center = (x0 + x1) / 2.0
+            self.scene.line(
+                f"note:{note.id}", center, top, center, bottom,
+                fill=theme.note_white, width=theme.note_line_width,
+            )
+            # 开头处与单键相同的白色横线
+            self.scene.line(
+                f"note-head:{note.id}", x0, y_head, x1, y_head,
+                fill=theme.note_white, width=theme.note_line_width,
+            )
+        else:
+            # 单键 / 多轨单键：外侧白色边 + 亮蓝色环 + 中间一条白色横线
+            self.scene.rect(
+                f"note:{note.id}", x0, top, x1, bottom,
+                fill="", outline=theme.note_white, width=2,
+            )
+            self.scene.rect(
+                f"note-ring:{note.id}", x0 + 2, top + 2, x1 - 2, bottom - 2,
+                fill="", outline=theme.note_blue, width=3,
+            )
+            middle = (top + bottom) / 2.0
+            self.scene.line(
+                f"note-line:{note.id}", x0 + 2, middle, x1 - 2, middle,
+                fill=theme.note_white, width=theme.note_line_width,
+            )
         if selected:
             self.scene.rect(
                 f"sel:{note.id}",
@@ -550,14 +585,9 @@ class Renderer:
                 width=2,
             )
         if note.group != config.DEFAULT_GROUP_ID:
-            self.scene.rect(
-                f"grp:{note.id}",
-                x0,
-                top,
-                x0 + 4,
-                bottom,
-                fill=self._group_color(note.group),
-                outline="",
+            self.scene.line(
+                f"grp:{note.id}", x0 - 3, top, x0 - 3, bottom,
+                fill=self._group_color(note.group), width=3,
             )
         if selected:
             label = f"{note.id} · 轨道{note.lane_start + 1}-{note.lane_end + 1} · 组{note.group}"

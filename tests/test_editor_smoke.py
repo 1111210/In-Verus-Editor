@@ -307,6 +307,64 @@ class EditorSmokeTest(unittest.TestCase):
         self.assertLess(index("note:ST"), index("region:RG"))
         self.assertLess(index("region:RG"), index("slide:SL"))
 
+    def test_tap_note_style(self) -> None:
+        """单键 / 多轨单键：外侧白色边 + 亮蓝色环 + 中间一条白色横线。"""
+        self.chart.add(LaneNote("T1", 2, 2, 2.0))
+        self.view.set_beat(0.0)
+        self.draw()
+        outer = dict(self.scene._items["note:T1"][2][1])
+        ring = dict(self.scene._items["note-ring:T1"][2][1])
+        line = dict(self.scene._items["note-line:T1"][2][1])
+        self.assertEqual(outer["outline"], DARK.note_white)
+        self.assertEqual(outer["fill"], "")
+        self.assertEqual(ring["outline"], DARK.note_blue)
+        self.assertEqual(ring["fill"], "")
+        self.assertEqual(line["fill"], DARK.note_white)
+        self.assertEqual(int(line["width"]), DARK.note_line_width)
+        # 白色横线在按键中间
+        outer_coords = self.scene._items["note:T1"][2][0]
+        line_coords = self.scene._items["note-line:T1"][2][0]
+        self.assertAlmostEqual(line_coords[1], (outer_coords[1] + outer_coords[3]) / 2, places=6)
+
+    def test_hold_note_style_and_constant_center_line(self) -> None:
+        """长按：两侧蓝色边线 + 中间白竖线（粗细固定，不随跨轨道数变化）+ 开头白横线。"""
+        self.chart.add(LaneNote("H1", 1, 1, 2.0, 4.0))     # 单轨长按
+        self.chart.add(LaneNote("H2", 0, 5, 2.0, 4.0))     # 跨 6 轨的长按
+        self.view.set_beat(0.0)
+        self.draw()
+        widths = set()
+        for note_id in ("H1", "H2"):
+            left = dict(self.scene._items[f"note-side-l:{note_id}"][2][1])
+            right = dict(self.scene._items[f"note-side-r:{note_id}"][2][1])
+            center = dict(self.scene._items[f"note:{note_id}"][2][1])
+            head = dict(self.scene._items[f"note-head:{note_id}"][2][1])
+            self.assertEqual(left["fill"], DARK.note_blue)
+            self.assertEqual(right["fill"], DARK.note_blue)
+            self.assertEqual(center["fill"], DARK.note_white)
+            self.assertEqual(head["fill"], DARK.note_white)
+            self.assertEqual(int(head["width"]), DARK.note_line_width)
+            widths.add(int(center["width"]))
+            # 开头横线位于起始拍的网格线（判定边）上
+            head_coords = self.scene._items[f"note-head:{note_id}"][2][0]
+            self.assertAlmostEqual(head_coords[1], self.view.beat_to_y(2.0), places=6)
+        self.assertEqual(widths, {DARK.note_line_width}, "白竖线粗细应与轨道数无关")
+
+    def test_multi_holds_stack_by_lane_span(self) -> None:
+        """同为多轨长按时，跨轨道越多越先画（越靠下层）。"""
+        wide = LaneNote("HW", 0, 5, 2.0, 4.0)
+        narrow = LaneNote("HN", 2, 3, 2.0, 4.0)
+        taps = LaneNote("TM", 1, 4, 2.0)
+        self.chart.add(narrow)
+        self.chart.add(wide)
+        self.chart.add(taps)
+        self.view.set_beat(0.0)
+        self.draw()
+        order = list(self.canvas.find_all())
+        index = lambda key: order.index(self.scene._items[key][0])  # noqa: E731
+        self.assertLess(index("note:HW"), index("note:HN"), "跨得多的长按应在下层")
+        # 多轨单键同样按跨度排序（同为多轨物件层）
+        self.assertLess(index("note:HN"), index("note:TM"))
+
     def test_hit_priority_follows_layer_order(self) -> None:
         """点击命中的优先顺序与图层一致：滑键 > 空域 > 单轨单键 > 多轨单键 > 单轨长按 > 多轨长按。"""
         hold_multi = LaneNote("MH", 1, 4, 0.0, 4.0)
