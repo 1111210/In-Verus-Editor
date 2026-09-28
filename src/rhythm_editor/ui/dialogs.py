@@ -226,7 +226,7 @@ class BpmDialog(BaseDialog):
         for key, text, width in (
             ("start", "起始拍", 90),
             ("bpm", "BPM（正数）", 110),
-            ("bar", "每小节拍数", 110),
+            ("bar", "每小节拍数（0=关闭）", 150),
         ):
             self.tree.heading(key, text=text)
             self.tree.column(key, width=width, anchor="center")
@@ -249,8 +249,11 @@ class BpmDialog(BaseDialog):
         ttk.Button(buttons, text="删除选中", command=self._delete).pack(side="left")
         ttk.Label(
             body,
-            text="从第 0 拍开始的一项不允许删除，只能修改；BPM 列表不影响物件运动速度。",
+            text="从第 0 拍开始的一项不允许删除，只能修改；BPM 列表不影响物件运动速度。\n"
+                 "BPM 变更处一定新开一小节（上一段末尾的不完整小节也算一节，"
+                 "所以小节编号在变更处重新对齐）；「每小节拍数」填 0 表示这一段关闭小节线。",
             style="Warn.TLabel",
+            wraplength=520,
         ).pack(anchor="w", pady=(6, 0))
         if self.beat_hint:
             ttk.Label(body, text=self.beat_hint, style="Dim.TLabel").pack(anchor="w", pady=(2, 0))
@@ -296,11 +299,15 @@ class BpmDialog(BaseDialog):
     def _read_form(self, index: int) -> Optional[BpmSegment]:
         start = parse_float(self.e_start.get(), -1.0)
         bpm = parse_float(self.e_bpm.get(), -1.0)
-        bar = parse_int(self.e_bar.get(), 0)
+        bar = parse_int(self.e_bar.get(), -1)
         if index == 0:
             start = 0.0
-        if start < 0 or bpm <= 0 or bar < 1:
-            messagebox.showerror("数值错误", "起始拍需 ≥ 0，BPM 需 > 0，每小节拍数需 ≥ 1。", parent=self)
+        if start < 0 or bpm <= 0 or bar < 0:
+            messagebox.showerror(
+                "数值错误",
+                "起始拍需 ≥ 0，BPM 需 > 0，每小节拍数需 ≥ 0（0 = 关闭小节线）。",
+                parent=self,
+            )
             return None
         return BpmSegment(start, bpm, bar)
 
@@ -344,12 +351,13 @@ class BpmDialog(BaseDialog):
         self.segments = unique or [BpmSegment(0.0, config.DEFAULT_BPM, config.DEFAULT_BEATS_PER_BAR)]
         self.segments[0].start_beat = 0.0
         self._refresh()
-        if focus_beat is not None:
-            for index, seg in enumerate(self.segments):
-                if abs(seg.start_beat - focus_beat) < 1e-9:
-                    self.tree.selection_set(str(index))
-                    self._load(index)
-                    break
+        if focus_beat is None:
+            return
+        for index, seg in enumerate(self.segments):
+            if abs(seg.start_beat - focus_beat) < 1e-9:
+                self.tree.selection_set(str(index))
+                self._load(index)
+                break
 
     def _ok(self) -> None:
         offset = parse_float(self.e_offset.get(), 0.0)
@@ -900,6 +908,12 @@ Home / End 跳到开头 / 结尾。
 【速度组】
 顶栏「速度组」按钮里可新建/复制/删除组，编辑流速列表（从某拍开始，流速 = 默认速度 × 倍率，
 支持 0 与负数实现停留/反向），并把当前选择加入组。删除组时组内物件回到默认组。
+
+【BPM 与偏移】
+「谱面设置 → BPM 与偏移」里每项是：从哪一拍开始、BPM、每小节拍数。
+**每逢 BPM 变更一定新开一小节**：变更拍不必落在上一段的小节线上，但它自己就是小节线，
+上一段末尾不完整的小节按一整节计入编号（所以变更后第一拍就是新小节的第一拍）。
+「每小节拍数」填 **0 表示这一段关闭小节线**（只留拍线），之后填回正数即可恢复。
 流速可正可负并会叠加，因此物件位置不是判定时刻的单调函数：远处的物件也可能被推回
 判定线上，编辑器始终按 ∫v 的结果显示。
 

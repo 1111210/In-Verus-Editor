@@ -219,7 +219,7 @@ python tools/check_audio.py
 | `tests/test_app_flow.py::test_toggle_maximize_and_fullscreen` | 最大化 / 还原 / 全屏互斥切换 |
 | `tests/test_app_flow.py::test_menu_not_reconfigured_every_frame` | 菜单项只在状态变化时写入（频闪根因之一） |
 | `tests/test_app_flow.py::test_tick_skips_redraw_while_menu_is_posted` | 菜单展开期间不重绘画布（频闪根因之二） |
-| `tests/test_mouse_click.py`（18 条） | 鼠标点击按键：模型 / 序列化 / 镜像 / 复制粘贴 / 编辑撤销、与滑键同规则 + 同拍唯一、两次点击创建（中心 → 大小）、**启用横向网格才吸附并夹进 0..1、未启用时出界也照常放置**（滑键同样）、渲染为左右红色实线（粗细同 6K 中心实线）+ 红色实心菱形且最上层、兜底命中 / 框选路径 |
+| `tests/test_mouse_click.py`（18 条） | 鼠标点击按键：模型 / 序列化 / 镜像 / 复制粘贴 / 编辑撤销、与滑键同规则 + 同拍唯一、两次点击创建（中心 → 大小）、**启用横向网格才吸附并夹进 0..1、未启用时出界也照常放置**（滑键同样）、渲染为左右红色竖线 + 中间红色横线（粗细同 6K 中心实线）+ 红色实心菱形且最上层、兜底命中 / 框选路径 |
 | `tests/test_app_flow.py::test_app_boots_with_chart` | 示例谱面物件总数与分类计数（含 4 个鼠标点击按键） |
 
 人工确认：`docs/images/editor_overview.png`（分栏 + 分组工具栏）、

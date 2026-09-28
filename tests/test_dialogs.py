@@ -98,6 +98,36 @@ class BpmDialogTests(DialogTestCase):
         self.assertEqual(len(timing.segments), 2)
         self.assertAlmostEqual(timing.seconds_per_beat(0.0), 0.5)
 
+    def test_change_beat_is_kept_as_typed(self) -> None:
+        """BPM 变更拍允许落在上一段的两条小节线之间：照填不误（变更处自己开新小节）。"""
+        dialog = self.make_dialog(BpmDialog, self.timing)
+        dialog.tree.selection_set("1")
+        dialog.e_start.delete(0, "end")
+        dialog.e_start.insert(0, "10")      # 8 之后每 3 拍一条：10 不在线上，也允许
+        dialog.e_bpm.delete(0, "end")
+        dialog.e_bpm.insert(0, "150")
+        dialog.e_bar.delete(0, "end")
+        dialog.e_bar.insert(0, "4")
+        dialog._update()
+        self.assertIn(10.0, [seg.start_beat for seg in dialog.segments])
+        self.assertAlmostEqual(dialog.segments[1].bpm, 150.0)
+        self.assertEqual(dialog.segments[1].beats_per_bar, 4)
+
+    def test_zero_beats_per_bar_is_accepted(self) -> None:
+        """每小节 0 拍 = 关闭小节线，允许保存。"""
+        dialog = self.make_dialog(BpmDialog, self.timing)
+        dialog.tree.selection_set("1")
+        dialog.e_start.delete(0, "end")
+        dialog.e_start.insert(0, "8")
+        dialog.e_bpm.delete(0, "end")
+        dialog.e_bpm.insert(0, "180")
+        dialog.e_bar.delete(0, "end")
+        dialog.e_bar.insert(0, "0")
+        dialog._update()
+        self.assertEqual(dialog.segments[1].beats_per_bar, 0)
+        dialog._ok()
+        self.assertEqual(int(dialog.result.segments[1].beats_per_bar), 0)
+
 
 class SpeedGroupDialogTests(DialogTestCase):
     def setUp(self) -> None:

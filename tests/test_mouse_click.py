@@ -243,10 +243,18 @@ class ClickToolTests(unittest.TestCase):
         self.assertAlmostEqual(
             (left_coords[1] + left_coords[3]) / 2, self.view.beat_to_y(3.0), places=6
         )
-        # 不再有填充 / 白边 / 中间白实线
+        # 不再有填充 / 白边
         self.assertNotIn("click:S", self.scene._items)
         self.assertNotIn("click-ring:S", self.scene._items)
-        self.assertNotIn("click-line:S", self.scene._items)
+
+        # 中间红色横线：连起左右两条竖线，粗细与 6K 单键横线相同，且落在判定时刻上
+        line = self.scene._items["click-line:S"]
+        line_coords, line_opts = line[2][0], dict(line[2][1])
+        self.assertEqual(line_opts["fill"], DARK.click_edge)
+        self.assertEqual(int(line_opts["width"]), DARK.note_line_width)
+        self.assertAlmostEqual(line_coords[0], left_coords[0], places=6)
+        self.assertAlmostEqual(line_coords[2], right_coords[0], places=6)
+        self.assertAlmostEqual(line_coords[1], self.view.beat_to_y(3.0), places=6)
 
         diamond_small = self.scene._items["click-diamond:S"][2][0]
         diamond_big = self.scene._items["click-diamond:B"][2][0]

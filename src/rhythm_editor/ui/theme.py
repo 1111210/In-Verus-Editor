@@ -48,7 +48,8 @@ class Theme:
     slide_left_fill: str = "#e8c24a"
     slide_left_edge: str = "#ffd666"
 
-    # 鼠标点击按键：左右两条红色实线标出范围（粗细与 6K 按键的中心实线相同）+ 中央红色实心菱形
+    # 鼠标点击按键：左右两条红色竖线标出范围 + 中间一条红色横线（粗细都与 6K 按键的中心实线相同）
+    #             + 中央红色实心菱形
     click_edge: str = "#ff2d20"
     click_diamond: str = "#ff2d20"
 

@@ -613,10 +613,10 @@ class Renderer:
         y_min: float = -1e9,
         y_max: float = 1e9,
     ) -> None:
-        """鼠标点击按键：左右两条红色实线标出范围 + 中央固定大小的红色实心菱形。
+        """鼠标点击按键：左右两条红色实线标出范围 + 中间一条红色横线 + 中央红色实心菱形。
 
-        实线的粗细与 6K 按键的中心实线相同（``theme.note_line_width``），
-        整个物件**竖向居中**在判定时刻上（两条实线的中点与菱形中心都落在时间网格线上）。
+        三条实线的粗细都与 6K 按键的中心实线相同（``theme.note_line_width``），
+        整个物件**竖向居中**在判定时刻上（中间横线与菱形中心都落在时间网格线上）。
         """
         theme = self.theme
         group = self._group(chart, note)
@@ -641,6 +641,13 @@ class Renderer:
         self.scene.line(
             f"click-right:{note.id}",
             x1, top, x1, bottom,
+            fill=theme.click_edge,
+            width=theme.note_line_width,
+        )
+        # 中间红色横线：连起左右两条竖线，粗细与 6K 单键的横线一致
+        self.scene.line(
+            f"click-line:{note.id}",
+            x0, y, x1, y,
             fill=theme.click_edge,
             width=theme.note_line_width,
         )
@@ -1086,6 +1093,16 @@ class Renderer:
                         width=theme.note_line_width,
                         dash=(4, 3),
                     )
+                self.scene.line(
+                    "pending:click-line",
+                    x - radius_px,
+                    y,
+                    x + radius_px,
+                    y,
+                    fill=theme.click_edge,
+                    width=theme.note_line_width,
+                    dash=(4, 3),
+                )
             self.scene.polygon(
                 "pending:click-diamond",
                 [(x - d, y), (x, y - d), (x + d, y), (x, y + d)],
@@ -1165,11 +1182,19 @@ class Renderer:
     def _draw_hud(self, chart: Chart, view: ViewState, state: RenderState) -> None:
         theme = self.theme
         layout = view.layout
-        bar_index, beat_in_bar = chart.timing.bar_index_at(view.current_beat)
+        timing = chart.timing
+        if timing.has_bars_at(view.current_beat):
+            bar_index, beat_in_bar = timing.bar_index_at(view.current_beat)
+            position = (
+                f"小节 {bar_index + 1} 第 {beat_in_bar + 1:.2f} 拍 · "
+                f"第 {view.current_beat:.3f} 拍"
+            )
+        else:
+            # 该段关闭小节线：只报拍号
+            position = f"第 {view.current_beat:.3f} 拍（小节线已关闭）"
         text = (
-            f"{chart.timing.bpm_at(view.current_beat):.2f} BPM · "
-            f"小节 {bar_index + 1} 第 {beat_in_bar + 1:.2f} 拍 · "
-            f"第 {view.current_beat:.3f} 拍 · {view.time_label(view.current_beat)}"
+            f"{timing.bpm_at(view.current_beat):.2f} BPM · "
+            f"{position} · {view.time_label(view.current_beat)}"
         )
         if state.playing:
             text = "▶ 播放中 · " + text

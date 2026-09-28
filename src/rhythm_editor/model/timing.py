@@ -12,6 +12,7 @@
 
 from __future__ import annotations
 
+import math
 from dataclasses import dataclass
 from typing import Dict, Iterable, Iterator, List, Sequence, Tuple
 
@@ -62,7 +63,8 @@ class TimingMap:
                 BpmSegment(
                     start_beat=max(0.0, float(seg.start_beat)),
                     bpm=max(1e-3, float(seg.bpm)),
-                    beats_per_bar=max(1, int(seg.beats_per_bar)),
+                    # 每小节 0 拍 = 关闭小节线（允许 0；负数按 0 处理）
+                    beats_per_bar=max(0, int(seg.beats_per_bar)),
                 )
             )
         cleaned.sort(key=lambda s: s.start_beat)
@@ -175,7 +177,12 @@ class TimingMap:
 
     # ------------------------------------------------------------------ 小节
     def bar_lines(self, start_beat: float, end_beat: float) -> List[float]:
-        """返回 [start_beat, end_beat] 内的小节线拍位置（每个 BPM 段重新起算）。"""
+        """返回 [start_beat, end_beat] 内的小节线拍位置。
+
+        规则：**每逢 BPM 变更一定新开一小节**（变更拍本身就是小节线，不要求它落在
+        上一段的小节网格上；上一段最后会留下一个不完整的小节）。
+        每小节拍数为 ``0`` 的段落表示**关闭小节线**，该段内不产生任何小节线。
+        """
         lines: List[float] = []
         if end_beat < start_beat:
             return lines
@@ -186,6 +193,8 @@ class TimingMap:
             if hi < lo - 1e-9:
                 continue
             step = float(seg.beats_per_bar)
+            if step <= 0:
+                continue      # 关闭小节线
             n = int((lo - seg.start_beat) / step)
             b = seg.start_beat + n * step
             while b < lo - 1e-9:
@@ -193,19 +202,75 @@ class TimingMap:
             while b <= hi + 1e-9:
                 lines.append(round(b, 9))
                 b += step
-        return lines
+        # 段落交界处（上一段的结束线 == 下一段的起始线）会重复，去重后再返回
+        unique: List[float] = []
+        for value in lines:
+            if not unique or abs(unique[-1] - value) > 1e-9:
+                unique.append(value)
+        return unique
+
+    # ------------------------------------------------------- 小节对齐（BPM 变更点）
+    @staticmethod
+    def _segment_covering(segments: Sequence[BpmSegment], beat: float) -> BpmSegment:
+        seg = segments[0]
+        for candidate in segments:
+            if candidate.start_beat <= float(beat) + 1e-12:
+                seg = candidate
+        return seg
+
+    def has_bars_at(self, beat: float) -> bool:
+        """该拍所在段落是否画小节线（``beats_per_bar == 0`` 表示关闭）。"""
+        return int(self.segment_at(beat).beats_per_bar) > 0
+
+    def bar_start_at_or_before(self, beat: float) -> float:
+        """返回 ``beat`` 之前（含）最近的一条小节线。
+
+        * 每逢 BPM 变更一定新开一小节 —— 所以每条 BPM 记录的起点都是小节线；
+        * 关闭小节线的段落内不产生小节线，此时返回之前最后一条小节线；
+        * 一条都没有时返回第 0 拍。
+        """
+        beat = float(beat)
+        found: Optional[float] = None
+        for seg in self.segments:
+            if seg.start_beat > beat + 1e-9:
+                break
+            if int(seg.beats_per_bar) <= 0:
+                continue
+            step = float(seg.beats_per_bar)
+            n = math.floor((beat - seg.start_beat) / step + 1e-9)
+            found = seg.start_beat + max(0, n) * step
+        if found is not None:
+            return found
+        return float(self.segments[0].start_beat)
+
+    def is_bar_start(self, beat: float, tol: float = 1e-6) -> bool:
+        """``beat`` 是否正好落在小节线上（关闭小节线的段落内一律为否）。"""
+        if not self.has_bars_at(beat):
+            return False
+        return abs(self.bar_start_at_or_before(beat) - float(beat)) <= tol
 
     def bar_index_at(self, beat: float) -> Tuple[int, float]:
-        """返回 (小节序号（从 0 开始，跨段累计）, 该小节内位置)。"""
+        """返回 (小节序号（从 0 开始，跨段累计）, 该小节内位置)。
+
+        * 每逢 BPM 变更一定新开一小节：上一段末尾不完整的小节也按**一整节**计入，
+          所以第 N 段的第一拍永远是某小节的第一拍；
+        * 关闭小节线（``beats_per_bar == 0``）的段落没有小节编号，
+          返回 ``(之前累计的小节数, 0.0)``。
+        """
         bars = 0
         for i, seg in enumerate(self.segments):
             seg_end = self.segment_end(i)
             if beat >= seg_end:
-                span = seg_end - seg.start_beat
-                bars += int(round(span / seg.beats_per_bar))
+                step = float(seg.beats_per_bar)
+                if step > 0:
+                    # 不完整的小节也算一节：ceil（BPM 变更处新开一小节）
+                    span = float(seg_end) - seg.start_beat
+                    bars += max(0, math.ceil(span / step - 1e-9))
                 continue
-            local = max(0.0, beat - seg.start_beat)
             step = float(seg.beats_per_bar)
+            if step <= 0:
+                return bars, 0.0     # 该段关闭小节线
+            local = max(0.0, beat - seg.start_beat)
             return bars + int(local // step), local % step
         return bars, 0.0
 

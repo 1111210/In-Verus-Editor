@@ -162,5 +162,6 @@ class ReportTests(unittest.TestCase):
         self.assertIn("L2", report)
 
 
+
 if __name__ == "__main__":
     unittest.main()
