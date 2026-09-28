@@ -197,6 +197,55 @@ class EditorSmokeTest(unittest.TestCase):
         for cap in ("region-cap0:M1", "region-cap1:M1"):
             self.assertNotIn(cap, self.scene._items)
 
+    def test_offscreen_regions_skip_boundary_computation(self) -> None:
+        """回归：屏幕外的空域不计算边界形状（预判直接跳过采样）。"""
+        calls = {"count": 0}
+        original = self.renderer._region_points
+
+        def counting(note, chart, view, samples=40):
+            calls["count"] += 1
+            return original(note, chart, view, samples)
+
+        self.renderer._region_points = counting  # type: ignore[assignment]
+        try:
+            # 很远的空域（判定线还在第 0 拍）
+            for index in range(30):
+                beat = 500.0 + index * 4.0
+                self.chart.add(
+                    MouseRegion(
+                        f"M{index}",
+                        beat,
+                        beat + 2.0,
+                        BoundaryCurve(0.0, 0.0),
+                        BoundaryCurve(1.0, 1.0),
+                    )
+                )
+            # 一个就在屏幕里的空域
+            self.chart.add(
+                MouseRegion("MV", 1.0, 3.0, BoundaryCurve(0.1, 0.1), BoundaryCurve(0.9, 0.9))
+            )
+            self.view.set_beat(0.0)
+            self.draw()
+            self.assertEqual(calls["count"], 1, "只有屏幕内的空域才需要计算边界形状")
+            self.assertIn("region:MV", self.scene._items)
+            self.assertNotIn("region:M0", self.scene._items)
+        finally:
+            self.renderer._region_points = original  # type: ignore[assignment]
+
+    def test_region_samples_adapt_to_screen_height(self) -> None:
+        """屏幕内很矮的空域使用更少的采样点（省掉不必要的边界计算）。"""
+        self.chart.settings.grid_division = 4
+        tall = MouseRegion("MT", 0.0, 20.0, BoundaryCurve(0.1, 0.2), BoundaryCurve(0.9, 0.8))
+        short = MouseRegion("MS", 2.0, 2.25, BoundaryCurve(0.1, 0.2), BoundaryCurve(0.9, 0.8))
+        self.chart.add(tall)
+        self.chart.add(short)
+        self.view.set_beat(0.0)
+        self.draw()
+        tall_points = len(self.scene._items["region:MT"][2][0]) // 2
+        short_points = len(self.scene._items["region:MS"][2][0]) // 2
+        self.assertLess(short_points, tall_points)
+        self.assertGreaterEqual(short_points, 8 + 2)   # 至少左 5 + 右 5 个点
+
     def test_region_pending_preview_has_only_side_edges(self) -> None:
         """放置预览同样只画左右边界线。"""
         self.controller.set_tool(config.TOOL_MOUSE_REGION)

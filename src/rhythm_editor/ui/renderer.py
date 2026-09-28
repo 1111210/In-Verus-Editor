@@ -548,6 +548,45 @@ class Renderer:
             right_edge.append((view.norm_to_x(note.right.value_at(progress)), y))
         return left_edge + list(reversed(right_edge))
 
+    def _region_sample_count(
+        self, note: MouseRegion, group: SpeedGroup, view: ViewState, base: int
+    ) -> int:
+        """按空域在屏幕上的高度自适应采样：屏幕内越矮的点越少。"""
+        span_px = abs(
+            view.note_y(note.head_beat, group) - view.note_y(note.tail_beat, group)
+        )
+        adaptive = int(span_px / 18.0) + 3
+        return max(4, min(base, adaptive))
+
+    def _region_may_be_visible(
+        self,
+        note: MouseRegion,
+        group: SpeedGroup,
+        view: ViewState,
+        y_min: float,
+        y_max: float,
+    ) -> bool:
+        """便宜地判断空域是否可能出现在屏幕里。
+
+        * 匀速组（流速恒为 1）：位置是拍的线性函数，直接用可视**时间窗**判断，
+          O(1) 即可排除绝大多数空域 —— 被排除的空域完全不需要计算边界形状。
+        * 非匀速组：流速分段常数，所以在“分段边界 + 等分点”上采样是**精确**的
+          （每段内位置线性变化，极值一定出现在端点），据此判断可见性；
+          仍然只算 y，不算左右边界曲线。
+        """
+        span_low, span_high = view.beat_range()
+        if group.is_identity:
+            margin = (span_high - span_low) * 0.5 + 1.0
+            return not (
+                note.tail_beat < span_low - margin or note.head_beat > span_high + margin
+            )
+        loudness = max(1.0, (y_max - y_min))
+        low, high = y_min - loudness * 0.2, y_max + loudness * 0.2
+        for beat, _progress in sample_beats(note.beat_start, note.beat_end, group, 6):
+            if low <= view.note_y(beat, group) <= high:
+                return True
+        return False
+
     def _draw_region(
         self,
         note: MouseRegion,
@@ -559,6 +598,11 @@ class Renderer:
         samples: int = REGION_SAMPLES,
     ) -> None:
         theme = self.theme
+        group = self._group(chart, note)
+        # 先做可见性预判：屏幕外的空域不算边界形状
+        if not self._region_may_be_visible(note, group, view, y_min, y_max):
+            return
+        samples = self._region_sample_count(note, group, view, samples)
         points = self._region_points(note, chart, view, samples)
         ys = [p[1] for p in points]
         if max(ys) < y_min or min(ys) > y_max:
