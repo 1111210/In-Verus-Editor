@@ -55,6 +55,7 @@ class PendingPreview:
     """放置流程中的预览数据（由交互层填充）。"""
 
     tool: str = ""
+    step: int = 0          # 交互阶段（0 = 还没落下第一个点）
     lane_start: Optional[int] = None
     lane_end: Optional[int] = None
     beat_start: Optional[float] = None
@@ -616,22 +617,22 @@ class Renderer:
         x_start = view.norm_to_x(note.x_start)
         x_end = view.norm_to_x(note.x_end)
         min_dx = max(18.0, config.MIN_SLIDE_SPAN * view.layout.mouse_width)
+        # 方框按实际长度显示（只留 1.5px 的可见下限），不再为了好看把方框拉长
         x0, x1 = min(x_start, x_end), max(x_start, x_end)
-        if x1 - x0 < min_dx:
-            center = (x0 + x1) / 2
-            x0, x1 = center - min_dx / 2, center + min_dx / 2
+        if x1 - x0 < 3.0:
+            x1 = x0 + 3.0
         self.scene.rect(
             f"slide:{note.id}",
-            x0 - 4,
+            x0 - 1.5,
             y - SLIDE_MIN_PX / 2,
-            x1 + 4,
+            x1 + 1.5,
             y + SLIDE_MIN_PX / 2,
             fill=fill,
             outline=edge,
             width=2,
             stipple=theme.stipple_fill,
         )
-        # 箭头从起点指向终点：向左的滑键必须指向左（之前用 min/max 取端点，结果永远朝右）
+        # 箭头从起点指向终点（向左的滑键指向左）；长度不足时按最小长度补足，保证方向可见
         direction = 1.0 if x_end >= x_start else -1.0
         arrow_from = x_start
         arrow_to = x_start + direction * max(abs(x_end - x_start), min_dx)
@@ -649,9 +650,9 @@ class Renderer:
         if selected:
             self.scene.rect(
                 f"sel:{note.id}",
-                x0 - 8,
+                x0 - 6,
                 y - SLIDE_MIN_PX / 2 - 4,
-                x1 + 8,
+                x1 + 6,
                 y + SLIDE_MIN_PX / 2 + 4,
                 fill="",
                 outline=theme.select,
@@ -790,41 +791,56 @@ class Renderer:
                 "pending:region-right", right_points, fill=theme.pending, width=2, dash=(4, 3)
             )
         elif pending.tool == config.TOOL_MOUSE_SLIDE and pending.x_start is not None and pending.beat_start is not None:
-            y = view.note_y(pending.beat_start)
             x0 = view.norm_to_x(pending.x_start)
             x1 = view.norm_to_x(pending.x_end if pending.x_end is not None else pending.x_start)
-            leftward = x1 < x0
             min_dx = max(18.0, config.MIN_SLIDE_SPAN * view.layout.mouse_width)
-            lo, hi = min(x0, x1), max(x0, x1)
-            if hi - lo < min_dx:
-                center = (lo + hi) / 2
-                lo, hi = center - min_dx / 2, center + min_dx / 2
-            self.scene.rect(
-                "pending:slide",
-                lo - 4,
-                y - SLIDE_MIN_PX / 2,
-                hi + 4,
-                y + SLIDE_MIN_PX / 2,
-                fill=theme.pending,
-                outline=theme.pending,
-                width=2,
-                dash=(4, 3),
-                stipple=theme.stipple_soft,
-            )
-            # 预览同样画出方向箭头
-            arrow_from = x0
-            arrow_to = x0 + (-1.0 if leftward else 1.0) * max(abs(x1 - x0), min_dx)
-            self.scene.line(
-                "pending:slide-arrow",
-                arrow_from,
-                y,
-                arrow_to,
-                y,
-                fill=theme.pending,
-                width=3,
-                arrow="last",
-                arrowshape=(12, 14, 5),
-            )
+            if pending.step == 0:
+                # 选起点：只画一根黄色虚线，标出即将放置的横向位置
+                self.scene.line(
+                    "pending:slide-guide",
+                    x0,
+                    layout.play_top,
+                    x0,
+                    layout.play_bottom,
+                    fill=theme.pending,
+                    width=2,
+                    dash=(6, 4),
+                )
+            else:
+                # 选终点：按方向给出绿色（向右）/ 黄色（向左）预览
+                leftward = x1 < x0
+                fill = theme.slide_left_fill if leftward else theme.slide_fill
+                edge = theme.slide_left_edge if leftward else theme.slide_edge
+                y = view.note_y(pending.beat_start)
+                lo, hi = min(x0, x1), max(x0, x1)
+                if hi - lo < 3.0:
+                    hi = lo + 3.0
+                self.scene.rect(
+                    "pending:slide",
+                    lo - 1.5,
+                    y - SLIDE_MIN_PX / 2,
+                    hi + 1.5,
+                    y + SLIDE_MIN_PX / 2,
+                    fill=fill,
+                    outline=edge,
+                    width=2,
+                    dash=(4, 3),
+                    stipple=theme.stipple_fill,
+                )
+                # 方框按实际长度显示；箭头保持最小长度以便看清方向
+                arrow_from = x0
+                arrow_to = x0 + (-1.0 if leftward else 1.0) * max(abs(x1 - x0), min_dx)
+                self.scene.line(
+                    "pending:slide-arrow",
+                    arrow_from,
+                    y,
+                    arrow_to,
+                    y,
+                    fill=edge,
+                    width=3,
+                    arrow="last",
+                    arrowshape=(12, 14, 5),
+                )
         if pending.hint:
             self.scene.text(
                 "pending:hint",

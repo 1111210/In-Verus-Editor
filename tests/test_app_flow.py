@@ -302,6 +302,36 @@ class AppFlowTest(unittest.TestCase):
         toolbar.mark_menu_closed()
         self.assertFalse(toolbar.is_menu_posted())
 
+    def test_menu_toggles_closed_on_second_click(self) -> None:
+        """回归：菜单按钮再次点击是收起，而不是重新弹出。"""
+        toolbar = self.app.toolbar
+        # tk_popup 在 Windows 会进入嵌套事件循环；测试里替换掉真正的弹出动作与“是否展开”查询
+        toolbar._post_menu = lambda menu, button: None  # type: ignore[assignment]
+        toolbar._menu_is_posted = lambda menu: toolbar._open_group is not None  # type: ignore[assignment]
+        toolbar.toggle_menu("编辑")
+        self.assertEqual(toolbar._open_group, "编辑")
+        self.assertTrue(toolbar.is_menu_posted())
+        toolbar.toggle_menu("编辑")            # 再次点击同一个按钮
+        self.assertIsNone(toolbar._open_group)
+        self.assertFalse(toolbar.is_menu_posted())
+        # 点另一个分组：切换而不是叠加
+        toolbar.toggle_menu("编辑")
+        toolbar.toggle_menu("视图")
+        self.assertEqual(toolbar._open_group, "视图")
+
+    def test_outside_click_and_escape_close_menu(self) -> None:
+        toolbar = self.app.toolbar
+        toolbar._post_menu = lambda menu, button: None  # type: ignore[assignment]
+        toolbar._menu_is_posted = lambda menu: toolbar._open_group is not None  # type: ignore[assignment]
+        toolbar.toggle_menu("编辑")
+        toolbar.handle_outside_click(self.app.canvas)      # 点画布 -> 收起
+        self.assertIsNone(toolbar._open_group)
+        toolbar.toggle_menu("编辑")
+        toolbar.handle_outside_click(toolbar._menu_buttons["编辑"])   # 点自身按钮 -> 保持
+        self.assertEqual(toolbar._open_group, "编辑")
+        self.assertTrue(toolbar.close_if_open())           # Esc -> 收起
+        self.assertFalse(toolbar.close_if_open())
+
     def test_fullscreen_toggle(self) -> None:
         before = self.app.fullscreen
         self.app.toggle_fullscreen()

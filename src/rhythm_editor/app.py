@@ -157,7 +157,8 @@ class EditorApp:
         root.bind("<F11>", lambda e: self.toggle_fullscreen())
         root.bind("<F10>", lambda e: self.toggle_maximize())
         root.bind("<KeyPress>", lambda e: self.toolbar.mark_interaction(), add="+")
-        root.bind("<ButtonRelease-1>", lambda e: self.toolbar.mark_menu_closed(), add="+")
+        # 点击菜单 / 分组按钮以外的地方 -> 自动收起菜单
+        root.bind("<ButtonPress-1>", lambda e: self.toolbar.handle_outside_click(e.widget), add="+")
         root.bind("m", lambda e: self._shortcut(self.mirror_selection))
         root.bind("e", lambda e: self._shortcut(self.edit_selected))
         root.bind("g", lambda e: self._shortcut(self.toggle_horizontal_grid))
@@ -334,6 +335,7 @@ class EditorApp:
 
     def _wheel_notches(self, notches: float, event) -> None:
         self.toolbar.mark_interaction()
+        self.toolbar.close_if_open()
         ctrl = bool(event.state & CTRL_MASK)
         shift = bool(event.state & SHIFT_MASK)
         self.controller.on_wheel(float(notches), ctrl, shift)
@@ -344,7 +346,9 @@ class EditorApp:
         self._wheel_notches(notches, event)
 
     def _on_escape(self) -> None:
-        if self.controller.has_pending():
+        if self.toolbar.close_if_open():
+            self.status("已收起菜单")
+        elif self.controller.has_pending():
             self.controller.cancel_pending()
             self.status("已取消当前操作")
         elif self.demo_mode:

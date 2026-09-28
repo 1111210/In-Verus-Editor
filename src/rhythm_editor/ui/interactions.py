@@ -71,6 +71,7 @@ class ToolController:
         """放弃未完成的操作（切换工具 / Esc）。"""
         pending = self.state.pending
         pending.tool = ""
+        pending.step = 0
         pending.lane_start = None
         pending.lane_end = None
         pending.beat_start = None
@@ -427,6 +428,7 @@ class ToolController:
 
     def _update_ghost(self, x: float, y: float) -> None:
         pending = self.state.pending
+        pending.step = self._stage
         if self.paste_mode:
             pending.clipboard_beat = self.view.snap_beat(self.view.y_to_beat(y))
             return

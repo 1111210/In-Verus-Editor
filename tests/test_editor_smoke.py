@@ -502,6 +502,49 @@ class EditorSmokeTest(unittest.TestCase):
         # 半透明：仍然是点阵填充
         self.assertEqual(left_opts["stipple"], DARK.stipple_fill)
 
+    def test_slide_box_uses_actual_length_but_arrow_keeps_min_length(self) -> None:
+        """方框按实际长度显示；箭头仍有最小长度限制（保证方向看得清）。"""
+        span = 0.03
+        note = MouseSlide("S1", 3.0, 0.5, 0.5 + span)
+        self.chart.add(note)
+        self.view.set_beat(0.0)
+        self.draw()
+        box = self.scene._items["slide:S1"][2][0]
+        box_width = abs(box[2] - box[0])
+        actual_px = span * self.view.layout.mouse_width
+        self.assertLess(box_width - actual_px, 6.0, "方框应基本等于实际长度")
+        min_dx = max(18.0, config.MIN_SLIDE_SPAN * self.view.layout.mouse_width)
+        self.assertLess(box_width, min_dx, "方框不应被拉到最小箭头长度")
+        arrow = self.scene._items["slide-arrow:S1"][2][0]
+        self.assertGreaterEqual(abs(arrow[2] - arrow[0]), min_dx - 0.5, "箭头要保持最小长度")
+
+    def test_slide_pending_start_is_single_yellow_line(self) -> None:
+        """选起点时只画一根黄色虚线（不再是方框+箭头）。"""
+        self.chart.settings.horizontal_divisions = 0
+        self.controller.set_tool(config.TOOL_MOUSE_SLIDE)
+        self.controller.on_motion(self.view.norm_to_x(0.3), self.y_of_beat(3.0))
+        self.draw()
+        self.assertIn("pending:slide-guide", self.scene._items)
+        self.assertNotIn("pending:slide", self.scene._items)
+        guide = dict(self.scene._items["pending:slide-guide"][2][1])
+        self.assertEqual(guide["fill"], DARK.pending)
+        self.assertTrue(guide.get("dash"))
+
+    def test_slide_pending_end_colors_follow_direction(self) -> None:
+        """选终点时按方向给绿色（向右）/ 黄色（向左）预览。"""
+        self.chart.settings.horizontal_divisions = 0
+        self.controller.set_tool(config.TOOL_MOUSE_SLIDE)
+        self.click(self.view.norm_to_x(0.8), self.y_of_beat(3.0))      # 起点
+        self.controller.on_motion(self.view.norm_to_x(0.3), self.y_of_beat(3.0))
+        self.draw()
+        left_opts = dict(self.scene._items["pending:slide"][2][1])
+        self.assertEqual(left_opts["fill"], DARK.slide_left_fill, "向左 -> 黄色预览")
+        self.assertNotIn("pending:slide-guide", self.scene._items)
+        self.controller.on_motion(self.view.norm_to_x(0.95), self.y_of_beat(3.0))
+        self.draw()
+        right_opts = dict(self.scene._items["pending:slide"][2][1])
+        self.assertEqual(right_opts["fill"], DARK.slide_fill, "向右 -> 绿色预览")
+
     # -------------------------------------------------------------- 选择 / 编辑
     def test_rubber_band_and_ctrl_xor(self) -> None:
         self.controller.set_tool(config.TOOL_LANE_TAP)

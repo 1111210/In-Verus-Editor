@@ -60,6 +60,8 @@ class Toolbar(ttk.Frame):
         self._direct_buttons: List[Tuple[ttk.Button, Optional[Callable[[], bool]]]] = []
         self._last_direct_state: List[Optional[str]] = []
         self._menus: Dict[str, tk.Menu] = {}
+        self._menu_buttons: Dict[str, ttk.Button] = {}
+        self._open_group: Optional[str] = None
         # 缓存上一次真正写入菜单/按钮的值：每帧无脑 entryconfigure 会导致菜单频闪
         self._last_entry_state: List[Optional[Tuple[str, Optional[bool]]]] = []
         self._last_labels: Dict[Tuple[str, int], str] = {}
@@ -271,7 +273,8 @@ class Toolbar(ttk.Frame):
         finally:
             self._updating_scroll = False
 
-    def _make_menubutton(self, parent: tk.Misc, group: Group) -> tk.Menubutton:
+    def _make_menubutton(self, parent: tk.Misc, group: Group) -> ttk.Button:
+        """分组的入口按钮：用普通按钮 + 手动 tk_popup，避免 Menubutton 自带的“再次弹出”。"""
         menu = tk.Menu(
             parent,
             tearoff=0,
@@ -286,8 +289,13 @@ class Toolbar(ttk.Frame):
         )
         self._fill_menu(menu, group.entries)
         self._menus[group.label] = menu
-        button = ttk.Menubutton(parent, text=f"{group.label} ▾", menu=menu, style="Tool.TMenubutton")
-        button.bind("<ButtonPress-1>", self.mark_menu_open, add="+")
+        button = ttk.Button(
+            parent,
+            text=f"{group.label} ▾",
+            style="Tool.TButton",
+            command=lambda label=group.label: self.toggle_menu(label),
+        )
+        self._menu_buttons[group.label] = button
         menu.bind("<Unmap>", self.mark_menu_closed, add="+")
         menu.bind("<Motion>", self.mark_menu_open, add="+")
         return button
@@ -317,15 +325,29 @@ class Toolbar(ttk.Frame):
                 index = menu.index("end")
                 menu.add_checkbutton(
                     label=entry.label,
-                    command=entry.command,
+                    command=self._wrap_command(entry.command),
                     variable=var,
                     accelerator=accelerator,
                 )
                 self._registered.append((menu, (index + 1) if index is not None else 0, entry, var, True))
             else:
                 index = menu.index("end")
-                menu.add_command(label=entry.label, command=entry.command, accelerator=accelerator)
+                menu.add_command(
+                    label=entry.label,
+                    command=self._wrap_command(entry.command),
+                    accelerator=accelerator,
+                )
                 self._registered.append((menu, (index + 1) if index is not None else 0, entry, None, False))
+
+    def _wrap_command(self, command: Optional[Callable[[], None]]):
+        """菜单项被点击时先收起菜单（并记录状态），再执行动作。"""
+
+        def runner() -> None:
+            self.close_open_menu()
+            if command is not None:
+                command()
+
+        return runner
 
     # ------------------------------------------------------------------ 同步
     def mark_menu_open(self, _event=None) -> None:
@@ -351,6 +373,77 @@ class Toolbar(ttk.Frame):
         这里**不设任何保护时长**：菜单关闭后第一个用户事件就会恢复重绘。
         """
         return self._menu_open
+
+    # -------------------------------------------------------------- 菜单开合
+    def toggle_menu(self, label: str) -> None:
+        """展开 / 收起某个分组菜单：再次点击同一个按钮就是收起。"""
+        menu = self._menus.get(label)
+        button = self._menu_buttons.get(label)
+        if menu is None or button is None:
+            return
+        if self._open_group == label:
+            # 同一个按钮再次点击 -> 收起（_open_group 才是真正的开合状态）
+            self.close_open_menu()
+            return
+        self.close_open_menu()
+        self._open_group = label
+        self.mark_menu_open()
+        self._post_menu(menu, button)
+        if not self._menu_is_posted(menu):
+            # 阻塞式平台（Windows 原生菜单）在 tk_popup 返回时菜单已经关闭；
+            # 非阻塞平台这里仍然处于展开状态，保持开合状态以便“再次点击收起”。
+            if self._open_group == label:
+                self._open_group = None
+            self.mark_menu_closed()
+        # 释放 grab，让“点击同一个按钮”能正常送达按钮本身（实现再次点击收起）
+        try:
+            menu.grab_release()
+        except tk.TclError:  # pragma: no cover
+            pass
+
+    def _menu_is_posted(self, menu: tk.Menu) -> bool:
+        """菜单当前是否仍处于展开状态（原生菜单下不可靠，见 toggle_menu 的说明）。"""
+        try:
+            return bool(menu.winfo_ismapped())
+        except tk.TclError:  # pragma: no cover
+            return False
+
+    def _post_menu(self, menu: tk.Menu, button: ttk.Button) -> None:
+        """弹出菜单（单独抽出来便于测试替换，tk_popup 在部分平台会进入嵌套事件循环）。"""
+        try:
+            menu.tk_popup(button.winfo_rootx(), button.winfo_rooty() + button.winfo_height())
+        except tk.TclError:  # pragma: no cover - 无显示环境
+            self._open_group = None
+            self.mark_menu_closed()
+
+    def close_open_menu(self) -> None:
+        """收起当前展开的菜单（没有则什么都不做）。"""
+        label, self._open_group = self._open_group, None
+        if label is not None:
+            menu = self._menus.get(label)
+            if menu is not None:
+                try:
+                    menu.unpost()
+                except tk.TclError:  # pragma: no cover
+                    pass
+        self.mark_menu_closed()
+
+    def close_if_open(self) -> bool:
+        """有菜单展开时收起并返回 True（供 Esc 使用）。"""
+        if self._menu_open and self._open_group is not None:
+            self.close_open_menu()
+            return True
+        return False
+
+    def handle_outside_click(self, widget) -> None:
+        """点击菜单 / 分组按钮之外的地方时自动收起。"""
+        if not self._menu_open:
+            return
+        if widget is self._menus.get(self._open_group):
+            return
+        if widget in self._menu_buttons.values():
+            return
+        self.close_open_menu()
 
     def sync(self) -> None:
         app = self.app
