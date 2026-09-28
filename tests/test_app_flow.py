@@ -100,7 +100,12 @@ class AppFlowTest(unittest.TestCase):
         toolbar = self.app.toolbar
         labels = set(toolbar._group_buttons)
         # 面板已拆成「谱面设置 / 速度组 / 编辑器设置」；帮助保留
-        self.assertTrue({"文件", "编辑", "放置", "视图", "谱面设置", "帮助"} <= labels)
+        self.assertTrue({"文件", "编辑", "谱面设置", "放置", "视图", "帮助"} <= labels)
+        # 谱面设置要排在 编辑 与 放置 之间
+        order = [group.label for group in toolbar._groups]
+        self.assertEqual(
+            order, ["文件", "编辑", "谱面设置", "放置", "视图", "速度组", "编辑器设置", "帮助"]
+        )
         self.assertFalse(hasattr(toolbar, "menubar"), "不再保留系统菜单栏")
         self.assertEqual(str(self.app.root.cget("menu")), "")
         # 顶栏只保留分组 + 播放；演示模式、缩放文字都移到二级菜单 / 去掉了

@@ -317,6 +317,26 @@ class EditorSmokeTest(unittest.TestCase):
         self.assertAlmostEqual(notes[0].beat_end, 6.0)
         self.assertEqual(notes[0].lane_start, 0)
 
+    def test_place_multi_lane_hold(self) -> None:
+        """多轨长按：起点定轨道与时间，第二次点击的横坐标定结束轨道、纵坐标定结束时间。"""
+        self.controller.set_tool(config.TOOL_LANE_HOLD_MULTI)
+        self.click(self.view.layout.lane_center(1), self.y_of_beat(4.0))
+        self.assertTrue(self.state.pending.hint)
+        self.click(self.view.layout.lane_center(4), self.y_of_beat(6.5))
+        notes = self.document.chart.lane_notes
+        self.assertEqual(len(notes), 1)
+        note = notes[0]
+        self.assertEqual((note.lane_start, note.lane_end), (1, 4))
+        self.assertAlmostEqual(note.beat_start, 4.0)
+        self.assertAlmostEqual(note.beat_end, 6.5)
+        self.assertTrue(note.is_hold)
+        self.assertTrue(note.is_multi)
+        # 结束时间早于起点时自动补一格
+        self.click(self.view.layout.lane_center(3), self.y_of_beat(4.0))
+        self.click(self.view.layout.lane_center(3), self.y_of_beat(3.0))
+        fixed = self.document.chart.lane_notes[1]
+        self.assertAlmostEqual(fixed.beat_end - fixed.beat_start, self.view.grid_step())
+
     def test_place_region_uses_dialog_result(self) -> None:
         self.region_result = {
             "beat_start": 4.0,

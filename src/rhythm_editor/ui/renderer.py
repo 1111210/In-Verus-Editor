@@ -732,8 +732,14 @@ class Renderer:
                 dash=(4, 3),
                 stipple=theme.stipple_soft,
             )
-        elif pending.tool == config.TOOL_LANE_HOLD and pending.lane_start is not None and pending.beat_start is not None:
-            x0, x1 = layout.lane_span(pending.lane_start, pending.lane_start)
+        elif (
+            pending.tool in (config.TOOL_LANE_HOLD, config.TOOL_LANE_HOLD_MULTI)
+            and pending.lane_start is not None
+            and pending.beat_start is not None
+        ):
+            lane_end = pending.lane_end if pending.lane_end is not None else pending.lane_start
+            x0, x1 = layout.lane_span(pending.lane_start, lane_end)
+            pad = 9 if x1 - x0 < 2 else 6
             end = pending.beat_end if pending.beat_end is not None else pending.beat_start
             y_head = view.note_y(pending.beat_start)
             y_tail = view.note_y(end)
@@ -742,9 +748,9 @@ class Renderer:
                 bottom = top + TAP_MIN_PX
             self.scene.rect(
                 "pending:hold",
-                x0 + 9,
+                x0 + pad,
                 top,
-                x1 - 9,
+                x1 - pad,
                 bottom,
                 fill=theme.pending,
                 outline=theme.pending,
