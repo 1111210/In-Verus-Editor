@@ -24,6 +24,8 @@ LAYOUT_SPLIT = "split"
 LAYOUT_OVERLAY = "overlay"
 SPLIT_6K_RATIO = 0.25         # 6K 区域只占约四分之一宽度，其余给鼠标平面
 PANE_GAP = 16                 # 两个区域之间的间隔（像素）
+SPLIT_MIN_PANE_PX = 150.0     # 拖动分界线时两边各自的最小宽度
+DIVIDER_GRAB_PX = 7.0         # 分界线的“可抓取”半径（像素）
 # 鼠标平面在合法区域之外额外显示的范围（归一化坐标）：
 # 合法区域是 0..1，这里两侧各多显示 0.45，方便看清超出 0..1 的区域边界
 MOUSE_OVERFLOW_NORM = 0.45

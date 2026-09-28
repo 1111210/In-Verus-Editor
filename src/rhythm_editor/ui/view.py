@@ -100,6 +100,21 @@ class Layout:
     def in_legal_area(self, x: float) -> bool:
         return self.mouse_left - 1 <= x <= self.mouse_right + 1
 
+    # ------------------------------------------------------------ 分栏拖动
+    def usable_width(self) -> float:
+        """两个区域可以分配的总宽度（扣掉中间间隔）。"""
+        return max(120.0, self.play_width - config.PANE_GAP)
+
+    def min_split_ratio(self) -> float:
+        """6K 区域的最小占比（保证两边都还看得清）。"""
+        return min(0.45, config.SPLIT_MIN_PANE_PX / self.usable_width())
+
+    def ratio_from_divider(self, x: float) -> float:
+        """把画布横坐标换算成 6K 的宽度占比（含最小宽度夹取）。"""
+        ratio = (float(x) - self.play_left) / self.usable_width()
+        low = self.min_split_ratio()
+        return min(1.0 - low, max(low, ratio))
+
     # -------------------------------------------------------------- 轨道几何
     def lane_span(self, lane_start: int, lane_end: int) -> Tuple[float, float]:
         lane_start = max(0, min(config.LANE_COUNT - 1, lane_start))
@@ -146,6 +161,18 @@ class ViewState:
         if mode != self.layout.mode:
             self.layout.mode = mode
             self.layout.recompute()
+
+    def set_split_ratio(self, ratio: float) -> None:
+        """拖动分界线：设置 6K 区域占比并重算布局（分栏模式下生效）。"""
+        low = self.layout.min_split_ratio()
+        self.layout.split_ratio = min(1.0 - low, max(low, float(ratio)))
+        self.layout.recompute()
+
+    def divider_at(self, x: float) -> bool:
+        """该横坐标是否落在分界线的可抓取范围内（叠加模式没有分界线）。"""
+        if not self.split_layout:
+            return False
+        return abs(float(x) - self.layout.divider_x) <= config.DIVIDER_GRAB_PX
 
     @property
     def layout_mode(self) -> str:

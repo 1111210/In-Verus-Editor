@@ -164,6 +164,50 @@ class EditorSmokeTest(unittest.TestCase):
         self.assertLessEqual(judge[2], layout.pane_6k[1] + 1)
         self.assertGreaterEqual(judge_mouse[0], layout.pane_mouse[0] - 1)
 
+    def test_divider_drag_resizes_both_panes(self) -> None:
+        """拖动分界线：两栏宽度实时变化，并夹在最小宽度内。"""
+        layout = self.view.layout
+        before_6k = layout.pane_6k[1] - layout.pane_6k[0]
+        before_mouse = layout.pane_mouse[1] - layout.pane_mouse[0]
+        divider = layout.divider_x
+
+        self.assertTrue(self.view.divider_at(divider))
+        self.assertTrue(self.view.divider_at(divider + config.DIVIDER_GRAB_PX - 1))
+        self.assertFalse(self.view.divider_at(divider + config.DIVIDER_GRAB_PX + 5))
+
+        # 往右拖：6K 变宽、鼠标平面变窄
+        self.view.set_split_ratio(layout.ratio_from_divider(divider + 120))
+        self.assertGreater(layout.pane_6k[1] - layout.pane_6k[0], before_6k)
+        self.assertLess(layout.pane_mouse[1] - layout.pane_mouse[0], before_mouse)
+        self.assertAlmostEqual(
+            layout.pane_6k[1] - layout.pane_6k[0] + config.PANE_GAP
+            + (layout.pane_mouse[1] - layout.pane_mouse[0]),
+            layout.play_width,
+            delta=1.0,
+        )
+
+        # 极端拖动会被夹住：两边都不小于最小宽度
+        self.view.set_split_ratio(layout.ratio_from_divider(layout.play_right + 500))
+        self.assertGreaterEqual(layout.pane_mouse[1] - layout.pane_mouse[0], config.SPLIT_MIN_PANE_PX - 1)
+        self.view.set_split_ratio(layout.ratio_from_divider(layout.play_left - 500))
+        self.assertGreaterEqual(layout.pane_6k[1] - layout.pane_6k[0], config.SPLIT_MIN_PANE_PX - 1)
+
+        # 画布上那根分界线跟着走
+        self.draw()
+        line = self.scene._items["pane:divider"][2][0]
+        self.assertAlmostEqual(line[0], layout.divider_x, places=6)
+
+    def test_divider_drag_does_not_place_notes(self) -> None:
+        """抓分界线拖拽时不会顺手放下物件，也不会选中东西。"""
+        layout = self.view.layout
+        self.controller.set_tool(config.TOOL_LANE_TAP)
+        self.click(layout.divider_x, self.y_of_beat(3.0))
+        self.assertEqual(len(self.chart.lane_notes), 0)
+        self.assertFalse(self.state.pending.hint)
+        # 叠加（演示）模式下没有分界线可拖
+        self.view.set_layout_mode(config.LAYOUT_OVERLAY)
+        self.assertFalse(self.view.divider_at(layout.divider_x))
+
     def test_region_outside_legal_area_still_visible(self) -> None:
         """超出 0..1 的区域边界要画得出来（鼠标平面留了溢出余量）。"""
         note = MouseRegion(

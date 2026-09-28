@@ -90,6 +90,8 @@ class RenderState:
     demo: bool = False
     playing: bool = False
     message: str = ""
+    # 鼠标悬停 / 正在拖动分界线（画粗一点做反馈）
+    divider_active: bool = False
     # 上一帧画出来的物件几何（点击 / 框选直接复用，避免重算整张谱面）
     hit_cache: Optional[HitCache] = None
 
@@ -160,7 +162,7 @@ class Renderer:
             layout.divider_x,
             layout.play_bottom,
             fill=theme.lane_border_strong,
-            width=1,
+            width=3 if state.divider_active else 1,
             dash=(4, 6),
         )
 

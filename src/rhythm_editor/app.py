@@ -98,6 +98,9 @@ class EditorApp:
         self._tick_id: Optional[str] = None
         # 音乐播完时的播放位置（秒；None = 还没播完 / 没有音乐）
         self._music_end_seconds: Optional[float] = None
+        # 拖动分界线：正在拖动 + 当前光标样式
+        self._divider_drag = False
+        self._divider_cursor = ""
 
         # 画布区容器（右侧放竖向滚动条），画布是它的子控件
         self.body = ttk.Frame(self.root)
@@ -160,6 +163,7 @@ class EditorApp:
         root = self.root
         self.canvas.bind("<Configure>", self._on_configure)
         self.canvas.bind("<ButtonPress-1>", self._on_press)
+        self.canvas.bind("<Double-Button-1>", self._on_double_click)
         self.canvas.bind("<B1-Motion>", self._on_motion_drag)
         self.canvas.bind("<Motion>", self._on_motion)
         self.canvas.bind("<ButtonRelease-1>", self._on_release)
@@ -234,6 +238,7 @@ class EditorApp:
         state.selection = set(self.document.selection)
         state.demo = self.demo_mode
         state.playing = self.audio.is_playing
+        state.divider_active = self._divider_drag or self._divider_cursor != ""
         state.pending = self.controller.state.pending
         self.renderer.draw(self.document.chart, self.view, state)
         self._sync_ui()
@@ -366,6 +371,12 @@ class EditorApp:
         self.toolbar.mark_interaction()
         ctrl = bool(event.state & CTRL_MASK)
         shift = bool(event.state & SHIFT_MASK)
+        # 分界线拖动：优先于放置工具，拖的时候不会误放物件
+        if not self.demo_mode and self.view.divider_at(event.x):
+            self._divider_drag = True
+            self.canvas.configure(cursor="sb_h_double_arrow")
+            self.status("拖动分界线：左右两栏宽度实时调整（双击分界线可恢复 1:3）")
+            return
         if self.demo_mode:
             if event.y >= self.view.layout.play_bottom:
                 self.controller.on_press(event.x, event.y, ctrl, shift)
@@ -376,13 +387,60 @@ class EditorApp:
         self.toolbar.mark_interaction()
         self.controller.on_motion(event.x, event.y)
         self._hover_status(event.x, event.y)
+        self._sync_divider_cursor(event.x)
 
     def _on_motion_drag(self, event) -> None:
         self.toolbar.mark_interaction()
+        if self._divider_drag:
+            self._drag_divider(event.x)
+            return
         self.controller.on_motion(event.x, event.y)
 
     def _on_release(self, event) -> None:
+        if self._divider_drag:
+            self._divider_drag = False
+            self._drag_divider(event.x)
+            self._sync_divider_cursor(event.x)
+            ratio = self.view.layout.split_ratio
+            self.status(f"分栏宽度已调整：6K {ratio * 100:.0f}% / 鼠标 {(1 - ratio) * 100:.0f}%")
+            return
         self.controller.on_release(event.x, event.y, bool(event.state & CTRL_MASK))
+
+    # ---------------------------------------------------------- 分界线拖动
+    def _request_redraw(self) -> None:
+        """马上安排下一帧（拖动分界线等交互后画面立即跟上）。"""
+        if not self._closed:
+            self._schedule_next_tick()
+
+    def _on_double_click(self, event) -> None:
+        """双击分界线：恢复默认 1:3 分栏。"""
+        if self.demo_mode or not self.view.divider_at(event.x):
+            return
+        self.reset_split_ratio()
+
+    def _sync_divider_cursor(self, x: float) -> None:
+        """悬停在分界线上时换成左右拖动光标。"""
+        if self._divider_drag:
+            return
+        want = "sb_h_double_arrow" if self.view.divider_at(x) else ""
+        if want != self._divider_cursor:
+            self._divider_cursor = want
+            try:
+                self.canvas.configure(cursor=want)
+            except tk.TclError:  # pragma: no cover - 主题不支持时忽略
+                pass
+
+    def _drag_divider(self, x: float) -> None:
+        self.view.set_split_ratio(self.view.layout.ratio_from_divider(x))
+        self._sync_ui()
+        self._request_redraw()
+
+    def reset_split_ratio(self) -> None:
+        """双击分界线（或菜单）恢复默认的 1:3 分栏。"""
+        self.view.set_split_ratio(config.SPLIT_6K_RATIO)
+        self._sync_ui()
+        self._request_redraw()
+        self.status(f"分栏已恢复默认：6K {config.SPLIT_6K_RATIO * 100:.0f}% / 鼠标 {(1 - config.SPLIT_6K_RATIO) * 100:.0f}%")
 
     def _wheel_notches(self, notches: float, event) -> None:
         self.toolbar.mark_interaction()

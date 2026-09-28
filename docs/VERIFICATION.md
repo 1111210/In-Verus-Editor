@@ -113,7 +113,7 @@ python tools/check_audio.py
 
 | 项目 | 命令 | 结果 |
 | --- | --- | --- |
-| 单元测试（含 Tk 画布冒烟测试与应用级测试） | `python -m unittest discover -s tests -t .` | Ran 233 tests — **OK** |
+| 单元测试（含 Tk 画布冒烟测试与应用级测试） | `python -m unittest discover -s tests -t .` | Ran 235 tests — **OK** |
 | 需求验收清单 | `python tools/acceptance.py` | 14 项全部 `[OK ]`，结论：全部通过 |
 | 音频后端 | `python tools/check_audio.py` | 9 项全部 `[OK ]`（pygame.mixer 真实播放，延迟补偿正确） |
 | 示例谱面生成 | `python run_editor.py --make-demo` | 生成 `charts/demo/demo.json`（6K 32 / 区域 3 / 滑键 6 / 点击按键 4 / 4 个速度组） |
@@ -160,6 +160,8 @@ python tools/check_audio.py
 | 测试 | 验证点 |
 | --- | --- |
 | `tests/test_editor_smoke.py::test_split_layout_geometry` | 编辑器分栏：两个区域不重叠、共用判定线 y、区域外点不到 6K 轨道 |
+| `tests/test_editor_smoke.py::test_divider_drag_resizes_both_panes` | 拖动分界线实时改变两栏宽度、总宽守恒、极端拖动被最小宽度夹住、画布分界线跟着走 |
+| `tests/test_editor_smoke.py::test_divider_drag_does_not_place_notes` | 抓分界线拖动不会误放物件；叠加（演示）模式下没有可拖的分界线 |
 | `tests/test_editor_smoke.py::test_overlay_layout_puts_mouse_area_on_middle_lanes` | 叠加布局：鼠标区域正好等于中间四条轨道 |
 | `tests/test_editor_smoke.py::test_layer_order_survives_layout_switch` | 切换布局后区域底色不会盖住物件（显式图层） |
 | `tests/test_app_flow.py::test_split_layout_and_demo_overlay` | 应用级：默认分栏，`Tab` 进入演示后叠加，退出后恢复分栏 |
