@@ -73,9 +73,11 @@ def main() -> int:
 
     def step_placement() -> None:
         layout = app.view.layout
-        app.set_tool(config.TOOL_LANE_HOLD)
-        app.controller.on_press(layout.lane_center(2), app.view.beat_to_y(22.0), False, False)
-        app.controller.on_motion(layout.lane_center(2), app.view.beat_to_y(17.5))
+        # 空域放置：已经点完开始/结束时间，正在点左边界起点
+        app.set_tool(config.TOOL_MOUSE_REGION)
+        app.controller.on_press(app.view.norm_to_x(0.5), app.view.beat_to_y(16.0), False, False)
+        app.controller.on_press(app.view.norm_to_x(0.5), app.view.beat_to_y(22.0), False, False)
+        app.controller.on_motion(app.view.norm_to_x(0.25), app.view.beat_to_y(19.0))
         root.after(250, lambda: (shot("placement.png"), root.after(200, step_demo)))
 
     def step_demo() -> None:

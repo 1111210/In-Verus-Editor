@@ -85,7 +85,7 @@ TOOL_LABELS = {
     TOOL_LANE_MULTI: "多轨按键",
     TOOL_LANE_HOLD: "长按",
     TOOL_LANE_HOLD_MULTI: "多轨长按",
-    TOOL_MOUSE_REGION: "鼠标停留区域",
+    TOOL_MOUSE_REGION: "空域",
     TOOL_MOUSE_SLIDE: "左右滑键",
 }
 
@@ -98,6 +98,10 @@ TOOL_ORDER = (
     TOOL_MOUSE_REGION,
     TOOL_MOUSE_SLIDE,
 )
+
+# 空域放置过程中：尚未点击的边界点按默认值渲染（左边界 0、右边界 1）
+REGION_PENDING_LEFT_DEFAULT = 0.0
+REGION_PENDING_RIGHT_DEFAULT = 1.0
 
 # 数值容差
 EPS = 1e-7

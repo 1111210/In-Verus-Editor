@@ -563,9 +563,21 @@ class EditorApp:
 
         run_dialog(HelpDialog, self.root, self.theme, "快捷键", SHORTCUTS_TEXT)
 
-    def _region_editor(self, beat_start: float, beat_end: float) -> Optional[Dict]:
-        """停留区域：先取时间，再用对话框设置两条边界的首尾位置与线型。"""
-        template = MouseRegion("temp", beat_start, beat_end, BoundaryCurve(0.0, 0.0), BoundaryCurve(1.0, 1.0))
+    def _region_editor(
+        self,
+        beat_start: float,
+        beat_end: float,
+        left: Tuple[float, float],
+        right: Tuple[float, float],
+    ) -> Optional[Dict]:
+        """空域：时间与左右边界首尾位置点完后，用对话框确认线型（也可以微调位置）。"""
+        template = MouseRegion(
+            "temp",
+            beat_start,
+            beat_end,
+            BoundaryCurve(float(left[0]), float(left[1])),
+            BoundaryCurve(float(right[0]), float(right[1])),
+        )
         return run_dialog(NoteEditDialog, self.root, self.theme, template, self._beat_hint())
 
     def edit_selected(self) -> None:

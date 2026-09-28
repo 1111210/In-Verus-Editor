@@ -21,7 +21,7 @@ from .geometry import notes_at, notes_in_box, ruler_x_to_beat
 from .renderer import PendingPreview, RenderState
 from .view import ViewState
 
-RegionEditor = Callable[[float, float], Optional[Dict]]
+RegionEditor = Callable[[float, float, Tuple[float, float], Tuple[float, float]], Optional[Dict]]
 
 
 class ToolController:
@@ -51,6 +51,12 @@ class ToolController:
         self._first_lane: Optional[int] = None
         self._first_beat: Optional[float] = None
         self._first_x: Optional[float] = None
+        # 空域放置：结束时间与四条边界数值（未点击的为 None）
+        self._region_end_beat: Optional[float] = None
+        self._region_left_start: Optional[float] = None
+        self._region_left_end: Optional[float] = None
+        self._region_right_start: Optional[float] = None
+        self._region_right_end: Optional[float] = None
 
     # ------------------------------------------------------------------ 工具
     def set_tool(self, tool: str) -> None:
@@ -80,6 +86,11 @@ class ToolController:
         self._first_lane = None
         self._first_beat = None
         self._first_x = None
+        self._region_end_beat = None
+        self._region_left_start = None
+        self._region_left_end = None
+        self._region_right_start = None
+        self._region_right_end = None
         self.paste_mode = False
         self._rubber_origin = None
         self.state.rubber_band = None
@@ -280,25 +291,72 @@ class ToolController:
         self.cancel_pending()
 
     def _place_region(self, x: float, y: float) -> None:
-        if not self._in_play(x, y):
-            self.status("请在游玩区域内点击")
+        """放置空域：先定开始/结束时间，再依次点左边界首尾、右边界首尾，最后选线型。"""
+        if self._stage <= 1:
+            if not self._in_play(x, y):
+                self.status("请在游玩区域内点击")
+                return
+            beat = self.view.snap_beat(self.view.y_to_beat(y))
+            if self._stage == 0:
+                self._stage = 1
+                self._first_beat = beat
+                self._region_end_beat = beat
+                self._set_hint("空域：请点击结束时间（Esc 取消）")
+            else:
+                start = self._first_beat if self._first_beat is not None else beat
+                end = beat if beat > start else start + self.view.grid_step()
+                self._region_end_beat = end
+                self._stage = 2
+                self._set_hint(
+                    "空域：请点击左边界起点位置（未放置的左边界点按 0 显示，Esc 取消）"
+                )
+            self.status(self.state.pending.hint)
             return
-        beat = self.view.snap_beat(self.view.y_to_beat(y))
-        if self._stage == 0:
-            self._stage = 1
-            self._first_beat = beat
-            hint = "停留区域：请点击结束时间（Esc 取消）"
-            self._set_hint(hint)
-            self.status(hint)
+
+        if not self.view.in_mouse_area(x):
+            self.status("空域边界请点击鼠标平面的合法区域（右侧区域）")
             return
-        start = self._first_beat if self._first_beat is not None else beat
-        end = beat
-        if end <= start:
-            end = start + self.view.grid_step()
-        data = self.region_editor(start, end)
+        value = self._norm_x(x)
+        if self._stage == 2:
+            self._region_left_start = value
+            self._set_hint("空域：请点击左边界终点位置（未放置的左边界点按 0 显示）")
+        elif self._stage == 3:
+            self._region_left_end = value
+            self._set_hint("空域：请点击右边界起点位置（未放置的右边界点按 1 显示）")
+        elif self._stage == 4:
+            self._region_right_start = value
+            self._set_hint("空域：请点击右边界终点位置，之后选择线型")
+        elif self._stage == 5:
+            self._region_right_end = value
+            self._set_hint("空域：选择两条边界的线型")
+            self._finish_region()
+            return
+        self._stage += 1
+        self.status(self.state.pending.hint)
+
+    def _finish_region(self) -> None:
+        start = self._first_beat if self._first_beat is not None else 0.0
+        end = self._region_end_beat if self._region_end_beat is not None else start
+        left = (
+            self._region_left_start
+            if self._region_left_start is not None
+            else config.REGION_PENDING_LEFT_DEFAULT,
+            self._region_left_end
+            if self._region_left_end is not None
+            else config.REGION_PENDING_LEFT_DEFAULT,
+        )
+        right = (
+            self._region_right_start
+            if self._region_right_start is not None
+            else config.REGION_PENDING_RIGHT_DEFAULT,
+            self._region_right_end
+            if self._region_right_end is not None
+            else config.REGION_PENDING_RIGHT_DEFAULT,
+        )
+        data = self.region_editor(start, end, left, right)
         self.cancel_pending()
         if not data:
-            self.status("已取消停留区域")
+            self.status("已取消空域")
             return
         note = MouseRegion(
             self.document.chart.new_note_id("M"),
@@ -307,12 +365,15 @@ class ToolController:
             BoundaryCurve.from_dict(data.get("left")),
             BoundaryCurve.from_dict(data.get("right")),
         )
-        self.document.add_note(note, "放置鼠标停留区域")
-        self.status(f"已放置停留区域 {note.id}：第 {note.beat_start:g} → {note.beat_end:g} 拍")
+        self.document.add_note(note, "放置空域")
+        self.status(f"已放置空域 {note.id}：第 {note.beat_start:g} → {note.beat_end:g} 拍")
+
+    def _norm_x(self, x: float) -> float:
+        """鼠标平面像素横坐标 -> 归一化位置（开启横向网格时吸附到网格线）。"""
+        return self.view.snap_norm(self.view.x_to_norm(x))
 
     def _slide_x(self, x: float) -> float:
-        value = self.view.x_to_norm(x)
-        return self.view.snap_norm(value)
+        return self._norm_x(x)
 
     def _place_slide(self, x: float, y: float) -> None:
         if not self._in_play(x, y):
@@ -428,13 +489,49 @@ class ToolController:
                 pending.tool = ""
                 pending.hint = ""
                 return
+            default_left = config.REGION_PENDING_LEFT_DEFAULT
+            default_right = config.REGION_PENDING_RIGHT_DEFAULT
             if self._stage == 0:
                 pending.beat_start = beat
-                pending.beat_end = beat
-                pending.hint = "停留区域：点击开始时间"
-            else:
-                pending.beat_start = self._first_beat
-                pending.beat_end = max(beat, (self._first_beat or 0.0) + self.view.grid_step())
+                pending.beat_end = beat + self.view.grid_step()
+                pending.left = BoundaryCurve(default_left, default_left)
+                pending.right = BoundaryCurve(default_right, default_right)
+                pending.hint = "空域：点击开始时间"
+                return
+            pending.beat_start = self._first_beat
+            end = self._region_end_beat
+            if end is None:
+                end = max(beat, (self._first_beat or 0.0) + self.view.grid_step())
+            pending.beat_end = end
+            cursor = self._norm_x(x) if self.view.in_mouse_area(x) else None
+            left_start = self._region_left_start
+            left_end = self._region_left_end
+            right_start = self._region_right_start
+            right_end = self._region_right_end
+            # 尚未放置的点按默认值显示（左边界 0 / 右边界 1），正在等待的那个点跟随光标
+            if self._stage == 2 and cursor is not None:
+                left_start = cursor
+            elif self._stage == 3 and cursor is not None:
+                left_end = cursor
+            elif self._stage == 4 and cursor is not None:
+                right_start = cursor
+            elif self._stage == 5 and cursor is not None:
+                right_end = cursor
+            pending.left = BoundaryCurve(
+                left_start if left_start is not None else default_left,
+                left_end if left_end is not None else default_left,
+            )
+            pending.right = BoundaryCurve(
+                right_start if right_start is not None else default_right,
+                right_end if right_end is not None else default_right,
+            )
+            pending.hint = {
+                1: "空域：点击结束时间",
+                2: "空域：点击左边界起点（未放置的点按 0 显示）",
+                3: "空域：点击左边界终点",
+                4: "空域：点击右边界起点（未放置的点按 1 显示）",
+                5: "空域：点击右边界终点，之后选择线型",
+            }.get(self._stage, "")
         elif tool == config.TOOL_MOUSE_SLIDE:
             if not in_play or not self.view.in_mouse_area(x):
                 pending.tool = ""

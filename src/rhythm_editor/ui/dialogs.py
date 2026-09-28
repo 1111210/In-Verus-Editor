@@ -696,7 +696,7 @@ class NoteEditDialog(BaseDialog):
                 wraplength=380,
             ).grid(row=5, column=0, columnspan=2, sticky="w", pady=(4, 0))
         elif isinstance(note, MouseRegion):
-            ttk.Label(body, text=f"{note.id} · 鼠标停留区域", style="Head.TLabel").grid(
+            ttk.Label(body, text=f"{note.id} · 空域", style="Head.TLabel").grid(
                 row=0, column=0, columnspan=4, sticky="w", pady=(0, 6)
             )
             self.e_beat_start = labeled_entry(body, 1, "开始拍", f"{note.beat_start:g}", width=14)
@@ -719,7 +719,8 @@ class NoteEditDialog(BaseDialog):
             )
             ttk.Label(
                 body,
-                text="位置以合法区域最左侧为 0、最右侧为 1，允许超出（例如 -0.2 或 1.3）。",
+                text="位置以合法区域最左侧为 0、最右侧为 1，允许超出（例如 -0.2 或 1.3）；\n"
+                     "放置时空域尚未点击的边界点按默认值显示：左边界 0、右边界 1。",
                 style="Dim.TLabel",
                 wraplength=420,
             ).grid(row=9, column=0, columnspan=4, sticky="w", pady=(4, 0))
@@ -851,8 +852,9 @@ GUIDE_TEXT = """【界面】
    也可以在任意位置点击（包括鼠标游玩区域），结束时间吸附到网格。
 4 多轨长按：先点击起点（轨道 + 时间），再点击终点 —— 第二次点击的横坐标决定结束
    轨道、纵坐标决定结束时间，一次就能拉出跨越多条轨道的长按。
-5 鼠标停留区域：点击设定开始时间，再点击设定结束时间，然后在弹出的对话框里设置
-   左/右边界的首尾位置与线型（线性 / 缓入 / 缓出）。
+5 空域（鼠标停留区域）：先点击开始时间、结束时间；再依次点击「左边界起点 / 左边界终点 /
+   右边界起点 / 右边界终点」四个位置（未点击的点按默认值预览：左边界 0、右边界 1）；
+   最后在弹出的对话框里选择两条边界的线型（线性 / 缓入 / 缓出），也可以微调位置。
 6 左右滑键：先点击设定时间与横向位置，再点击第二次决定滑动方向；
    开启横向辅助网格时会吸附到网格线上。
 Esc 取消当前放置流程；切换工具同样会放弃未完成的操作。放置过程中会显示幽灵预览。
@@ -888,7 +890,7 @@ SHORTCUTS_TEXT = """【工具切换】
 3  多轨按键
 4  长按
 5  多轨长按
-6  鼠标停留区域
+6  空域
 7  左右滑键
 Esc  取消当前放置流程（演示模式下为退出演示）
 Tab  进入 / 退出演示模式

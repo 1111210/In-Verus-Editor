@@ -591,7 +591,7 @@ class Renderer:
                 f"lbl:{note.id}",
                 min(p[0] for p in points),
                 min(ys) - 16,
-                f"{note.id} · 停留区域 · 组{note.group}",
+                f"{note.id} · 空域 · 组{note.group}",
                 fill=theme.select,
                 font=theme.font(theme.font_small),
                 anchor="nw",

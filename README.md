@@ -77,7 +77,7 @@ python -m unittest discover -s tests -t . -v
 
 | 物件 | 规则 | 显示 |
 | --- | --- | --- |
-| 停留区域 | 出现期间鼠标必须留在区域内 | 半透明蓝色填充 + 不透明边界线 |
+| 空域（原“停留区域”） | 出现期间鼠标必须留在空域内 | 半透明蓝色填充 + 只画左右两条不透明边界线 |
 | 左右滑键 | 到达判定线时鼠标在滑键范围内朝指定方向滑动（滑动长度任意） | 半透明绿色填充 + 箭头 |
 
 两个平面共用同一条判定线、同样的时间网格，滚动与缩放完全同步。
@@ -92,7 +92,7 @@ python -m unittest discover -s tests -t . -v
 | 2-1 元数据 + 音频复制 | `ui/dialogs.py::MetadataDialog`、`io/chart_io.py` | 选择音频后复制到谱面文件所在文件夹，并在谱面中记录文件名 |
 | 2-2 BPM 列表 + 偏移 | `ui/dialogs.py::BpmDialog`、`model/timing.py` | 每项：起始拍 / BPM / 每小节拍数；第 0 拍项不可删除；BPM **不影响**物件运动速度 |
 | 3 单轨 / 多轨 / 长按 | `ui/interactions.py` | 多轨以第一次点击时间轴为准；长按结束时刻可滚动缩放、可在任意位置（含鼠标区域）点击 |
-| 4 停留区域 | `ui/interactions.py` + `NoteEditDialog` | 两次点击定时间，再设置左右边界的首尾位置与线型（线性 / 缓入 / 缓出），允许超出 0..1 |
+| 4 空域 | `ui/interactions.py` + `NoteEditDialog` | 两次点击定开始/结束时间 → 依次点击左边界首尾、右边界首尾（未点击的点按左 0 / 右 1 预览）→ 弹窗选线型（线性 / 缓入 / 缓出），位置允许超出 0..1 |
 | 5 左右滑键 | `ui/interactions.py` | 开启横向辅助网格时吸附到网格线，否则取点击横坐标；第二次点击决定方向 |
 | 6 编辑器设置 | `ui/dialogs.py::SettingsDialog` | 缩放（可视时长）、时间网格（一拍细分 n 份）、横向辅助（0..1 几等分，0=关闭）、系统音频延迟（ms） |
 | 8 选择 / 复制 / 粘贴 / 镜像 / 编辑 | `model/document.py`、`ui/interactions.py` | 框选、Ctrl 对称差选择、粘贴保持轨道与横向位置、镜像沿游玩区中轴线、单选可编辑（`NoteEditDialog`） |

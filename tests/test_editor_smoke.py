@@ -68,7 +68,8 @@ class EditorSmokeTest(unittest.TestCase):
         self.canvas.destroy()
 
     # -------------------------------------------------------------- 辅助
-    def _region_editor(self, beat_start: float, beat_end: float):
+    def _region_editor(self, beat_start: float, beat_end: float, left, right):
+        self.region_args = (beat_start, beat_end, left, right)
         return self.region_result
 
     def draw(self, chart: Chart | None = None) -> None:
@@ -185,7 +186,7 @@ class EditorSmokeTest(unittest.TestCase):
         self.assertAlmostEqual(self.view.norm_to_x(1.0), layout.mouse_right, places=6)
 
     def test_region_draws_only_left_and_right_edges(self) -> None:
-        """蓝色停留区域只绘制左右两条边界线，不画上下封口横线。"""
+        """蓝色空域只绘制左右两条边界线，不画上下封口横线。"""
         note = MouseRegion("M1", 4.0, 8.0, BoundaryCurve(0.2, 0.1), BoundaryCurve(0.8, 0.9))
         self.chart.add(note)
         self.view.set_beat(4.0)
@@ -255,7 +256,7 @@ class EditorSmokeTest(unittest.TestCase):
         for note in (tap, hold, region, slide):
             self.assertIn(key_of(note), self.scene._items)
 
-        # 越过 4 拍：单点物件消失，长按 / 停留区域（结束于 6 拍）仍在
+        # 越过 4 拍：单点物件消失，长按 / 空域（结束于 6 拍）仍在
         self.view.set_beat(4.25)
         self.draw()
         self.assertNotIn("note:L1", self.scene._items)
@@ -338,6 +339,8 @@ class EditorSmokeTest(unittest.TestCase):
         self.assertAlmostEqual(fixed.beat_end - fixed.beat_start, self.view.grid_step())
 
     def test_place_region_uses_dialog_result(self) -> None:
+        """空域新流程：先两次点击定时间，再四次点击定左右边界首尾，最后弹窗选线型。"""
+        self.chart.settings.horizontal_divisions = 0
         self.region_result = {
             "beat_start": 4.0,
             "beat_end": 6.0,
@@ -345,14 +348,52 @@ class EditorSmokeTest(unittest.TestCase):
             "right": {"start": 0.9, "end": 0.7, "ease": config.EASE_IN},
         }
         self.controller.set_tool(config.TOOL_MOUSE_REGION)
+        x = self.view.norm_to_x
+        # 1) 开始时间 2) 结束时间（与原来的行为一致）
         self.click(self.view.norm_to_x(0.5), self.y_of_beat(4.0))
         self.assertTrue(self.state.pending.hint)
         self.click(self.view.norm_to_x(0.5), self.y_of_beat(6.0))
+        # 3) 左边界起点 4) 左边界终点 5) 右边界起点 6) 右边界终点
+        self.click(x(0.2), self.y_of_beat(5.0))
+        self.click(x(0.35), self.y_of_beat(5.0))
+        self.click(x(0.8), self.y_of_beat(5.0))
+        self.click(x(0.65), self.y_of_beat(5.0))
+        # 弹窗收到的四个位置
+        for got, expected in zip(self.region_args[2], (0.2, 0.35)):
+            self.assertAlmostEqual(got, expected, places=6)
+        for got, expected in zip(self.region_args[3], (0.8, 0.65)):
+            self.assertAlmostEqual(got, expected, places=6)
         regions = [n for n in self.document.chart.mouse_notes if isinstance(n, MouseRegion)]
         self.assertEqual(len(regions), 1)
         self.assertAlmostEqual(regions[0].left.start, 0.1)
         self.assertEqual(regions[0].right.ease, config.EASE_IN)
         self.assertFalse(self.state.pending.hint)
+
+    def test_region_preview_defaults_for_unplaced_points(self) -> None:
+        """未点击的边界点按默认值预览：左边界 0、右边界 1。"""
+        self.chart.settings.horizontal_divisions = 0
+        self.controller.set_tool(config.TOOL_MOUSE_REGION)
+        x = self.view.norm_to_x
+        self.click(x(0.5), self.y_of_beat(4.0))     # 开始时间
+        self.click(x(0.5), self.y_of_beat(6.0))     # 结束时间 -> 等待左边界起点
+        self.controller.on_motion(x(0.25), self.y_of_beat(5.0))
+        pending = self.state.pending
+        self.assertAlmostEqual(pending.left.start, 0.25, places=6)  # 等待中的点跟随光标
+        self.assertAlmostEqual(pending.left.end, 0.0, places=6)     # 未放置 -> 0
+        self.assertAlmostEqual(pending.right.start, 1.0, places=6)  # 未放置 -> 1
+        self.assertAlmostEqual(pending.right.end, 1.0, places=6)
+
+        self.click(x(0.25), self.y_of_beat(5.0))    # 放下左边界起点
+        self.controller.on_motion(x(0.4), self.y_of_beat(5.0))
+        self.assertAlmostEqual(pending.left.start, 0.25, places=6)
+        self.assertAlmostEqual(pending.left.end, 0.4, places=6)     # 下一个点跟随光标
+        self.assertAlmostEqual(pending.right.start, 1.0, places=6)
+
+        self.click(x(0.4), self.y_of_beat(5.0))     # 放下左边界终点
+        self.controller.on_motion(x(0.7), self.y_of_beat(5.0))
+        self.assertAlmostEqual(pending.left.end, 0.4, places=6)
+        self.assertAlmostEqual(pending.right.start, 0.7, places=6)
+        self.assertAlmostEqual(pending.right.end, 1.0, places=6)    # 右边界终点仍未放置
 
     def test_place_slide_snaps_to_horizontal_grid(self) -> None:
         self.controller.set_tool(config.TOOL_MOUSE_SLIDE)

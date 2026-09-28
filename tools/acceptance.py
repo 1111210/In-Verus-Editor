@@ -44,7 +44,7 @@ def report() -> int:
         f"{counts['lane']} 个",
     )
     item(
-        "鼠标停留区域（半透明蓝 + 不透明边界 + 缓动）",
+        "空域（鼠标停留区域：半透明蓝 + 不透明左右边界 + 缓动）",
         any(isinstance(n, MouseRegion) and n.left.ease in config.EASE_CHOICES for n in chart.mouse_notes),
         f"{counts['region']} 个",
     )
