@@ -113,7 +113,7 @@ python tools/check_audio.py
 
 | 项目 | 命令 | 结果 |
 | --- | --- | --- |
-| 单元测试（含 Tk 画布冒烟测试、应用级测试与游玩器测试） | `python -m unittest discover -s tests -t .` | Ran 290 tests — **OK** |
+| 单元测试（含 Tk 画布冒烟测试、应用级测试与游玩器测试） | `python -m unittest discover -s tests -t .` | Ran 294 tests — **OK** |
 | 需求验收清单 | `python tools/acceptance.py` | 18 项全部 `[OK ]`，结论：全部通过（含游玩器 4 项） |
 | 音频后端 | `python tools/check_audio.py` | 9 项全部 `[OK ]`（pygame.mixer 真实播放，延迟补偿正确） |
 | 示例谱面生成 | `python run_editor.py --make-demo` | 生成 `charts/demo/demo.json`（6K 32 / 区域 3 / 滑键 6 / 点击按键 4 / 4 个速度组） |
@@ -206,11 +206,13 @@ python tools/check_audio.py
 | `tests/test_app_flow.py::test_sound_effects_follow_the_music_clock_not_the_ui` | 延迟 ≠ 0 时：音效按软件位置触发（与音乐同步），判定线仍按听到的位置显示 |
 | `tests/test_audio_rate.py::test_latency_scales_with_playback_rate` | 延迟按真实时间缩放：1.0x / 0.5x / 0.1x 下 200ms 分别只减 200 / 100 / 20ms |
 | `tests/test_editor_smoke.py::test_overlay_demo_is_one_third_and_centered` | 演示模式占窗口宽度 1/3 且居中；轨道、网格、判定线都在窄带内 |
+| `tests/test_editor_smoke.py::test_drag_selected_note_moves_time_and_lane` | 编辑器拖拽移动物件：时间 + 轨道，撤销 / 重做都能还原 |
+| `tests/test_editor_smoke.py::test_drag_snaps_mouse_anchor_to_grid` | 拖动鼠标物件按**自身锚点**吸附：滑键起点 / 点击中心 / 空域起点中点，长度宽度不变 |
 | `tests/test_global_settings.py`（4 条） | **全局设置**：读写往返、损坏文件回退默认值、谱面文件不再包含 `editor` 段、老谱面的 `editor` 段只迁移一次 |
 | `tests/test_game_judge.py`（24 条） | 游玩器判定：EXACT/Exact/Near/Break 窗口、空敲无惩罚、一次按键只判一个、滑键吸附最好等级、空域半拍区间、长按“抬起事件 + 末 50ms 宽限（跨区间）”、多轨长按“所有行同时抬起才算抬起”、准度与分数公式、连击与最大连击 |
 | `tests/test_game_scene.py`（8 条） | 游玩器 3D 布局：1 单位 = 鼠标合法区宽 = 6K 中间四轨；鼠标平面高 0.4；两条判定线位置；近大远小；起点在屏幕上方 |
-| `tests/test_game_settings.py`（7 条） | 游玩器设置：默认键位、范围夹取、键位补齐、全局读写与损坏回退、最近打开列表去重与上限 |
-| `tests/test_game_app.py`（6 条） | 游玩器 GUI 冒烟（headless）：主界面 → 加载 → 游玩 → 结算、鼠标映射、设置全局保存、轨道高亮与判定飘字、音量与暂停、谱面列表元数据与最近打开 |
+| `tests/test_game_settings.py`（8 条） | 游玩器设置：默认键位、范围夹取、键位补齐、全局读写与损坏回退、最近打开列表去重与上限、渲染后端设置（含非法值回退） |
+| `tests/test_game_app.py`（7 条） | 游玩器 GUI 冒烟（headless）：主界面 → 加载 → 游玩 → 结算、鼠标映射、设置全局保存、轨道高亮与判定飘字、音量与暂停、谱面列表元数据与最近打开、渲染后端切换与回退 |
 | `tests/test_editor_smoke.py::test_scrollbar_drag_round_trip_keeps_thumb_under_cursor` | 回归：滚动条滑块拖动不跳段（把滑块放到 f 后读回仍是 `(f, f+窗口占比)`） |
 | `tests/test_audio_rate.py`（16 条） | 倍速（重采样，**变速变调**）：长度随倍率伸缩、0.5x 时频率减半（过零率）、静音时钟跟随倍速、倍速夹取、**负延迟**的 heard 位置、延迟范围、**立体声也能慢放**、**分窗口首尾相接**、**调度连续不断音**（回归：pygame 只播一个排队块）、**打开谱面后第一次播放用真实后端**（回归）、**播放中改倍速自动暂停**并保持位置 |
 | `tests/test_app_flow.py::test_rate_buttons_step_and_clamp` | 倍速按钮 ±0.1x 与 0.1~1.0x 夹取，标签同步 |

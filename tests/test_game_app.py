@@ -116,6 +116,20 @@ class PlayerAppSmokeTests(unittest.TestCase):
         app._toggle_pause()
         self.assertFalse(app.paused)
 
+    def test_renderer_switch_falls_back_without_gl(self) -> None:
+        """切到 OpenGL：能建上下文就用 GL，否则自动回退软件渲染（不会崩）。"""
+        app = self.app
+        self.assertEqual(app.renderer_name, "software")
+        app.settings_row = 10
+        app._adjust_setting(1)
+        self.assertEqual(app.settings.renderer, "opengl")
+        self.assertIn(app.renderer_name, ("opengl", "software"))
+        app._draw_menu()
+        app._present()          # 两种后端都要能呈现一帧
+        app._adjust_setting(1)  # 切回软件
+        self.assertEqual(app.settings.renderer, "software")
+        self.assertEqual(app.renderer_name, "software")
+
     def test_chart_list_shows_metadata_and_recent(self) -> None:
         """主界面列出元数据；打开过的谱面进入「最近」并排在前面。"""
         app = self.app

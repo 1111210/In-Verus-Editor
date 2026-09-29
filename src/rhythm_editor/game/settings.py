@@ -28,6 +28,7 @@ class PlayerSettings:
     side_lane_highlight: bool = False     # 6K 第 1 / 第 6 轨高亮
     mouse_sensitivity: float = 1.0        # 0.1 ~ 10
     unbounded_mouse: bool = False         # 无界鼠标：实际位置即判定位置
+    renderer: str = "software"            # software / opengl
     music_volume: float = 1.0
     hit_volume: float = 0.6
     recent: List[str] = field(default_factory=list)     # 最近打开的谱面（最多 8 条）
@@ -46,6 +47,8 @@ class PlayerSettings:
         self.music_volume = min(1.0, max(0.0, float(self.music_volume)))
         self.hit_volume = min(1.0, max(0.0, float(self.hit_volume)))
         self.player_name = (self.player_name or "Player")[:24]
+        if self.renderer not in ("software", "opengl"):
+            self.renderer = "software"
         unique: List[str] = []
         for path in self.recent:
             text = str(path)
@@ -69,6 +72,7 @@ class PlayerSettings:
             side_lane_highlight=bool(data.get("side_lane_highlight", False)),
             mouse_sensitivity=float(data.get("mouse_sensitivity", 1.0)),
             unbounded_mouse=bool(data.get("unbounded_mouse", False)),
+            renderer=str(data.get("renderer", "software")),
             music_volume=float(data.get("music_volume", 1.0)),
             hit_volume=float(data.get("hit_volume", 0.6)),
             recent=list(data.get("recent", [])),  # type: ignore[arg-type]

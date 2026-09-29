@@ -25,6 +25,7 @@ from ..model.chart import Chart
 from ..model.notes import LaneNote, MouseClick, MouseRegion, MouseSlide, Note
 from ..metronome import Metronome
 from . import settings as psettings
+from . import glview
 from .judge import BREAK, EXACT, EXACT_MIXED, GRADES, NEAR, Judge
 from .scene import (
     K6_LEFT,
@@ -91,13 +92,15 @@ class PlayerApp:
     def __init__(self, paths: Optional[List[str]] = None) -> None:
         pygame.init()
         pygame.display.set_caption(f"In Verus 游玩器 · {config.VERSION}")
-        self.screen = pygame.display.set_mode((SCREEN_W, SCREEN_H), pygame.RESIZABLE)
+        self.settings = psettings.load_settings()
+        self.gl_presenter = None
+        self.renderer_name = "software"
+        self.screen = self._make_display(SCREEN_W, SCREEN_H)
         self.clock = pygame.time.Clock()
         font = "microsoftyaheiui,arial"
         self.f_big = pygame.font.SysFont(font, 40, bold=True)
         self.f_mid = pygame.font.SysFont(font, 24, bold=True)
         self.f_small = pygame.font.SysFont(font, 18)
-        self.settings = psettings.load_settings()
         self.scene = PlayerScene(Camera())
         self.audio = AudioPlayer()
         self.root = os.path.dirname(os.path.dirname(os.path.dirname(os.path.abspath(__file__))))
@@ -118,6 +121,28 @@ class PlayerApp:
         self.mouse_norm = 0.5
         self.message = ""
         self.settings_row = 0
+
+    # ------------------------------------------------------------ 显示后端
+    def _make_display(self, width: int, height: int):
+        """按设置创建显示：opengl 成功就用 GL 呈现，否则回退软件渲染。"""
+        if self.settings.renderer == "opengl" and glview.available():
+            try:
+                pygame.display.set_mode((width, height), pygame.OPENGL | pygame.RESIZABLE)
+                self.gl_presenter = glview.GLPresenter()
+                self.renderer_name = "opengl"
+                return pygame.Surface((width, height))     # 离屏绘制目标
+            except Exception:                              # pragma: no cover - 依赖驱动
+                self.gl_presenter = None
+                self.renderer_name = "software"
+        self.gl_presenter = None
+        self.renderer_name = "software"
+        return pygame.display.set_mode((width, height), pygame.RESIZABLE)
+
+    def _present(self) -> None:
+        """把这一帧送到屏幕（GL 时上传纹理后交换缓冲）。"""
+        if self.gl_presenter is not None:
+            self.gl_presenter.present(self.screen)
+        pygame.display.flip()
 
     # ------------------------------------------------------------ 通用
     @property
@@ -141,7 +166,7 @@ class PlayerApp:
             self._events()
             self._update(dt)
             self._draw()
-            pygame.display.flip()
+            self._present()
         self.audio.unload()
         pygame.quit()
         return 0
@@ -151,8 +176,7 @@ class PlayerApp:
             if event.type == pygame.QUIT:
                 self.running = False
             elif event.type == pygame.VIDEORESIZE:
-                size = (max(800, event.w), max(500, event.h))
-                self.screen = pygame.display.set_mode(size, pygame.RESIZABLE)
+                self.screen = self._make_display(max(800, event.w), max(500, event.h))
             elif self.state == "menu":
                 self._event_menu(event)
             elif self.state == "settings":
@@ -242,6 +266,7 @@ class PlayerApp:
         "无界鼠标模式",
         "音乐音量",
         "打击音效音量",
+        "渲染后端（软件 / OpenGL）",
     )
 
     def _event_settings(self, event) -> None:
@@ -291,6 +316,9 @@ class PlayerApp:
             s.music_volume = round(s.music_volume + 0.05 * step, 2)
         elif row == 9:
             s.hit_volume = round(s.hit_volume + 0.05 * step, 2)
+        elif row == 10:
+            s.renderer = "opengl" if s.renderer == "software" else "software"
+            self.screen = self._make_display(self.w, self.h)
         s.normalize()
         if row in (8, 9) and self.state == "play":
             self.audio.set_volume(s.music_volume)
@@ -505,6 +533,7 @@ class PlayerApp:
             "开" if s.unbounded_mouse else "关",
             f"{s.music_volume * 100:.0f}%",
             f"{s.hit_volume * 100:.0f}%",
+            "OpenGL（需重启/切换即生效）" if s.renderer == "opengl" else "软件",
         ]
         for index, label in enumerate(self.SETTING_ROWS):
             y = 100 + index * 44

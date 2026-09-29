@@ -164,6 +164,74 @@ class EditorSmokeTest(unittest.TestCase):
         self.assertLessEqual(judge[2], layout.pane_6k[1] + 1)
         self.assertGreaterEqual(judge_mouse[0], layout.pane_mouse[0] - 1)
 
+    def test_drag_selected_note_moves_time_and_lane(self) -> None:
+        """拖动物件：直接拖动选中的按键改时间与轨道，松手才记一条撤销。"""
+        note = LaneNote("D1", 0, 0, 4.0)
+        self.chart.add(note)
+        self.controller.set_tool(config.TOOL_SELECT)
+        lane0 = self.view.layout.lane_center(0)
+        lane2 = self.view.layout.lane_center(2)
+        self.click(lane0, self.y_of_beat(4.0))
+        self.assertEqual(self.document.selection, {"D1"})
+        # 按住已选中的物件往右下拖：+2 拍、跨 2 条轨道
+        self.controller.on_press(lane0, self.y_of_beat(4.0), False, False)
+        self.controller.on_motion(lane2, self.y_of_beat(6.0))
+        self.controller.on_release(lane2, self.y_of_beat(6.0), False)
+        moved = self.chart.find("D1")
+        self.assertAlmostEqual(moved.beat_start, 6.0)
+        self.assertEqual((moved.lane_start, moved.lane_end), (2, 2))
+        # 撤销 / 重做都能还原
+        self.document.undo()
+        restored = self.chart.find("D1")
+        self.assertAlmostEqual(restored.beat_start, 4.0)
+        self.assertEqual((restored.lane_start, restored.lane_end), (0, 0))
+        self.document.redo()
+        again = self.chart.find("D1")
+        self.assertAlmostEqual(again.beat_start, 6.0)
+        self.assertEqual((again.lane_start, again.lane_end), (2, 2))
+
+    def test_drag_snaps_mouse_anchor_to_grid(self) -> None:
+        """拖动鼠标物件时按自身锚点吸附：滑键起点 / 点击中心 / 空域起点中点。"""
+        from rhythm_editor.model.notes import MouseClick
+
+        self.chart.settings.grid_division = 4
+        self.chart.settings.horizontal_divisions = 8
+        self.chart.add(MouseSlide("S1", 5.0, 0.30, 0.55))
+        self.chart.add(MouseClick("C1", 7.0, 0.30, 0.10))
+        self.chart.add(
+            MouseRegion("R1", 9.0, 10.0, BoundaryCurve(0.20, 0.20), BoundaryCurve(0.40, 0.60))
+        )
+        self.controller.set_tool(config.TOOL_SELECT)
+        self.view.set_beat(4.0, snap=False)
+
+        def drag(note_id: str, beat: float, dx: float) -> None:
+            self.document.select_only([note_id])
+            x0 = self.view.norm_to_x(0.30)
+            y0 = self.view.beat_to_y(beat)
+            x1 = self.view.norm_to_x(0.30 + dx)
+            self.controller.on_press(x0, y0, False, False)
+            self.controller.on_motion(x1, y0)
+            self.controller.on_release(x1, y0, False)
+
+        drag("S1", 5.0, 0.02)          # 起点 0.32 -> 吸附到 0.375
+        slide = self.chart.find("S1")
+        self.assertAlmostEqual(slide.x_start, 0.375, places=6)
+        self.assertAlmostEqual(slide.x_end - slide.x_start, 0.25, places=6, msg="长度不变")
+
+        drag("C1", 7.0, 0.02)          # 中心 0.32 -> 吸附到 0.375
+        click = self.chart.find("C1")
+        self.assertAlmostEqual(click.center, 0.375, places=6)
+        self.assertAlmostEqual(click.radius, 0.10, places=6, msg="半径不变")
+
+        drag("R1", 9.5, 0.02)          # 起点中点 0.30 -> 吸附到 0.375
+        region = self.chart.find("R1")
+        self.assertAlmostEqual(
+            (region.left.start + region.right.start) / 2.0, 0.375, places=6
+        )
+        self.assertAlmostEqual(
+            region.right.start - region.left.start, 0.20, places=6, msg="宽度不变"
+        )
+
     def test_overlay_demo_is_one_third_and_centered(self) -> None:
         """演示模式只占窗口宽度的 1/3，并且水平居中。"""
         self.view.set_layout_mode(config.LAYOUT_OVERLAY)

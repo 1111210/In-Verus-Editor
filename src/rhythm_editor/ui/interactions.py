@@ -47,6 +47,8 @@ class ToolController:
         self._press: Optional[Tuple[float, float]] = None
         self._rubber_origin: Optional[Tuple[float, float]] = None
         self._rubber_ctrl = False
+        # 拖动选中物件：按下时记录原始数据，移动时按原始数据 + 偏移实时重建
+        self._drag: Optional[Dict[str, object]] = None
         # 未完成操作的“已提交”阶段：0 = 只有悬停预览，1 = 等待第二次点击
         self._stage = 0
         self._first_lane: Optional[int] = None
@@ -134,11 +136,31 @@ class ToolController:
         self.hover = (x, y)
         self.state.hover = (x, y)
         self._update_ghost(x, y)
+        if self._drag is not None:
+            self._drag_move(x, y)
+            return
         if self._rubber_origin is not None:
             ox, oy = self._rubber_origin
             self.state.rubber_band = (ox, oy, x, y)
 
     def on_release(self, x: float, y: float, ctrl: bool) -> None:
+        if self._drag is not None:
+            before = self._drag["before"]
+            self._drag = None
+            after = [
+                self.document.chart.find(str(item["id"])).to_dict()
+                for item in before  # type: ignore[union-attr]
+                if self.document.chart.find(str(item["id"])) is not None
+            ]
+            if after and after != before:
+                self.document.commit(
+                    self.document._notes_record(
+                        "拖动物件", before, after, self.document.selection, self.document.selection  # type: ignore[arg-type]
+                    )
+                )
+                self.status(f"已拖动 {len(after)} 个物件（Ctrl+Z 可撤销）")
+            self._press = None
+            return
         if self.tool == config.TOOL_SELECT and self._rubber_origin is not None:
             ox, oy = self._rubber_origin
             width = abs(x - ox)
@@ -193,6 +215,15 @@ class ToolController:
             elif note.id not in self.document.selection:
                 self.document.select_only([note.id])
                 self.status(f"已选择 {note.id}")
+            # 选中的物件可以直接拖动（时间 / 轨道 / 横向位置）
+            selected = self.document.selected_notes()
+            if selected:
+                self._drag = {
+                    "origin": (x, y),
+                    "before": [n.to_dict() for n in selected],
+                    "start_beat": self.view.y_to_beat(y),
+                    "moved": False,
+                }
             return
         if not ctrl:
             self.document.clear_selection()
@@ -201,6 +232,85 @@ class ToolController:
         self.state.rubber_band = (x, y, x, y)
 
     # ------------------------------------------------------------------ 放置
+    def _drag_move(self, x: float, y: float) -> None:
+        """把选中的物件按“原始数据 + 偏移”实时重建（松手时才写一条撤销记录）。"""
+        from ..model.notes import note_from_dict
+
+        drag = self._drag
+        if drag is None:
+            return
+        origin_x, origin_y = drag["origin"]  # type: ignore[misc]
+        beats = self.view.snap_beat(self.view.y_to_beat(y)) - self.view.snap_beat(
+            float(drag["start_beat"])  # type: ignore[arg-type]
+        )
+        lane_delta = 0
+        lane_now = self.view.layout.lane_at(x)
+        lane_was = self.view.layout.lane_at(origin_x)
+        if lane_now is not None and lane_was is not None:
+            lane_delta = lane_now - lane_was
+        # 横向位移用**鼠标光标的真实位移**；吸附则在每个物件自己的“锚点”上做：
+        # 滑键按起点、鼠标点击按键按中心、空域按起点（beat_start 处）左右边界的中点。
+        # 这样即使物件是在另一套横向网格下创建的，拖动后锚点也一定落在当前网格线上，
+        # 而且不会改变物件自身的长度 / 宽度。
+        raw_delta = self.view.x_to_norm(x) - self.view.x_to_norm(origin_x)
+        grid_on = self.view.chart.settings.horizontal_divisions > 0
+        if beats == 0.0 and lane_delta == 0 and abs(raw_delta) < 1e-9:
+            return
+        rebuilt: List[Dict[str, Any]] = []
+        reported = raw_delta
+        for item in drag["before"]:  # type: ignore[union-attr]
+            note = note_from_dict(dict(item))
+            x_delta = raw_delta
+            anchor = self._anchor_x(note)
+            if grid_on and anchor is not None:
+                x_delta = self.view.snap_norm(anchor + raw_delta) - anchor
+                reported = x_delta
+            self._shift_note(note, beats, lane_delta, x_delta)
+            rebuilt.append(note.to_dict())
+        self.document._apply_notes_state([str(i["id"]) for i in drag["before"]], rebuilt)  # type: ignore[arg-type]
+        drag["moved"] = True
+        self.status(
+            f"拖动中：{beats:+g} 拍"
+            + (f" · 轨道 {lane_delta:+d}" if lane_delta else "")
+            + (f" · 横向 {reported:+.3f}" if abs(reported) > 1e-9 else "")
+        )
+
+    @staticmethod
+    def _anchor_x(note: Note) -> Optional[float]:
+        """拖动的“对齐锚点”：滑键 = 起点；点击按键 = 中心；空域 = 起点处左右边界的中点。"""
+        if isinstance(note, MouseSlide):
+            return float(note.x_start)
+        if isinstance(note, MouseClick):
+            return float(note.center)
+        if isinstance(note, MouseRegion):
+            return (float(note.left.start) + float(note.right.start)) / 2.0
+        return None
+
+    @staticmethod
+    def _shift_note(note: Note, beats: float, lane_delta: int, x_delta: float) -> None:
+        """按偏移移动一个物件（时间 / 轨道 / 横向位置三类按类型处理）。"""
+        note.shift(beats)
+        if isinstance(note, LaneNote):
+            if lane_delta:
+                span = note.lane_end - note.lane_start
+                start = min(
+                    max(0, note.lane_start + lane_delta), config.LANE_COUNT - 1 - span
+                )
+                note.lane_start = start
+                note.lane_end = start + span
+            return
+        if isinstance(note, MouseRegion):
+            for curve in (note.left, note.right):
+                curve.start = min(1.0, max(0.0, curve.start + x_delta))
+                curve.end = min(1.0, max(0.0, curve.end + x_delta))
+            return
+        if isinstance(note, MouseClick):
+            note.center = min(1.0, max(0.0, note.center + x_delta))
+            return
+        if isinstance(note, MouseSlide):
+            note.x_start = min(1.0, max(0.0, note.x_start + x_delta))
+            note.x_end = min(1.0, max(0.0, note.x_end + x_delta))
+
     def _lane_at(self, x: float) -> Optional[int]:
         return self.view.layout.lane_at(x)
 

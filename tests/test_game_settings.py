@@ -62,6 +62,20 @@ class PlayerSettingsTests(unittest.TestCase):
         s2.normalize()
         self.assertEqual(s2.recent, ["a.json", "b.json"])
 
+    def test_renderer_setting_roundtrip_and_repair(self) -> None:
+        """渲染后端：默认软件渲染，可切 OpenGL，非法值回退软件。"""
+        s = PS.PlayerSettings()
+        self.assertEqual(s.renderer, "software")
+        s.renderer = "opengl"
+        s.normalize()
+        self.assertEqual(s.renderer, "opengl")
+        broken = PS.PlayerSettings.from_dict({"renderer": "vulkan"})
+        self.assertEqual(broken.renderer, "software")
+        with tempfile.TemporaryDirectory() as tmp:
+            path = os.path.join(tmp, "player.json")
+            PS.save_settings(s, path)
+            self.assertEqual(PS.load_settings(path).renderer, "opengl")
+
 
 if __name__ == "__main__":
     unittest.main()
