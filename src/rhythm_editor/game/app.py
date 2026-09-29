@@ -1073,7 +1073,9 @@ class PlayerApp:
                 if event.key == key_code(name):
                     self.pressed_lanes.discard(lane)
         elif event.type == pygame.MOUSEBUTTONDOWN:
-            self._register(self.judge.on_press(self._now_ms(), x=self.mouse_norm))
+            # 鼠标点击按键：**左右键都可以**（滚轮 4/5 不算）
+            if event.button in (1, 3):
+                self._register(self.judge.on_press(self._now_ms(), x=self.mouse_norm))
 
     def _register(self, result) -> None:
         """记录一条判定：命中音效 + 在**被判定的那个物件处**飘字。"""
@@ -1123,7 +1125,8 @@ class PlayerApp:
             self.mouse_norm = self._mouse_norm()
             assert self.judge is not None
             now_ms = self._now_ms()
-            self.judge.on_move(now_ms, self.mouse_norm)
+            # 滑键是在鼠标移动时判定的：返回值必须登记，否则滑键没有判定文字 / 音效
+            self._register(self.judge.on_move(now_ms, self.mouse_norm))
             for result in self.judge.update(
                 now_ms, inside_hold=self._inside_region(now_ms), held=set(self.pressed_lanes)
             ):
@@ -1447,8 +1450,17 @@ class PlayerApp:
             width = max(1, int(round(width * scale / ref)))
         self._line(a, b, color, max(1, int(width)))
 
+    def _visible_span_ms(self) -> float:
+        """可视毫秒（物件从起点走到判定线所需的**歌曲毫秒**）。
+
+        「流速」应该是**视觉速度**：倍速只改变歌曲推进的快慢，不该让物件在屏幕上
+        慢慢爬或飞过去。判定时钟按倍速推进，所以这里的跨度也要乘倍速，
+        这样走完全程始终是 `可视毫秒 / 倍速` 的**同一段真实时间**。
+        """
+        return max(1.0, self.settings.scroll_ms * self.settings.rate)
+
     def _note_z(self, judge_ms: float, now_ms: float) -> float:
-        span = max(1.0, self.settings.scroll_ms)
+        span = self._visible_span_ms()
         return PlayerScene.note_z(1.0 - (judge_ms - now_ms) / span)
 
     def _draw_play(self) -> None:
@@ -1496,18 +1508,22 @@ class PlayerApp:
     def _draw_planes(self, now_ms: float) -> None:
         assert self.chart is not None
         width = LANE_COUNT * LANE_WIDTH
-        for y, tint in ((0.0, K6_TINT), (MOUSE_PLANE_HEIGHT, MOUSE_TINT)):
-            far_left = self._proj(K6_LEFT, y, START_Z)
-            far_right = self._proj(K6_LEFT + width, y, START_Z)
-            near_left = self._proj(K6_LEFT, y, 0.0)
-            near_right = self._proj(K6_LEFT + width, y, 0.0)
-            if y > 0.0:
-                # 鼠标平面在上方且更靠近镜头：半透明，免得挡住 6K 平面的远景
-                self._alpha_quad([far_left, far_right, near_right, near_left], (34, 40, 58), 170)
-            else:
-                self._quad([far_left, far_right, near_right, near_left], (24, 26, 36))
-            self._line(far_left, near_left, tint, 1)
-            self._line(far_right, near_right, tint, 1)
+        # 6K 平面：底色 + 左右边线
+        far_left = self._proj(K6_LEFT, 0.0, START_Z)
+        far_right = self._proj(K6_LEFT + width, 0.0, START_Z)
+        near_left = self._proj(K6_LEFT, 0.0, 0.0)
+        near_right = self._proj(K6_LEFT + width, 0.0, 0.0)
+        self._quad([far_left, far_right, near_right, near_left], (24, 26, 36))
+        self._line(far_left, near_left, K6_TINT, 1)
+        self._line(far_right, near_right, K6_TINT, 1)
+        # 鼠标平面：**不画背景**，只保留合法区域左右边线（x = ±0.5）
+        for x in (MOUSE_LEFT, MOUSE_LEFT + MOUSE_LEGAL_WIDTH):
+            self._line(
+                self._proj(x, MOUSE_PLANE_HEIGHT, START_Z),
+                self._proj(x, MOUSE_PLANE_HEIGHT, 0.0),
+                MOUSE_TINT,
+                2,
+            )
         for lane in range(LANE_COUNT + 1):
             x = K6_LEFT + lane * LANE_WIDTH
             self._line(self._proj(x, 0.0, START_Z), self._proj(x, 0.0, 0.0), (46, 48, 58), 1)
@@ -1543,7 +1559,7 @@ class PlayerApp:
         # 6K 平面只画小节线（不画更细的节拍线）
         timing = self.chart.timing
         beat = timing.song_ms_to_beat(max(0.0, now_ms))
-        span_beats = max(0.5, self.settings.scroll_ms / 1000.0 * timing.bpm_at(beat) / 60.0)
+        span_beats = max(0.5, self._visible_span_ms() / 1000.0 * timing.bpm_at(beat) / 60.0)
         for line in timing.bar_lines(beat, beat + span_beats):
             z = self._note_z(timing.beat_to_song_ms(line), now_ms)
             if 0.0 <= z <= START_Z:
@@ -1706,43 +1722,56 @@ class PlayerApp:
                     alpha,
                 )
             return
-        else:
-            assert isinstance(note, MouseClick)
-            lo, hi = note.x_range()
-            color = (235, 90, 80)
-            height = self.settings.click_thickness
+        assert isinstance(note, MouseClick)
+        lo, hi = note.x_range()
+        color = (235, 90, 80)
+        height = self.settings.click_thickness
         x0 = MOUSE_LEFT + min(lo, hi) * MOUSE_LEGAL_WIDTH
         x1 = MOUSE_LEFT + max(lo, hi) * MOUSE_LEGAL_WIDTH
-        top = MOUSE_PLANE_HEIGHT + height
-        middle = (MOUSE_PLANE_HEIGHT + top) / 2
-        self._alpha_quad(
-            [
-                self._proj(x0, MOUSE_PLANE_HEIGHT, z),
-                self._proj(x1, MOUSE_PLANE_HEIGHT, z),
-                self._proj(x1, top, z),
-                self._proj(x0, top, z),
-            ],
-            color,
-            132,
+        middle = MOUSE_PLANE_HEIGHT + height / 2.0
+        # 形状是**中间厚、两边薄的菱形**，并且透明度一起渐变（中间实、两端淡）
+        span_px = abs(
+            self._proj(x1, MOUSE_PLANE_HEIGHT, z)[0]
+            - self._proj(x0, MOUSE_PLANE_HEIGHT, z)[0]
         )
-        # 鼠标点击按键：所有线都用红色（横线 + 两侧竖线）
-        line_color = (255, 70, 60)
-        self._line(self._proj(x0, middle, z), self._proj(x1, middle, z), line_color, 2)
-        if isinstance(note, MouseClick):
-            # 两侧竖线 + 中央菱形，高度都是 0.03 单位
-            self._line(self._proj(x0, MOUSE_PLANE_HEIGHT, z), self._proj(x0, top, z), line_color, 2)
-            self._line(self._proj(x1, MOUSE_PLANE_HEIGHT, z), self._proj(x1, top, z), line_color, 2)
-            cx = MOUSE_LEFT + note.center * MOUSE_LEGAL_WIDTH
-            d = NOTE_HEIGHT_UNIT / 2
-            self._quad(
+        steps = max(12, min(64, int(span_px / 3.0) + 1))
+        alpha_edge, alpha_mid = 40, 226
+        for index in range(steps):
+            t0 = index / steps
+            t1 = (index + 1) / steps
+            xa = x0 + (x1 - x0) * t0
+            xb = x0 + (x1 - x0) * t1
+            la = 1.0 - abs(2.0 * t0 - 1.0)        # 中点 1、两端 0 -> 菱形轮廓
+            lb = 1.0 - abs(2.0 * t1 - 1.0)
+            half_a = max(0.0004, height / 2.0 * la)
+            half_b = max(0.0004, height / 2.0 * lb)
+            alpha = int(round(alpha_edge + (alpha_mid - alpha_edge) * (la + lb) / 2.0))
+            self._alpha_quad(
                 [
-                    self._proj(cx - d, middle, z),
-                    self._proj(cx, middle + d, z),
-                    self._proj(cx + d, middle, z),
-                    self._proj(cx, middle - d, z),
+                    self._proj(xa, middle - half_a, z),
+                    self._proj(xb, middle - half_b, z),
+                    self._proj(xb, middle + half_b, z),
+                    self._proj(xa, middle + half_a, z),
                 ],
-                (255, 60, 50),
+                color,
+                alpha,
             )
+        # 中间横线：与键盘点击物件的横线一致（红色）
+        self._line(
+            self._proj(x0, middle, z), self._proj(x1, middle, z), (255, 70, 60), 2
+        )
+        # 中央实心菱形标记（固定大小，不随按键尺寸变化）
+        cx = MOUSE_LEFT + note.center * MOUSE_LEGAL_WIDTH
+        d = NOTE_HEIGHT_UNIT / 2
+        self._quad(
+            [
+                self._proj(cx - d, middle, z),
+                self._proj(cx, middle + d, z),
+                self._proj(cx + d, middle, z),
+                self._proj(cx, middle - d, z),
+            ],
+            (255, 60, 50),
+        )
 
     def _mouse_marker_points(self, norm_x: float):
         """指针三角形的三个点（躺在鼠标平面内、矮胖）。"""

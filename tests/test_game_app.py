@@ -684,15 +684,26 @@ class PlayerAppSmokeTests(unittest.TestCase):
 
         click = next(n for n in chart.all_notes() if isinstance(n, MouseClick))
         lines = []
+        fills = []
+        original_alpha2 = app._alpha_quad
         app._line = lambda a, b, color, width=2: lines.append(color)
+        app._alpha_quad = lambda points, color, alpha: fills.append(alpha)
         try:
             app._draw_pattern(click, app._head_ms(click))
         finally:
             app._line = original_line
+            app._alpha_quad = original_alpha2
         self.assertTrue(lines)
         for color in lines:
             self.assertGreater(color[0], 200, "鼠标点击按键的线应该是红色")
             self.assertLess(color[1], 130)
+        # 中间厚、两边薄的菱形 + 透明度渐变
+        self.assertGreater(len(fills), 8, "点击按键切成细条做渐变")
+        middle = fills[len(fills) // 2]
+        self.assertGreater(middle, fills[0], "中间更实、两端更淡")
+        self.assertGreater(middle, fills[-1])
+        self.assertGreaterEqual(middle, 220)
+        self.assertLessEqual(max(fills[0], fills[-1]), 60)
 
         # 鼠标指针（三角形）躺在物件运动的水平面内
         points = []
@@ -796,6 +807,115 @@ class PlayerAppSmokeTests(unittest.TestCase):
             self.assertAlmostEqual(drawn[3], 1.3, delta=1e-6, msg="实际位置也画出来")
         finally:
             app._alpha_quad, app._proj = original_alpha, original_proj
+
+    def test_flow_speed_is_independent_of_rate(self) -> None:
+        """流速（可视毫秒）不受倍速影响：物件的**视觉移动速度**始终一致。"""
+        from rhythm_editor.game.scene import START_Z
+
+        app = self.app
+        scroll = app.settings.scroll_ms          # 流速 1.0 -> 1500ms
+        for rate in (1.0, 0.5, 0.1, 3.0):
+            app.settings.rate = rate
+            self.assertAlmostEqual(
+                app._visible_span_ms(), scroll * rate, places=6, msg="可视跨度按倍速缩放"
+            )
+            # 走完整个可视跨度需要同样的**真实时间**：跳 z=START_Z 时正好是 span 之前
+            self.assertAlmostEqual(app._note_z(scroll * rate, 0.0), START_Z, places=6)
+            self.assertAlmostEqual(app._note_z(scroll * rate / 2, 0.0), START_Z / 2, places=6)
+            self.assertAlmostEqual(app._note_z(0.0, 0.0), 0.0, places=6)
+        app.settings.rate = 1.0
+        self.assertAlmostEqual(app._visible_span_ms(), scroll, places=6)
+
+    def test_mouse_click_accepts_left_and_right_only(self) -> None:
+        """鼠标点击按键左右键都能判，滚轮（4/5）不算。"""
+        from rhythm_editor.game.judge import Judge
+        from rhythm_editor.model.notes import MouseClick
+
+        app = self.app
+        app._enter_loading()
+        chart = app.chart
+        app._start_play()
+        click = next(n for n in chart.all_notes() if isinstance(n, MouseClick))
+        pygame = self.pygame
+        for button in (1, 3):
+            app.judge = Judge(chart)                     # 每个键位用干净状态各测一次
+            app._now_ms = lambda: chart.timing.beat_to_song_ms(click.head_beat)
+            app.mouse_norm = click.center
+            app._event_play(
+                pygame.event.Event(pygame.MOUSEBUTTONDOWN, button=button, pos=(400, 300))
+            )
+            self.assertEqual(app.judge.judged_notes, 1, f"button {button} 应该能判")
+        app.judge = Judge(chart)
+        app._event_play(
+            pygame.event.Event(pygame.MOUSEBUTTONDOWN, button=4, pos=(400, 300))
+        )
+        self.assertEqual(app.judge.judged_notes, 0, "滚轮不该判定")
+
+    def test_mouse_plane_has_only_legal_area_side_lines(self) -> None:
+        """鼠标平面不画背景，只画合法区域（±0.5）的左右边线。"""
+        from rhythm_editor.game.app import MOUSE_LEFT, MOUSE_PLANE_HEIGHT
+        from rhythm_editor.game.scene import K6_LEFT, MOUSE_LEGAL_WIDTH, START_Z
+
+        app = self.app
+        app._enter_loading()
+        app._start_play()
+        app.settings.rate = 1.0
+        quads = []
+        lines = []
+        original_quad, original_line = app._quad, app._line
+        app._quad = lambda points, color: quads.append(points)
+        app._line = lambda a, b, color, width=2: lines.append((a, b))
+        try:
+            app._draw_planes(0.0)
+        finally:
+            app._quad, app._line = original_quad, original_line
+        # 合法区域两侧各有一条边线（从起点一直到判定平面）
+        for edge in (MOUSE_LEFT, MOUSE_LEFT + MOUSE_LEGAL_WIDTH):
+            far = app._proj(edge, MOUSE_PLANE_HEIGHT, START_Z)
+            near = app._proj(edge, MOUSE_PLANE_HEIGHT, 0.0)
+            self.assertTrue(
+                any(
+                    abs(a[0] - far[0]) < 2 and abs(b[0] - near[0]) < 2 for a, b in lines
+                ),
+                "合法区域边界要有边线",
+            )
+        # 鼠标平面不该有底色四边形：默认（侧轨高亮关闭）只剩 6K 平面那一个
+        self.assertEqual(len(quads), 1, "鼠标平面不再画背景")
+        self.assertAlmostEqual(K6_LEFT, -0.75, places=6)
+
+    def test_slide_judgement_shows_text_and_sound(self) -> None:
+        """滑键判定要出判定文字（回归：以前 on_move 的返回值被丢掉，滑键没有飘字）。"""
+        from rhythm_editor.model.notes import MouseSlide
+
+        app = self.app
+        app._enter_loading()
+        chart = app.chart
+        app._start_play()
+        slide = next(n for n in chart.all_notes() if isinstance(n, MouseSlide))
+        hit_ms = chart.timing.beat_to_song_ms(slide.beat)
+        app._now_ms = lambda: hit_ms
+        lo, hi = slide.x_range()
+        outside = max(0.0, min(lo, hi) - 0.06)
+        inside = (min(lo, hi) + max(lo, hi)) / 2.0
+        app._mouse_norm = lambda: outside
+        plays = []
+        original = app.hits.play_hit
+        app.hits.play_hit = lambda: plays.append(1)
+        try:
+            app._update(1 / 120)             # 先让 judge 采一次鼠标位置
+            app.popups.clear()               # 前面那些“漏掉”的 Break 飘字不算
+            plays.clear()
+            # 鼠标移进滑键范围 -> 触发滑键判定
+            app._mouse_norm = lambda: inside
+            app._update(1 / 120)
+        finally:
+            app.hits.play_hit = original
+        self.assertTrue(app.popups, "滑键判定要有飘字")
+        grade, text, _left, x, y = app.popups[-1]
+        self.assertEqual(grade, text)
+        self.assertIn(grade, ("EXACT", "Exact", "Near"))
+        self.assertGreater(y, 0.0)
+        self.assertEqual(len(plays), 1, "滑键命中也应该响打击音")
 
 
 if __name__ == "__main__":
