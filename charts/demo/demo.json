@@ -34,7 +34,10 @@
     "grid_division": 4,
     "horizontal_divisions": 8,
     "audio_latency_ms": 45.0,
-    "metronome": "off"
+    "metronome": "off",
+    "music_volume": 1.0,
+    "metronome_volume": 0.6,
+    "hit_volume": 0.6
   },
   "speed_groups": [
     {

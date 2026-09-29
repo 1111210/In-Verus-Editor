@@ -73,6 +73,10 @@ class EditorSettings:
     horizontal_divisions: int = config.DEFAULT_HORIZONTAL_DIVISIONS
     audio_latency_ms: float = config.DEFAULT_AUDIO_LATENCY_MS
     metronome: str = "off"
+    # 音量（0..1）：音乐 / 节拍音 / 打击音效
+    music_volume: float = 1.0
+    metronome_volume: float = 0.6
+    hit_volume: float = 0.6
 
     def normalize(self) -> None:
         self.zoom_seconds = min(
@@ -92,6 +96,9 @@ class EditorSettings:
         )
         if self.metronome not in METRONOME_MODES:
             self.metronome = MODE_OFF
+        self.music_volume = max(0.0, min(1.0, float(self.music_volume)))
+        self.metronome_volume = max(0.0, min(1.0, float(self.metronome_volume)))
+        self.hit_volume = max(0.0, min(1.0, float(self.hit_volume)))
 
     @property
     def horizontal_grid_enabled(self) -> bool:
@@ -104,6 +111,9 @@ class EditorSettings:
             "horizontal_divisions": self.horizontal_divisions,
             "audio_latency_ms": self.audio_latency_ms,
             "metronome": self.metronome,
+            "music_volume": self.music_volume,
+            "metronome_volume": self.metronome_volume,
+            "hit_volume": self.hit_volume,
         }
 
     @classmethod
@@ -117,6 +127,9 @@ class EditorSettings:
             ),
             audio_latency_ms=float(data.get("audio_latency_ms", config.DEFAULT_AUDIO_LATENCY_MS)),
             metronome=str(data.get("metronome", "off")),
+            music_volume=float(data.get("music_volume", 1.0)),
+            metronome_volume=float(data.get("metronome_volume", 0.6)),
+            hit_volume=float(data.get("hit_volume", 0.6)),
         )
         obj.normalize()
         return obj

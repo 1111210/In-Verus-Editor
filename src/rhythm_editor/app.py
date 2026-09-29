@@ -29,7 +29,7 @@ from .model.notes import BoundaryCurve, MouseRegion, Note
 from .model.timing import TimingMap
 from .model.validate import format_report, validate_chart
 from .metronome import LABELS as METRONOME_LABELS
-from .metronome import MODE_BAR, MODE_BEAT, MODE_OFF, Metronome, clicks_between
+from .metronome import MODE_BAR, MODE_BEAT, MODE_OFF, Metronome, clicks_between, hits_between
 from .ui.dialogs import (
     BpmDialog,
     HelpDialog,
@@ -106,6 +106,10 @@ class EditorApp:
         # 节拍音：上一帧判定线所在拍（None = 未在播放）
         self._metronome_last_beat: Optional[float] = None
         self.metronome = Metronome()
+        # 打击音效：单独一个播放器，音量可独立调节
+        self.hits = Metronome()
+        self.hit_volume = 1.0
+        self._hit_last_beat: Optional[float] = None
 
         # 画布区容器（右侧放竖向滚动条），画布是它的子控件
         self.body = ttk.Frame(self.root)
@@ -127,6 +131,7 @@ class EditorApp:
             self.status(f"音频后端：{audio_backend_name()}")
         self.status(f"解释器：{sys.executable}")
         write_startup_log()
+        self._apply_volumes()          # 音乐 / 节拍音 / 打击音 音量按谱面设置生效
 
         if chart_path:
             self.load_chart_file(chart_path)
@@ -275,12 +280,14 @@ class EditorApp:
     def _advance_playback(self) -> None:
         if not self.audio.is_playing:
             self._metronome_last_beat = None
+            self._hit_last_beat = None
             return
         timing = self.document.chart.timing
         song_ms = self.audio.heard_position_ms()
         beat = timing.song_ms_to_beat(song_ms)
         self.view.current_beat = beat
         self._tick_metronome(timing, beat)
+        self._tick_hit_sound(beat)
         backend = getattr(self.audio, "backend", None)
         if backend is not None and not getattr(backend, "is_playing", True):
             # 音乐刚播完：记下此刻的播放位置（秒），之后还要再走 margin 秒才考虑停止
@@ -306,6 +313,15 @@ class EditorApp:
         hits = clicks_between(timing, mode, previous, beat)
         if hits:
             self.metronome.play(mode)
+
+    def _tick_hit_sound(self, beat: float) -> None:
+        """物件到达判定线时响一声打击音（白噪声），一次 tick 最多一声。"""
+        previous = self._hit_last_beat
+        self._hit_last_beat = beat
+        if previous is None:
+            return
+        if hits_between(self.document.chart, previous, beat):
+            self.hits.play_hit()
 
     def set_metronome(self, mode: str) -> None:
         """视图菜单：关闭 / 小节音 / 节拍音。"""
@@ -790,15 +806,31 @@ class EditorApp:
             settings = self.document.chart.settings
             settings.zoom_seconds = float(result["zoom_seconds"])
             settings.audio_latency_ms = float(result["audio_latency_ms"])
+            settings.music_volume = float(result.get("music_volume", settings.music_volume))
+            settings.metronome_volume = float(
+                result.get("metronome_volume", settings.metronome_volume)
+            )
+            settings.hit_volume = float(result.get("hit_volume", settings.hit_volume))
             settings.normalize()
 
         self.document.apply("修改编辑器设置", _apply)
         self.audio.latency_ms = self.document.chart.settings.audio_latency_ms
+        self._apply_volumes()
         self.view.set_beat(self.view.current_beat)
         self.status(
             f"设置已更新：可视 {self.document.chart.settings.zoom_seconds:g} 秒 · "
-            f"延迟 {self.document.chart.settings.audio_latency_ms:g} ms"
+            f"延迟 {self.document.chart.settings.audio_latency_ms:g} ms · "
+            f"音量 音乐 {self.document.chart.settings.music_volume * 100:.0f}% / "
+            f"节拍 {self.document.chart.settings.metronome_volume * 100:.0f}% / "
+            f"打击 {self.document.chart.settings.hit_volume * 100:.0f}%"
         )
+
+    def _apply_volumes(self) -> None:
+        """把设置里的三个音量同步给音频后端与音效播放器。"""
+        settings = self.document.chart.settings
+        self.audio.set_volume(settings.music_volume)
+        self.metronome.set_volume(settings.metronome_volume)
+        self.hit_volume = settings.hit_volume
 
     def set_grid_division_custom(self) -> None:
         """视图菜单「时间网格细分 → 自定义…」：输入一拍细分多少份。"""

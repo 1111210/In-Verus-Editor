@@ -113,7 +113,7 @@ python tools/check_audio.py
 
 | 项目 | 命令 | 结果 |
 | --- | --- | --- |
-| 单元测试（含 Tk 画布冒烟测试与应用级测试） | `python -m unittest discover -s tests -t .` | Ran 236 tests — **OK** |
+| 单元测试（含 Tk 画布冒烟测试与应用级测试） | `python -m unittest discover -s tests -t .` | Ran 239 tests — **OK** |
 | 需求验收清单 | `python tools/acceptance.py` | 14 项全部 `[OK ]`，结论：全部通过 |
 | 音频后端 | `python tools/check_audio.py` | 9 项全部 `[OK ]`（pygame.mixer 真实播放，延迟补偿正确） |
 | 示例谱面生成 | `python run_editor.py --make-demo` | 生成 `charts/demo/demo.json`（6K 32 / 区域 3 / 滑键 6 / 点击按键 4 / 4 个速度组） |
@@ -230,7 +230,7 @@ python tools/check_audio.py
 | `tests/test_speed.py`（+5 条） | `scroll_seconds()`：默认流速 = 秒数差、跟随 BPM 段、倍率缩放（0 / 负数）、流速段与 BPM 段边界取并集积分、快速路径与通用路径一致 |
 | `tests/test_timing.py::test_zero_beats_per_bar_disables_bar_lines` | 每小节 0 拍：段内不再划线，但 **BPM 变更处那条小节线一定在**（小节编号继续累计） |
 | `tests/test_launcher.py`（8 条） | 启动脚本**不再检测 / 切换解释器**（`venv_guard` 已移除）；**启动日志**写明实际使用的 Python 路径与后端；音频诊断：缺依赖 vs **设备打不开**分别报对原因（不再一律写“未安装 pygame”）、提示含解释器路径、`retry_backend()` 可在设备恢复后重新启用；**播放停止判据**：音乐与谱面都播完 3 秒才停、只满足一边不停、没有音乐永不停 |
-| `tests/test_metronome.py`（6 条） | 节拍音：默认关闭、节拍音每整拍一响、小节音只在小节线响（含 BPM 变更处）、跳转 / 倒放不补发、设置项读写与非法值回落；**慢放不改变这一声的长度**（合成长度固定 45ms，且倍速变化不重建 Sound） |
+| `tests/test_metronome.py`（9 条） | 节拍音：默认关闭、每整拍一响、只在小节线响（含 BPM 变更处）、跳转 / 倒放不补发、设置项读写；**慢放不改变这一声的长度**；**打击音效**：单键 / 长按开头 / 空域开头 / 滑键 / 点击按键各响一次、中段不重复、白噪声特征（相邻样本不相关）、**音量设置**读写与夹取 |
 | `python run_editor.py --make-demo`（系统解释器） | 实测：自动切换到 `.venv` 后启动（stderr 打印一行说明），音频后端起效 |
 
 人工确认：`docs/images/editor_overview.png`（分栏 + 分组工具栏）、

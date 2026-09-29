@@ -385,6 +385,9 @@ class SettingsDialog(BaseDialog):
             grid_division=chart.settings.grid_division,
             horizontal_divisions=chart.settings.horizontal_divisions,
             audio_latency_ms=chart.settings.audio_latency_ms,
+            music_volume=chart.settings.music_volume,
+            metronome_volume=chart.settings.metronome_volume,
+            hit_volume=chart.settings.hit_volume,
         )
         super().__init__(parent, theme)
 
@@ -447,7 +450,48 @@ class SettingsDialog(BaseDialog):
             backend_box, text="重新初始化音频设备", command=self._retry_audio
         )
         self.btn_retry_audio.pack(anchor="w", pady=(6, 0))
+
+        # 音量：音乐 / 节拍音 / 打击音（0~100%）
+        volume = ttk.LabelFrame(body, text="音量", padding=8)
+        volume.pack(fill="x", pady=(8, 0))
+        volume.columnconfigure(1, weight=1)
+        self._volume_vars: Dict[str, tk.DoubleVar] = {}
+        self._volume_labels: Dict[str, ttk.Label] = {}
+        for row, (key, text, value) in enumerate(
+            (
+                ("music_volume", "音乐", self.settings.music_volume),
+                ("metronome_volume", "节拍音", self.settings.metronome_volume),
+                ("hit_volume", "打击音效", self.settings.hit_volume),
+            )
+        ):
+            ttk.Label(volume, text=text).grid(row=row, column=0, sticky="w", padx=(0, 6), pady=2)
+            var = tk.DoubleVar(value=float(value))
+            scale = ttk.Scale(
+                volume,
+                from_=0.0,
+                to=1.0,
+                orient="horizontal",
+                variable=var,
+                command=lambda _v, k=key: self._on_volume(k),
+            )
+            scale.grid(row=row, column=1, sticky="we", pady=2)
+            label = ttk.Label(volume, text=f"{value * 100:.0f}%", width=5, anchor="e")
+            label.grid(row=row, column=2, sticky="e", pady=2)
+            self._volume_vars[key] = var
+            self._volume_labels[key] = label
+        ttk.Label(
+            volume,
+            text="打击音效 = 单键 / 多轨按键 / 滑键 / 鼠标点击按键到达判定线，"
+                 "以及长按、空域开头到达判定线时的一声白噪声。",
+            style="Dim.TLabel",
+            wraplength=520,
+        ).grid(row=3, column=0, columnspan=3, sticky="w", pady=(4, 0))
         self._sync_scale_from_value()
+
+    def _on_volume(self, key: str) -> None:
+        value = float(self._volume_vars[key].get())
+        setattr(self.settings, key, value)
+        self._volume_labels[key].configure(text=f"{value * 100:.0f}%")
 
     def _retry_audio(self) -> None:
         """重新初始化音频设备（插好耳机 / 释放独占声卡后无需重启编辑器）。"""
@@ -508,6 +552,9 @@ class SettingsDialog(BaseDialog):
         self.result = {
             "zoom_seconds": self.settings.zoom_seconds,
             "audio_latency_ms": parse_float(self.e_latency.get(), 0.0),
+            "music_volume": self.settings.music_volume,
+            "metronome_volume": self.settings.metronome_volume,
+            "hit_volume": self.settings.hit_volume,
         }
         self.destroy()
 

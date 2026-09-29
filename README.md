@@ -105,6 +105,7 @@ python -m unittest discover -s tests -t . -v
 | 10 播放 / 暂停 | `audio.py`、`app.py` | 任意位置起播、延迟补偿、暂停时判定线吸附网格 |
 | 11 演示模式 | `app.py::set_demo_mode` | 两平面叠加、只读、支持滚动 / 缩放 / 播放 / 暂停 |
 | 12 节拍音 | `metronome.py`、`app.py::set_metronome` | 「视图 → 节拍音」：关闭（默认）/ 小节音 / 节拍音；播放时按小节线或整拍发一声“滴”，慢放不改变这声的长度 |
+| 13 打击音效 + 音量 | `metronome.py::hits_between/hit_samples`、`ui/dialogs.py::SettingsDialog` | 物件（含长按 / 空域开头）到达判定线时响一声白噪声；“编辑器设置 → 音量”分别调音乐 / 节拍音 / 打击音（写入谱面 `editor` 段） |
 
 > 速度组的流速可正可负并叠加，因此**物件位置不是判定时刻的单调函数**（远处的物件可能被
 > 推回判定线上、近处的物件可能被甩出画面）。渲染剔除只看实际像素位置，命中测试与渲染

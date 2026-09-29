@@ -63,6 +63,9 @@
 | `horizontal_divisions` | int | 0 | 0..1 合法区域几等分（0 = 不启用横向辅助网格） |
 | `audio_latency_ms` | number | 0 | 系统音频延迟（毫秒） |
 | `metronome` | string | `"off"` | 节拍音：`off` / `bar`（每小节）/ `beat`（每拍）；缺字段或非法值按 `off` |
+| `music_volume` | number | 1.0 | 歌曲音量（0 ~ 1） |
+| `metronome_volume` | number | 0.6 | 节拍音音量（0 ~ 1） |
+| `hit_volume` | number | 0.6 | 打击音效音量（0 ~ 1） |
 
 ## 1.4 speed_groups
 
