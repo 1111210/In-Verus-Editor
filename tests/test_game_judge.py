@@ -200,3 +200,32 @@ class HoldJudgeTests(unittest.TestCase):
             judge.update(step * 100.0, inside_hold=hold, held=True)
         self.assertEqual(judge.counts[BREAK], 0)
         self.assertGreaterEqual(judge.counts[EXACT], 4)
+
+    def test_release_inside_interval_gives_near(self) -> None:
+        """区间内出现抬起事件（且按下过）-> Near。"""
+        chart, judge = self._hold(0.0, 2.0)
+        hold = chart.lane_notes[0]
+        judge.on_press(chart.timing.beat_to_song_ms(0.0), lane=0)
+        judge.update(100.0, inside_hold=hold, held=True)
+        judge.update(300.0, inside_hold=None, held=False)     # 第 2 个区间内抬起
+        judge.update(1000.0, inside_hold=None, held=False)
+        self.assertGreaterEqual(judge.counts[NEAR], 1, judge.counts)
+
+    def test_last_interval_allows_early_release(self) -> None:
+        """最后一个区间：提前 ≤50ms 抬起仍算 EXACT。"""
+        chart, judge = self._hold(0.0, 1.0)                   # 1 拍 = 500ms -> 2 个区间
+        hold = chart.lane_notes[0]
+        judge.on_press(chart.timing.beat_to_song_ms(0.0), lane=0)
+        judge.update(100.0, inside_hold=hold, held=True)
+        judge.update(240.0, inside_hold=hold, held=True)
+        judge.update(470.0, inside_hold=None, held=False)     # 结束前 30ms 抬起
+        judge.update(600.0, inside_hold=None, held=False)
+        self.assertEqual(judge.counts[NEAR], 0, judge.counts)
+        self.assertEqual(judge.counts[EXACT], 3, judge.counts)   # 开头 + 两个区间
+
+    def test_no_press_at_all_is_break(self) -> None:
+        """整段都没按下 -> 每个区间都 Break。"""
+        chart, judge = self._hold(0.0, 1.0)
+        judge.update(100.0, inside_hold=None, held=False)
+        judge.update(600.0, inside_hold=None, held=False)
+        self.assertGreaterEqual(judge.counts[BREAK], 2, judge.counts)
