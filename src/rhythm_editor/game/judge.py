@@ -115,6 +115,8 @@ class Judge:
         self.results: List[Judged] = []
         self.notes: Dict[str, Note] = {n.id: n for n in chart.all_notes()}
         self._counts: Dict[str, int] = {g: 0 for g in GRADES}
+        self.combo = 0
+        self.max_combo = 0
 
         clicks, intervals = [], []
         for note in chart.all_notes():
@@ -250,6 +252,10 @@ class Judge:
         base = sum(r.accuracy for r in self.results) / total * 100_000_000
         return int(round(base)) + self._counts[EXACT]
 
+    @property
+    def break_count(self) -> int:
+        return self._counts[BREAK]
+
     # ------------------------------------------------------------ 内部
     def _make_intervals(self, note: Note) -> _IntervalState:
         beat = float(getattr(note, "beat_start", getattr(note, "beat", 0.0)))
@@ -269,6 +275,11 @@ class Judge:
         result = Judged(note_id, grade, beat, offset)
         self.results.append(result)
         self._counts[grade] += 1
+        if grade == BREAK:
+            self.combo = 0
+        else:
+            self.combo += 1
+            self.max_combo = max(self.max_combo, self.combo)
         return result
 
     def _interval_grade(self, state: _IntervalState) -> str:

@@ -726,11 +726,16 @@ class PlayerApp:
         right_lines = (
             f"准度 {self.judge.accuracy * 100:.1f}%",
             f"分数 {self.judge.score}",
+            f"连击 {self.judge.combo}（最大 {self.judge.max_combo}）",
             "  ".join(f"{grade} {counts[grade]}" for grade in GRADES),
         )
         for index, line in enumerate(right_lines):
             surface = self.f_small.render(line, True, WHITE if index == 0 else DIM)
             self.screen.blit(surface, (self.w - surface.get_width() - 24, 16 + index * 26))
+        # 连击数醒目显示在判定面上方
+        if self.judge.combo >= 5:
+            base_y = self.scene.judgment_lines(self.w, self.h)["mouse"]
+            self.center_text(f"{self.judge.combo}", base_y - 170, self.f_big, (255, 226, 120))
 
     def _draw_result(self) -> None:
         assert self.chart is not None and self.judge is not None
@@ -749,10 +754,11 @@ class PlayerApp:
             self.text(line, (46, 140 + index * 34), self.f_mid, WHITE if index == 0 else DIM)
         counts = self.judge.counts
         self.text(f"分数：{self.judge.score}", (half + 46, 140), self.f_big, (255, 226, 120))
+        self.text(f"最大连击：{self.judge.max_combo}", (half + 46, 196), self.f_mid, WHITE)
         for index, grade in enumerate(GRADES):
             self.text(
                 f"{grade}：{counts[grade]}",
-                (half + 46, 230 + index * 34),
+                (half + 46, 250 + index * 34),
                 self.f_mid,
                 GRADE_COLORS[grade],
             )

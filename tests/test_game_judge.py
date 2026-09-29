@@ -184,6 +184,28 @@ class ScoreTests(unittest.TestCase):
         # 分数 = 1.5 / 总物件数(2) × 1e8 + EXACT 数
         self.assertEqual(judge.score, 75_000_000 + 1)
 
+    def test_combo_counts_hits_and_resets_on_break(self) -> None:
+        """连击：命中 +1，Break 清零，并记录最大连击。"""
+        chart = make_chart(
+            [
+                LaneNote("L1", 0, 0, 1.0),
+                LaneNote("L2", 1, 1, 2.0),
+                LaneNote("L3", 2, 2, 3.0),
+                LaneNote("L4", 3, 3, 4.0),
+            ]
+        )
+        judge = Judge(chart)
+        for beat in (1.0, 2.0):
+            judge.on_press(chart.timing.beat_to_song_ms(beat), lane=int(beat - 1))
+        self.assertEqual(judge.combo, 2)
+        # 第 3 个物件漏掉 -> Break，连击清零
+        judge.update(chart.timing.beat_to_song_ms(3.0) + 200.0)
+        self.assertEqual(judge.combo, 0)
+        self.assertEqual(judge.max_combo, 2)
+        judge.on_press(chart.timing.beat_to_song_ms(4.0), lane=3)
+        self.assertEqual(judge.combo, 1)
+        self.assertEqual(judge.max_combo, 2)
+
 
 class HoldJudgeTests(unittest.TestCase):
     """长按：抬起事件 → Near；最后一个区间允许提前 ≤50ms 抬起仍算 EXACT。"""

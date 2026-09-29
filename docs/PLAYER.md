@@ -40,6 +40,8 @@ python run_player.py charts/demo/demo.json # 直接选中它
 * **打击音效 + 判定飘字**：命中（EXACT / Exact / Near）响一声白噪声（复用编辑器那套
   `Metronome.play_hit()`，音量取 `player.json` 的 `hit_volume`），并在判定平面上方
   飘出对应等级的文字后淡出；Break 不响。
+* **连击**：命中 +1、Break 清零；HUD 显示当前与最大连击，连击 ≥5 时判定面上方
+  会显示大号连击数；结算页显示「最大连击」。
 * **结算**：左半元数据与玩家、右半分数与各判定数量（不显示准度），
   左下 `R 重试`、右下 `Esc 回主界面`；
 * 截图：`python tools/screenshot_player.py docs/images`
