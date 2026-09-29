@@ -55,13 +55,12 @@ STRETCH_AVAILABLE = _PYGAME is not None and _NP is not None
 # 时间伸缩参数
 STRETCH_FRAME = 2048          # 每帧样本数（约 46ms @44.1kHz）
 STRETCH_OVERLAP = 4           # 75% 重叠
-# 一次伸缩处理多少**输出**音频（原始窗口 = 这个值 × rate）：
-# 太小会频繁合成、太大则一次合成就要几百毫秒，导致画面/声音卡顿
-STRETCH_TARGET_OUTPUT_MS = 4_000.0
-STRETCH_WINDOW_MIN_MS = 400.0
-STRETCH_WINDOW_MAX_MS = 6_000.0
-STRETCH_QUEUE_AHEAD_MS = 8_000.0   # 原始音频还剩这么多毫秒就去准备下一个窗口
-MAX_QUEUED_WINDOWS = 4             # 通道里最多排几个窗口（每个 ≈ 4 秒输出）
+# 一个窗口覆盖多少**输出**音频（原始窗口 = 这个值 × rate）。
+# 通道只支持一个排队块（见 StretchedSoundBackend.poll），所以窗口取长一点：
+# 8 秒的余量足够 16ms 的 tick 从容补窗口，单次重采样也只有 ~15ms。
+STRETCH_TARGET_OUTPUT_MS = 8_000.0
+STRETCH_WINDOW_MIN_MS = 2_000.0    # 原始窗口下限
+STRETCH_WINDOW_MAX_MS = 8_000.0   # 原始窗口上限
 
 
 def audio_backend_name() -> str:
@@ -356,9 +355,11 @@ class StretchedSoundBackend:  # pragma: no cover - 依赖 pygame + numpy
         self._volume = 1.0
         self.rate = 1.0
         self._channel = None
-        # 播放窗口队列 + 下一个窗口的源起点（严格单调，见 poll）
-        self._queue: List[Tuple[object, float, float]] = []
-        self._next_source_ms = 0.0
+        # 播放窗口：当前窗口 + 一个排队窗口（见 poll）
+        self._anchor: Optional[Tuple[object, float, float]] = None
+        self._anchor_time = 0.0
+        self._queued: Optional[Tuple[object, float, float]] = None
+        self._handed_end_ms = 0.0
         self._playing = False
         self._start_source_ms = 0.0
         self._start_time = 0.0
@@ -374,22 +375,22 @@ class StretchedSoundBackend:  # pragma: no cover - 依赖 pygame + numpy
         self._samples = _NP.ascontiguousarray(array)
         self._loaded = path
         self._length_ms = float(self._samples.shape[0]) / self.freq * 1000.0
-        self._queue.clear()
-        self._next_source_ms = 0.0
+        self._queued = None
+        self._handed_end_ms = 0.0
         return True
 
     def unload(self) -> None:
         self.stop()
         self._samples = None
         self._loaded = None
-        self._queue.clear()
-        self._next_source_ms = 0.0
+        self._queued = None
+        self._handed_end_ms = 0.0
 
     def set_rate(self, rate: float) -> None:
         self._paused_ms = self.position_ms()
         self.rate = max(0.05, float(rate))
-        self._queue.clear()
-        self._next_source_ms = 0.0
+        self._queued = None
+        self._handed_end_ms = 0.0
 
     # ------------------------------------------------------------------ 播放
     def _make_window(self, start_ms: float):
@@ -424,52 +425,52 @@ class StretchedSoundBackend:  # pragma: no cover - 依赖 pygame + numpy
             return
         self._channel = _PYGAME.mixer.Channel(0)
         self._channel.play(first[0])
-        self._queue = [first]
-        self._next_source_ms = first[2]          # 下一个窗口的源起点（严格单调）
-        self._start_source_ms = max(0.0, float(start_ms))
-        self._start_time = time.perf_counter()
+        self._anchor = first                   # 正在播的窗口
+        self._anchor_time = time.perf_counter()
+        self._queued = None                    # 已排队的下一个窗口（通道只有一个槽位）
+        self._handed_end_ms = first[2]         # 已经交给通道的音频末端（严格单调）
         self._playing = True
         self.poll()
 
     def poll(self) -> None:
-        """每帧调用：按**严格单调**的源位置补窗口。
-
-        关键点：窗口起点只用 ``_next_source_ms``（上一个窗口的末端）推进，
-        不再从会被裁剪的队列里反推 —— 之前位置跑得比音频快时会跳过窗口，
-        或者把已经播过的窗口再排一次，听感就是片段丢失 / 重叠。
-        """
-        if not self._playing or self._channel is None:
+        """每帧调用：维护“当前 + 一个排队”的窗口，保证连续、不重不漏。"""
+        if not self._playing or self._channel is None or self._anchor is None:
             return
-        self._prune()
-        guard = 0
-        # 一次 tick 最多补两个窗口：避免在极慢倍速下一口气合成几十秒音频卡住界面
-        while guard < 2 and len(self._queue) < MAX_QUEUED_WINDOWS:
-            guard += 1
-            position = self.position_ms()
-            if self._next_source_ms - position > STRETCH_QUEUE_AHEAD_MS:
-                break
-            nxt = self._make_window(self._next_source_ms)
-            if nxt is None:
-                break
-            try:
-                busy = bool(self._channel.get_busy())
-            except Exception:  # pragma: no cover
-                busy = True
-            if busy:
-                self._channel.queue(nxt[0])
-            else:
-                # 通道已经空了：只能直接播（对空通道 queue() 会被丢掉）
+        now = time.perf_counter()
+        # 1) 排队的窗口到点开始播了：换锚点、腾出槽位
+        if self._queued is not None:
+            due = self._anchor_time + (
+                (self._queued[1] - self._anchor[1]) / 1000.0 / max(1e-6, self.rate)
+            )
+            if now >= due - 0.05:
+                self._anchor = self._queued
+                self._anchor_time = due
+                self._queued = None
+        # 2) 断流检测：通道空了但还有没播完的音频 -> 立刻补上
+        try:
+            busy = bool(self._channel.get_busy())
+        except Exception:  # pragma: no cover
+            busy = True
+        if not busy:
+            nxt = self._make_window(self._handed_end_ms)
+            if nxt is not None:
                 self._channel.play(nxt[0])
-                self._start_source_ms = nxt[1]
-                self._start_time = time.perf_counter()
-            self._queue.append(nxt)
-            self._next_source_ms = nxt[2]
+                self._anchor = nxt
+                self._anchor_time = time.perf_counter()
+                self._queued = None
+                self._handed_end_ms = nxt[2]
+            return
+        # 3) 槽位空着就补一个排队窗口（通道只支持一个排队的块）
+        if self._queued is None:
+            nxt = self._make_window(self._handed_end_ms)
+            if nxt is not None:
+                self._channel.queue(nxt[0])
+                self._queued = nxt
+                self._handed_end_ms = nxt[2]
 
     def _prune(self) -> None:
-        """丢掉确实已经播完的窗口（保留队尾，供音量同步等使用）。"""
-        position = self.position_ms()
-        while len(self._queue) > 2 and self._queue[0][2] <= position:
-            self._queue.pop(0)
+        """保留接口：现在没有需要裁剪的队列（单槽位）。"""
+        return
 
     def stop(self) -> None:
         if self._channel is not None:
@@ -478,7 +479,8 @@ class StretchedSoundBackend:  # pragma: no cover - 依赖 pygame + numpy
             except Exception:
                 pass
         self._channel = None
-        self._queue = []
+        self._queued = None
+        self._anchor = None
         self._playing = False
         self._paused_ms = 0.0
 
@@ -490,20 +492,21 @@ class StretchedSoundBackend:  # pragma: no cover - 依赖 pygame + numpy
             except Exception:
                 pass
         self._channel = None
-        self._queue = []
+        self._queued = None
+        self._anchor = None
         self._playing = False
 
     def position_ms(self) -> float:
-        if not self._playing:
+        if not self._playing or self._anchor is None:
             return self._paused_ms
-        elapsed = (time.perf_counter() - self._start_time) * 1000.0 * self.rate
-        position = self._start_source_ms + elapsed
-        # 不超过“已经排上去的音频”末端，否则调度会跑到音频前面
-        return min(position, self._next_source_ms, self._length_ms)
+        elapsed = (time.perf_counter() - self._anchor_time) * 1000.0 * self.rate
+        position = self._anchor[1] + elapsed
+        # 不超过当前窗口末端，也不超过已交给通道的音频末端
+        return min(position, self._anchor[2], self._length_ms)
 
     def set_volume(self, volume: float) -> None:
         self._volume = float(volume)
-        for window in self._queue:
+        for window in [w for w in (self._anchor, self._queued) if w is not None]:
             try:
                 window[0].set_volume(max(0.0, min(1.0, self._volume)))
             except Exception:

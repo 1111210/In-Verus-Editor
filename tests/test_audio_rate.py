@@ -194,6 +194,58 @@ class TimeStretchTests(unittest.TestCase):
                 cursor = window[2]
             self.assertAlmostEqual(played * 1000.0, cursor / rate, delta=5.0)
 
+    def test_scheduler_keeps_audio_continuous(self) -> None:
+        """回归：pygame 通道只认**一个**排队块，调度必须一次只排一个、连续补上。
+
+        把窗口缩短到 0.5 秒，2 秒里跨 4 个窗口边界，检查中途不断音、
+        且“已交给通道的音频末端”单调递增（既不丢段也不重复）。
+        """
+        import numpy as np
+
+        from rhythm_editor import audio as audio_module
+        from rhythm_editor.audio import StretchedSoundBackend
+
+        old = (
+            audio_module.STRETCH_TARGET_OUTPUT_MS,
+            audio_module.STRETCH_WINDOW_MIN_MS,
+            audio_module.STRETCH_WINDOW_MAX_MS,
+        )
+        audio_module.STRETCH_TARGET_OUTPUT_MS = 500.0
+        audio_module.STRETCH_WINDOW_MIN_MS = 100.0
+        audio_module.STRETCH_WINDOW_MAX_MS = 500.0
+        try:
+            freq = 44100
+            t = np.arange(freq * 6) / freq
+            tone = (np.sin(2 * np.pi * 440 * t) * 4000).astype(np.int16)
+            backend = StretchedSoundBackend()
+            backend._samples = np.ascontiguousarray(np.repeat(tone.reshape(-1, 1), 2, axis=1))
+            backend._length_ms = 6_000.0
+            backend.rate = 0.5
+            backend.play(0.0)
+            gaps = []
+            handed = []
+            was_playing = True
+            start = time.perf_counter()
+            while time.perf_counter() - start < 2.0:
+                backend.poll()
+                playing = backend.is_playing
+                if was_playing and not playing:
+                    gaps.append(time.perf_counter() - start)
+                was_playing = playing
+                handed.append(backend._handed_end_ms)
+                time.sleep(0.01)
+            backend.stop()
+            self.assertEqual(gaps, [], "窗口边界处不能断音")
+            self.assertTrue(all(a <= b for a, b in zip(handed, handed[1:])), "交付末端必须单调")
+            # 2 秒 × 0.5 倍速 ≈ 1 秒素材，窗口 0.5 秒 -> 至少跨过 2 个边界
+            self.assertGreaterEqual(len(set(handed)), 3)
+        finally:
+            (
+                audio_module.STRETCH_TARGET_OUTPUT_MS,
+                audio_module.STRETCH_WINDOW_MIN_MS,
+                audio_module.STRETCH_WINDOW_MAX_MS,
+            ) = old
+
 
 if __name__ == "__main__":
     unittest.main()
