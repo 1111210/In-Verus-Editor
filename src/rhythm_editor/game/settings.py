@@ -29,7 +29,11 @@ class PlayerSettings:
 
     player_name: str = "Player"
     keys: List[str] = field(default_factory=lambda: list(DEFAULT_KEYS))
-    note_thickness: float = 0.35          # 物件厚度（单位，除空域外）
+    # 各物件的厚度（单位）：长按和空域没有厚度，所以只有下面四种
+    note_thickness: float = 0.35          # 单键
+    multi_thickness: float = 0.35         # 多轨单键
+    slide_thickness: float = 0.03         # 滑键图案高度
+    click_thickness: float = 0.03         # 鼠标点击按键图案高度
     audio_latency_ms: float = 0.0         # 系统音频延迟（毫秒，可为负）
     speed: float = 1.0                    # 流速 1.0 ~ 10.0（0.1 一档）；可视毫秒 = 1500 / 流速
     side_lane_highlight: bool = False     # 6K 第 1 / 第 6 轨高亮
@@ -49,6 +53,9 @@ class PlayerSettings:
         while len(self.keys) < 6:
             self.keys.append(DEFAULT_KEYS[len(self.keys)])
         self.note_thickness = min(1.0, max(0.05, float(self.note_thickness)))
+        self.multi_thickness = min(1.0, max(0.05, float(self.multi_thickness)))
+        self.slide_thickness = min(0.3, max(0.005, float(self.slide_thickness)))
+        self.click_thickness = min(0.3, max(0.005, float(self.click_thickness)))
         self.audio_latency_ms = min(5000.0, max(-5000.0, float(self.audio_latency_ms)))
         self.speed = round(min(SPEED_MAX, max(SPEED_MIN, float(self.speed))), 1)
         self.mouse_sensitivity = min(10.0, max(0.1, float(self.mouse_sensitivity)))
@@ -82,6 +89,9 @@ class PlayerSettings:
             player_name=str(data.get("player_name", "Player")),
             keys=list(data.get("keys", DEFAULT_KEYS)),  # type: ignore[arg-type]
             note_thickness=float(data.get("note_thickness", 0.35)),
+            multi_thickness=float(data.get("multi_thickness", data.get("note_thickness", 0.35))),
+            slide_thickness=float(data.get("slide_thickness", 0.03)),
+            click_thickness=float(data.get("click_thickness", 0.03)),
             audio_latency_ms=float(data.get("audio_latency_ms", 0.0)),
             speed=float(data.get("speed", _speed_from_legacy(data.get("scroll_ms")))),
             side_lane_highlight=bool(data.get("side_lane_highlight", False)),

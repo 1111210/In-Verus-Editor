@@ -180,6 +180,9 @@ class PlayerApp:
         self._overlay: Optional[pygame.Surface] = None
         self.gl_cost = 0.0                 # OpenGL 呈现耗时（指数平滑，太慢就回退）
         self.gl_frames = 0
+        self.fullscreen = False            # F11 全屏状态
+        self.windowed_size: Optional[Tuple[int, int]] = None
+        self.maximized = False             # F10 最大化状态（非 Windows 下的退路用）
         self._prime_window()
         try:
             desktop = pygame.display.get_desktop_sizes()[0]
@@ -217,13 +220,22 @@ class PlayerApp:
         except Exception:                                  # pragma: no cover - 依赖驱动
             return False
 
-    def _make_display(self, width: int, height: int, verify: bool = True):
+    def _make_display(
+        self, width: int, height: int, verify: bool = True, fullscreen: bool = False
+    ):
         """按设置创建显示：opengl 成功**且自检通过**才用 GL，否则回退软件渲染。"""
-        width, height = self._fit_to_desktop(width, height)
+        if fullscreen:
+            try:                                       # 全屏用桌面分辨率
+                width, height = pygame.display.get_desktop_sizes()[0]
+            except Exception:                          # pragma: no cover - 依赖驱动
+                pass
+        else:
+            width, height = self._fit_to_desktop(width, height)
+        window_flags = pygame.FULLSCREEN if fullscreen else pygame.RESIZABLE
         if self.settings.renderer == "opengl" and glview.available():
             try:
                 pygame.display.set_mode(
-                    (width, height), pygame.OPENGL | pygame.DOUBLEBUF | pygame.RESIZABLE
+                    (width, height), pygame.OPENGL | pygame.DOUBLEBUF | window_flags
                 )
                 self.gl_presenter = glview.GLPresenter()
                 size = pygame.display.get_window_size() or (width, height)
@@ -240,7 +252,7 @@ class PlayerApp:
                 psettings.save_settings(self.settings)
         self.gl_presenter = None
         self.renderer_name = "software"
-        return pygame.display.set_mode((width, height), pygame.RESIZABLE)
+        return pygame.display.set_mode((width, height), window_flags)
 
     def _prime_window(self) -> None:
         """建好窗口后立刻刷一帧：有些驱动会“一直黑到被 resize”，先自己刷两次。"""
@@ -316,8 +328,13 @@ class PlayerApp:
                 self._present()
             elif event.type == pygame.KEYDOWN and event.key == pygame.K_F2:
                 self._switch_renderer()
+            elif event.type == pygame.KEYDOWN and event.key == pygame.K_F10:
+                self._maximize_window()
+            elif event.type == pygame.KEYDOWN and event.key == pygame.K_F11:
+                self._toggle_fullscreen()
             elif event.type == pygame.VIDEORESIZE:
-                self.screen = self._make_display(max(800, event.w), max(500, event.h))
+                # 只跟随窗口尺寸（**不要**再 set_mode，否则最大化会被立刻打回原大小）
+                self._sync_display_size(event.w, event.h)
             elif self.state == "menu":
                 self._event_menu(event)
             elif self.state == "settings":
@@ -349,6 +366,67 @@ class PlayerApp:
             "（F2 切换）"
         )
         print(f"[In Verus 游玩器] 渲染后端：{self.renderer_name} · 窗口 {self.w}x{self.h}", flush=True)
+
+    # ------------------------------------------------------ 窗口尺寸 / 全屏
+    def _sync_display_size(self, width: Optional[int] = None, height: Optional[int] = None) -> None:
+        """窗口被最大化 / 拉大 / 全屏后跟上尺寸。
+
+        软件渲染直接用 SDL 的显示表面（SDL 自己已经改好尺寸），GL 模式要重建离屏表面。
+        **不要再 set_mode**：那会把刚最大化的窗口打回原大小。
+        """
+        if width and height:
+            size = (int(width), int(height))
+        else:
+            try:
+                size = pygame.display.get_window_size()
+            except Exception:                          # pragma: no cover - 依赖驱动
+                return
+        if size[0] <= 0 or size[1] <= 0:
+            return
+        if self.gl_presenter is not None:
+            self.screen = pygame.Surface(size)
+            return
+        surface = pygame.display.get_surface()
+        if surface is not None:
+            self.screen = surface
+
+    def _maximize_window(self) -> None:
+        """F10：最大化 / 还原窗口（Windows 交给系统；其它平台退化成“铺满桌面”）。"""
+        self.maximized = not self.maximized
+        if os.name == "nt":
+            try:
+                import ctypes
+
+                hwnd = pygame.display.get_wm_info().get("window")
+                if hwnd:
+                    # 3 = SW_MAXIMIZE，9 = SW_RESTORE
+                    ctypes.windll.user32.ShowWindow(int(hwnd), 3 if self.maximized else 9)
+                    self.message = "已最大化窗口（F10 还原）" if self.maximized else "已还原窗口（F10）"
+                    return
+            except Exception:                          # pragma: no cover - 依赖系统
+                pass
+        try:
+            desktop_w, desktop_h = pygame.display.get_desktop_sizes()[0]
+        except Exception:                              # pragma: no cover - 依赖驱动
+            desktop_w, desktop_h = SCREEN_W, SCREEN_H
+        if self.maximized:
+            self.screen = self._make_display(desktop_w, max(600, desktop_h - 96))
+            self.message = "已铺满桌面（F10 还原）"
+        else:
+            self.screen = self._make_display(*(self.windowed_size or (SCREEN_W, SCREEN_H)))
+            self.message = "已还原窗口（F10）"
+
+    def _toggle_fullscreen(self) -> None:
+        """F11：全屏 / 窗口互相切换（按**桌面分辨率**全屏，GL 与软件渲染都支持）。"""
+        self.fullscreen = not self.fullscreen
+        if self.fullscreen:
+            self.windowed_size = (self.w, self.h)
+            self.screen = self._make_display(*self.windowed_size, fullscreen=True)
+            self.message = "已全屏（F11 退出全屏）"
+        else:
+            width, height = self.windowed_size or (SCREEN_W, SCREEN_H)
+            self.screen = self._make_display(width, height, fullscreen=False)
+            self.message = "已回到窗口（F11 全屏）"
 
     # ------------------------------------------------------------ 菜单
     def _event_menu(self, event) -> None:
@@ -542,53 +620,79 @@ class PlayerApp:
 
     # ------------------------------------------------------------ 设置
     SETTING_ROWS = (
-        "玩家名称（回车输入）",
-        "6K 键位（回车逐轨输入）",
-        "物件厚度",
-        "系统音频延迟(ms)",
-        "流速（可视毫秒 = 1500 / 流速）",
-        "鼠标灵敏度",
-        "侧轨高亮",
-        "无界鼠标模式",
-        "音乐音量",
-        "打击音效音量",
-        "渲染后端（软件 / OpenGL）",
-        "倍速（0.1~3.0x）",
+        ("player_name", "玩家名称（回车输入）"),
+        ("keys", "6K 键位（回车逐轨输入）"),
+        ("note_thickness", "单键厚度"),
+        ("multi_thickness", "多轨单键厚度"),
+        ("slide_thickness", "滑键厚度"),
+        ("click_thickness", "鼠标点击厚度"),
+        ("audio_latency_ms", "系统音频延迟(ms)"),
+        ("speed", "流速（可视毫秒 = 1500 / 流速）"),
+        ("mouse_sensitivity", "鼠标灵敏度"),
+        ("side_lane_highlight", "侧轨高亮"),
+        ("unbounded_mouse", "无界鼠标模式"),
+        ("music_volume", "音乐音量"),
+        ("hit_volume", "打击音效音量"),
+        ("renderer", "渲染后端（软件 / OpenGL）"),
+        ("rate", "倍速（0.1~3.0x）"),
     )
-    # 数字类选项（有 − / ● / + 三个按钮；点 ● 可以自定义输入）：行号 -> (最小, 最大, 步进)
+    # 数字类选项（有 − / ● / + 三个按钮；点 ● 可以自定义输入）：字段名 -> (最小, 最大, 步进)
     NUMERIC_ROWS = {
-        2: (0.05, 1.0, 0.05),
-        3: (-5000.0, 5000.0, 5.0),
-        4: (psettings.SPEED_MIN, psettings.SPEED_MAX, psettings.SPEED_STEP),
-        5: (0.1, 10.0, 0.1),
-        8: (0.0, 1.0, 0.05),
-        9: (0.0, 1.0, 0.05),
-        11: (psettings.RATE_MIN, psettings.RATE_MAX, psettings.RATE_STEP),
+        "note_thickness": (0.05, 1.0, 0.05),
+        "multi_thickness": (0.05, 1.0, 0.05),
+        "slide_thickness": (0.005, 0.3, 0.005),
+        "click_thickness": (0.005, 0.3, 0.005),
+        "audio_latency_ms": (-5000.0, 5000.0, 5.0),
+        "speed": (psettings.SPEED_MIN, psettings.SPEED_MAX, psettings.SPEED_STEP),
+        "mouse_sensitivity": (0.1, 10.0, 0.1),
+        "music_volume": (0.0, 1.0, 0.05),
+        "hit_volume": (0.0, 1.0, 0.05),
+        "rate": (psettings.RATE_MIN, psettings.RATE_MAX, psettings.RATE_STEP),
     }
+    TOGGLE_ROWS = ("side_lane_highlight", "unbounded_mouse")
 
-    def _setting_value_text(self, row: int) -> str:
+    def _row_key(self, index: Optional[int] = None) -> str:
+        return self.SETTING_ROWS[self.settings_row if index is None else index][0]
+
+    def _row_label(self, index: Optional[int] = None) -> str:
+        return self.SETTING_ROWS[self.settings_row if index is None else index][1]
+
+    def _row_index(self, key: str) -> int:
+        """字段名 -> 行号（测试 / 内部跳转用）。"""
+        for index, (name, _label) in enumerate(self.SETTING_ROWS):
+            if name == key:
+                return index
+        raise KeyError(key)
+
+    def _setting_value_text(self, key: str) -> str:
         s = self.settings
-        if row == 0:
+        if key == "player_name":
             return s.player_name
-        if row == 1:
+        if key == "keys":
             return " ".join(s.keys)
-        if row == 2:
+        if key == "note_thickness":
             return f"{s.note_thickness:.2f}"
-        if row == 3:
+        if key == "multi_thickness":
+            return f"{s.multi_thickness:.2f}"
+        if key == "slide_thickness":
+            return f"{s.slide_thickness:.3f}"
+        if key == "click_thickness":
+            return f"{s.click_thickness:.3f}"
+        if key == "audio_latency_ms":
             return f"{s.audio_latency_ms:.0f} ms"
-        if row == 4:
+        if key == "speed":
             return f"{s.speed:.1f}（可视 {s.scroll_ms:.0f} ms）"
-        if row == 5:
+        if key == "mouse_sensitivity":
             return f"{s.mouse_sensitivity:.2f}x"
-        if row == 6:
+        if key == "side_lane_highlight":
             return "开" if s.side_lane_highlight else "关"
-        if row == 7:
+        if key == "unbounded_mouse":
             return "开" if s.unbounded_mouse else "关"
-        if row == 8:
+        if key == "music_volume":
             return f"{s.music_volume * 100:.0f}%"
-        if row == 9:
+        if key == "hit_volume":
             return f"{s.hit_volume * 100:.0f}%"
-        if row == 10:
+        if key == "renderer":
             return "OpenGL（切换即生效）" if s.renderer == "opengl" else "软件"
         return f"{s.rate:.1f}x（得分 ×{s.rate ** 1.5:.2f}）"
 
@@ -630,7 +734,7 @@ class PlayerApp:
             self._adjust_setting(1)
         elif kind == "set_dot":
             self.settings_row = index
-            self._prompt_number(index)
+            self._prompt_number(self._row_key())
         elif kind == "set":
             if index == self.settings_row:
                 self._edit_setting_text()
@@ -640,12 +744,12 @@ class PlayerApp:
 
     def _edit_setting_text(self) -> None:
         s = self.settings
-        row = self.settings_row
-        if row == 0:
+        key = self._row_key()
+        if key == "player_name":
             entered = self._prompt("玩家名称", s.player_name)
             if entered is not None:
                 s.player_name = entered
-        elif row == 1:
+        elif key == "keys":
             for index, name in enumerate(s.keys):
                 picked = self._prompt_key(f"第 {index + 1} 轨（现在是 {name}）")
                 if not picked or picked == name:
@@ -655,59 +759,36 @@ class PlayerApp:
                     other = s.keys.index(picked)
                     s.keys[other] = name
                 s.keys[index] = picked
-        elif row in self.NUMERIC_ROWS:
-            self._prompt_number(row)
-        elif row == 6:
-            s.side_lane_highlight = not s.side_lane_highlight
-        elif row == 7:
-            s.unbounded_mouse = not s.unbounded_mouse
-        elif row == 10:
+        elif key in self.NUMERIC_ROWS:
+            self._prompt_number(key)
+        elif key in self.TOGGLE_ROWS:
+            setattr(s, key, not getattr(s, key))
+        elif key == "renderer":
             self._switch_renderer()
         s.normalize()
 
-    def _setting_number(self, row: int) -> float:
-        s = self.settings
-        return {
-            2: s.note_thickness,
-            3: s.audio_latency_ms,
-            4: s.speed,
-            5: s.mouse_sensitivity,
-            8: s.music_volume,
-            9: s.hit_volume,
-            11: s.rate,
-        }[row]
+    def _setting_number(self, key: str) -> float:
+        return float(getattr(self.settings, key))
 
-    def _set_setting_number(self, row: int, value: float) -> None:
+    def _set_setting_number(self, key: str, value: float) -> None:
         s = self.settings
-        if row == 2:
-            s.note_thickness = value
-        elif row == 3:
-            s.audio_latency_ms = value
-        elif row == 4:
-            s.speed = value
-        elif row == 5:
-            s.mouse_sensitivity = value
-        elif row == 8:
-            s.music_volume = value
-            if self.state == "play":
-                self.audio.set_volume(s.music_volume)
-        elif row == 9:
-            s.hit_volume = value
-            if self.state == "play":
-                self.hits.set_volume(s.hit_volume)
-        elif row == 11:
-            s.rate = value
+        setattr(s, key, value)
+        if key == "music_volume" and self.state == "play":
+            self.audio.set_volume(s.music_volume)
+        elif key == "hit_volume" and self.state == "play":
+            self.hits.set_volume(s.hit_volume)
+        elif key == "rate":
             if self.judge is not None:
                 self.judge.rate = s.rate
             self.audio.set_rate(s.rate)
         s.normalize()
 
-    def _prompt_number(self, row: int) -> None:
+    def _prompt_number(self, key: str) -> None:
         """数字类选项的自定义输入（点 ● 或在选中行按回车）。"""
-        low, high, step = self.NUMERIC_ROWS[row]
-        current = self._setting_number(row)
+        low, high, step = self.NUMERIC_ROWS[key]
+        current = self._setting_number(key)
         entered = self._prompt(
-            f"{self.SETTING_ROWS[row]}：{low:g} ~ {high:g}（{step:g} 一档）",
+            f"{self._row_label()}：{low:g} ~ {high:g}（{step:g} 一档）",
             f"{current:g}",
             select_all=True,
         )
@@ -722,16 +803,16 @@ class PlayerApp:
             self.message = f"“{entered}”不是数字"
             return
         value = min(high, max(low, round(value / step) * step))
-        self._set_setting_number(row, round(value, 2))
+        self._set_setting_number(key, round(value, 3))
         self.message = ""
 
     def _adjust_setting(self, step: int) -> None:
-        row = self.settings_row
-        if row in self.NUMERIC_ROWS:
-            low, high, delta = self.NUMERIC_ROWS[row]
-            value = min(high, max(low, self._setting_number(row) + delta * step))
-            self._set_setting_number(row, round(value, 2))
-        elif row in (0, 1):
+        key = self._row_key()
+        if key in self.NUMERIC_ROWS:
+            low, high, delta = self.NUMERIC_ROWS[key]
+            value = min(high, max(low, self._setting_number(key) + delta * step))
+            self._set_setting_number(key, round(value, 3))
+        elif key in ("player_name", "keys"):
             return                                    # 文本类：回车 / 点行才输入
         else:
             self._edit_setting_text()                 # 开关 / 后端：左右键等价于切换
@@ -1094,7 +1175,7 @@ class PlayerApp:
     def _draw_menu(self) -> None:
         self.center_text("In Verus 游玩器", 64, self.f_big, WHITE)
         self.center_text(
-            "↑↓ 选择（Home/End 跳首尾） · Enter 确认 · O 打开其他 JSON · S 设置 · Esc 退出",
+            "↑↓ 选择 · Enter 确认 · O 打开其他 JSON · S 设置 · F2 渲染后端 · F10 最大化 · F11 全屏 · Esc 退出",
             122,
             self.f_small,
             DIM,
@@ -1177,7 +1258,7 @@ class PlayerApp:
         # 窗口矮的时候自动压缩行距，保证 12 行 + 底部说明都能放下
         top = 96
         pitch = min(44, max(30, (self.h - top - 80) // len(self.SETTING_ROWS)))
-        for index, label in enumerate(self.SETTING_ROWS):
+        for index, (_key, label) in enumerate(self.SETTING_ROWS):
             y = top + index * pitch
             chosen = index == self.settings_row
             row = pygame.Rect(40, y - 6, self.w - 80, 40)
@@ -1186,7 +1267,8 @@ class PlayerApp:
                 pygame.draw.rect(self.screen, PANEL, row, border_radius=6)
             label_text = ("> " if chosen else "  ") + label
             self.text(label_text, (60, y), self.f_mid, ACCENT if chosen else DIM)
-            numeric = index in self.NUMERIC_ROWS
+            row_key = _key
+            numeric = row_key in self.NUMERIC_ROWS
             value_right = self.w - 60
             if numeric:                       # 数字类：− ● +（● = 自定义输入）
                 minus = pygame.Rect(self.w - 196, y - 6, 34, 38)
@@ -1216,7 +1298,7 @@ class PlayerApp:
                 value_right = minus.x - 16
             label_width = self.f_mid.size(label_text)[0]
             text = self._fit_text(
-                self._setting_value_text(index), self.f_mid, value_right - (60 + label_width + 24)
+                self._setting_value_text(row_key), self.f_mid, value_right - (60 + label_width + 24)
             )
             surface = self.f_mid.render(text, True, WHITE)
             self.screen.blit(surface, (value_right - surface.get_width(), y))
@@ -1449,7 +1531,12 @@ class PlayerApp:
                 2,
             )
         else:
-            thickness = self.settings.note_thickness
+            # 单键 / 多轨单键分别用各自的厚度
+            thickness = (
+                self.settings.multi_thickness
+                if note.is_multi
+                else self.settings.note_thickness
+            )
             near, near2 = self._proj(x0, 0.0, max(0.0, head_z)), self._proj(x1, 0.0, max(0.0, head_z))
             far_z = min(START_Z, max(0.0, head_z) + thickness)
             far, far2 = self._proj(x0, 0.0, far_z), self._proj(x1, 0.0, far_z)
@@ -1492,13 +1579,15 @@ class PlayerApp:
         if isinstance(note, MouseSlide):
             lo, hi = note.x_range()
             color = (110, 230, 160) if note.direction >= 0 else (235, 210, 110)
+            height = self.settings.slide_thickness
         else:
             assert isinstance(note, MouseClick)
             lo, hi = note.x_range()
             color = (235, 90, 80)
+            height = self.settings.click_thickness
         x0 = MOUSE_LEFT + min(lo, hi) * MOUSE_LEGAL_WIDTH
         x1 = MOUSE_LEFT + max(lo, hi) * MOUSE_LEGAL_WIDTH
-        top = MOUSE_PLANE_HEIGHT + NOTE_HEIGHT_UNIT
+        top = MOUSE_PLANE_HEIGHT + height
         middle = (MOUSE_PLANE_HEIGHT + top) / 2
         self._alpha_quad(
             [
@@ -1582,10 +1671,14 @@ class PlayerApp:
     def _draw_result(self) -> None:
         assert self.chart is not None and self.judge is not None
         meta = self.chart.metadata
-        half = self.w // 2
-        pygame.draw.rect(self.screen, PANEL, (16, 16, half - 32, self.h - 32))
-        pygame.draw.rect(self.screen, PANEL, (half + 16, 16, half - 32, self.h - 32))
-        self.text("结算", (46, 40), self.f_big, WHITE)
+        # 左 1/3（元数据 / 玩家）、右 2/3（分数与判定）
+        split = self._result_split()
+        left_w = split
+        pygame.draw.rect(self.screen, PANEL, (16, 16, left_w - 24, self.h - 32))
+        pygame.draw.rect(
+            self.screen, PANEL, (split + 8, 16, self.w - split - 24, self.h - 32)
+        )
+        self.text("结算", (40, 40), self.f_big, WHITE)
         left_lines = (
             meta.title,
             meta.artist,
@@ -1593,27 +1686,29 @@ class PlayerApp:
             f"玩家：{self.settings.player_name}",
         )
         for index, line in enumerate(left_lines):
-            self.text(line, (46, 140 + index * 34), self.f_mid, WHITE if index == 0 else DIM)
+            self.text(line, (40, 140 + index * 34), self.f_mid, WHITE if index == 0 else DIM)
         counts = self.judge.counts
         self.text(
-            f"分数：{self.judge.score}（倍速 {self.settings.rate:.1f}x，×{self.settings.rate ** 1.5:.2f}）",
-            (half + 46, 140),
+            self._result_score_line(),
+            (split + 40, 140),
             self.f_big,
             (255, 226, 120),
         )
-        self.text(f"最大连击：{self.judge.max_combo}", (half + 46, 196), self.f_mid, WHITE)
+        self.text(f"最大连击：{self.judge.max_combo}", (split + 40, 196), self.f_mid, WHITE)
         total = max(1, self.judge.total_notes)
         self.text(
             f"判定数：{self.judge.judged_notes} / {self.judge.total_notes}",
-            (half + 46, 226),
+            (split + 40, 226),
             self.f_small,
             DIM,
         )
+        # 判定明细横着排（右栏更宽，够放下 4 列）
+        column_w = max(120, (self.w - split - 80) // 4)
         for index, grade in enumerate(GRADES):
             share = counts[grade] / total * 100.0
             self.text(
                 f"{grade}：{counts[grade]}（{share:.1f}%）",
-                (half + 46, 258 + index * 34),
+                (split + 40 + index % 2 * (column_w * 2), 262 + index // 2 * 40),
                 self.f_mid,
                 GRADE_COLORS[grade],
             )
@@ -1632,6 +1727,15 @@ class PlayerApp:
                 surface,
                 (rect.centerx - surface.get_width() / 2, rect.centery - surface.get_height() / 2),
             )
+
+    def _result_split(self) -> int:
+        """结算页左右分栏位置：左栏 1/3、右栏 2/3。"""
+        return int(self.w / 3)
+
+    def _result_score_line(self) -> str:
+        """结算页分数行（**不显示倍速和倍率**）。"""
+        assert self.judge is not None
+        return f"分数：{self.judge.score}"
 
     def _event_result(self, event) -> None:
         if event.type == pygame.MOUSEMOTION:

@@ -102,11 +102,11 @@ class PlayerAppSmokeTests(unittest.TestCase):
     def test_volumes_and_pause(self) -> None:
         """设置里能调音乐/打击音量；空格暂停并能在暂停后继续。"""
         app = self.app
-        app.settings_row = 8
+        app.settings_row = app._row_index("music_volume")
         before = app.settings.music_volume
         app._adjust_setting(-1)
         self.assertLess(app.settings.music_volume, before)
-        app.settings_row = 9
+        app.settings_row = app._row_index("hit_volume")
         hit_before = app.settings.hit_volume
         app._adjust_setting(-1)
         self.assertLess(app.settings.hit_volume, hit_before)
@@ -121,7 +121,7 @@ class PlayerAppSmokeTests(unittest.TestCase):
     def test_rate_control_and_score_multiplier(self) -> None:
         """游玩器倍速：设置里 0.1 一档、0.1~1.0x；游玩中按 [-] 改倍速并自动暂停。"""
         app = self.app
-        app.settings_row = 11
+        app.settings_row = app._row_index("rate")
         app._adjust_setting(-1)
         self.assertAlmostEqual(app.settings.rate, 0.9, places=6)
         app._enter_loading()
@@ -139,7 +139,7 @@ class PlayerAppSmokeTests(unittest.TestCase):
         """切到 OpenGL：能建上下文**且自检通过**才用 GL，否则回退软件并记住该配置。"""
         app = self.app
         self.assertEqual(app.renderer_name, "software")
-        app.settings_row = 10
+        app.settings_row = app._row_index("renderer")
         app._adjust_setting(1)
         if app.renderer_name == "opengl":
             self.assertEqual(app.settings.renderer, "opengl")
@@ -309,7 +309,7 @@ class PlayerAppSmokeTests(unittest.TestCase):
         pygame.event.get = lambda *a, **k: queue.pop(0) if queue else []
         try:
             self.assertEqual(app._prompt("玩家名称", ""), "测A")
-            app.settings_row = 1
+            app.settings_row = app._row_index("keys")
             queue.extend(
                 [
                     [pygame.event.Event(pygame.KEYDOWN, key=pygame.K_LSHIFT)],
@@ -332,13 +332,14 @@ class PlayerAppSmokeTests(unittest.TestCase):
         self.assertEqual(app.state, "loading")
         app.state = "settings"
         app._draw()
-        app.settings_row = 0
-        plus = app.ui["set_plus:3"]
+        latency_row = app._row_index("audio_latency_ms")
+        app.settings_row = app._row_index("player_name")
+        plus = app.ui[f"set_plus:{latency_row}"]
         before = app.settings.audio_latency_ms
         app._event_settings(pygame.event.Event(pygame.MOUSEBUTTONDOWN, button=1, pos=plus.center))
-        self.assertEqual(app.settings_row, 3)
+        self.assertEqual(app.settings_row, latency_row)
         self.assertGreater(app.settings.audio_latency_ms, before)
-        toggle = app.ui["set:6"]
+        toggle = app.ui[f"set:{app._row_index('side_lane_highlight')}"]
         app._event_settings(pygame.event.Event(pygame.MOUSEBUTTONDOWN, button=1, pos=toggle.center))
         app._event_settings(pygame.event.Event(pygame.MOUSEBUTTONDOWN, button=1, pos=toggle.center))
         self.assertTrue(app.settings.side_lane_highlight, "再点一次该行 = 切换")
@@ -415,7 +416,7 @@ class PlayerAppSmokeTests(unittest.TestCase):
         """第 4 行是流速（1~10，0.1 一档，可视毫秒 = 1500/流速），● 可以自定义输入。"""
         app = self.app
         pygame = self.pygame
-        app.settings_row = 4
+        app.settings_row = app._row_index("speed")
         self.assertAlmostEqual(app.settings.speed, 1.0)
         app._adjust_setting(1)
         self.assertAlmostEqual(app.settings.speed, 1.1)
@@ -431,7 +432,7 @@ class PlayerAppSmokeTests(unittest.TestCase):
         # 点 ● -> 输入 4.5 回车
         app.state = "settings"
         app._draw()
-        dot = app.ui["set_dot:4"]
+        dot = app.ui[f"set_dot:{app._row_index('speed')}"]
         queue = [
             [pygame.event.Event(pygame.TEXTINPUT, text="4.5")],
             [pygame.event.Event(pygame.KEYDOWN, key=pygame.K_RETURN)],
@@ -453,26 +454,29 @@ class PlayerAppSmokeTests(unittest.TestCase):
         pygame = self.pygame
         app.state = "settings"
         app._draw()
-        for row in (0, 1, 6, 7, 10):               # 玩家名 / 键位 / 开关 / 后端
+        for key in ("player_name", "keys", "side_lane_highlight", "unbounded_mouse", "renderer"):
+            row = app._row_index(key)
             self.assertNotIn(f"set_minus:{row}", app.ui)
             self.assertNotIn(f"set_plus:{row}", app.ui)
             self.assertNotIn(f"set_dot:{row}", app.ui)
             self.assertIn(f"set:{row}", app.ui)
-        for row in sorted(app.NUMERIC_ROWS):       # 数字类：− ● +
+        for key in sorted(app.NUMERIC_ROWS):       # 数字类：− ● +
+            row = app._row_index(key)
             self.assertIn(f"set_minus:{row}", app.ui)
             self.assertIn(f"set_dot:{row}", app.ui)
             self.assertIn(f"set_plus:{row}", app.ui)
         # 非数字行仍然可以点行切换 / 输入
-        app.settings_row = 6
+        side_row = app._row_index("side_lane_highlight")
+        app.settings_row = side_row
         self.assertFalse(app.settings.side_lane_highlight)
-        row = app.ui["set:6"]
+        row = app.ui[f"set:{side_row}"]
         app._event_settings(pygame.event.Event(pygame.MOUSEBUTTONDOWN, button=1, pos=row.center))
         self.assertTrue(app.settings.side_lane_highlight, "点已选中的行 = 切换开关")
 
     def test_rate_can_go_up_to_three(self) -> None:
         """倍速上限扩大到 3x（0.1 一档），分数 = 基础分 × 倍速^1.5。"""
         app = self.app
-        app.settings_row = 11
+        app.settings_row = app._row_index("rate")
         for _ in range(60):
             app._adjust_setting(1)
         self.assertAlmostEqual(app.settings.rate, 3.0)
@@ -486,6 +490,68 @@ class PlayerAppSmokeTests(unittest.TestCase):
         for _ in range(60):
             app._adjust_setting(-1)
         self.assertAlmostEqual(app.settings.rate, 0.1)
+
+    def test_thickness_settings_are_independent(self) -> None:
+        """单键 / 多轨单键 / 滑键 / 鼠标点击各有自己的厚度；长按与空域没有厚度。"""
+        app = self.app
+        keys = ("note_thickness", "multi_thickness", "slide_thickness", "click_thickness")
+        before = {key: getattr(app.settings, key) for key in keys}
+        app.settings_row = app._row_index("slide_thickness")
+        app._adjust_setting(1)
+        self.assertGreater(app.settings.slide_thickness, before["slide_thickness"])
+        for key in ("note_thickness", "multi_thickness", "click_thickness"):
+            self.assertAlmostEqual(
+                getattr(app.settings, key), before[key], places=6,
+                msg="不同物件的厚度互不影响",
+            )
+        app.settings_row = app._row_index("multi_thickness")
+        app._adjust_setting(1)
+        self.assertGreater(app.settings.multi_thickness, before["multi_thickness"])
+        self.assertGreater(app.settings.note_thickness, 0.0, "单键厚度仍独立存在")
+        labels = [label for _key, label in app.SETTING_ROWS]
+        self.assertFalse(any("长按" in text or "空域" in text for text in labels))
+        app._enter_loading()
+        app._start_play()
+        app._draw_play()                    # 各厚度都要能画出来
+
+    def test_result_layout_thirds_and_no_rate(self) -> None:
+        """结算页：左 1/3、右 2/3；分数行不显示倍速与倍率。"""
+        app = self.app
+        app.settings.rate = 2.0
+        app._enter_loading()
+        app._start_play()
+        app._finish()
+        self.assertEqual(app._result_split(), app.w // 3)
+        line = app._result_score_line()
+        self.assertNotIn("倍速", line)
+        self.assertNotIn("×", line)
+        app._draw()                          # 结算页能画出来
+
+    def test_window_resize_and_fullscreen_do_not_rebuild_display(self) -> None:
+        """最大化只跟随尺寸（不再 set_mode，否则会被打回）；F10 / F11 不抛异常。"""
+        app = self.app
+        pygame = self.pygame
+        before = app.screen
+        pygame.event.post(
+            pygame.event.Event(pygame.VIDEORESIZE, w=1000, h=700, size=(1000, 700))
+        )
+        app._events()
+        self.assertIs(app.screen, before, "VIDEORESIZE 不该重建显示表面")
+
+        class FakePresenter:               # 模拟 GL 模式：离屏表面要跟着窗口尺寸变
+            def present(self, surface, verify=False):
+                return True
+
+        app.gl_presenter = FakePresenter()
+        app._sync_display_size(1200, 800)
+        self.assertEqual((app.w, app.h), (1200, 800))
+        app.gl_presenter = None
+        app._sync_display_size()
+        self.assertIs(app.screen, pygame.display.get_surface())
+        app._maximize_window()               # 不应抛异常
+        app._toggle_fullscreen()             # dummy 驱动下失败也要有提示、不抛
+        self.assertTrue(app.message)
+        app._draw()                          # 尺寸变化后还能正常画
 
 
 if __name__ == "__main__":

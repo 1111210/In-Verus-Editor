@@ -65,6 +65,8 @@ class PlayerScene:
 
     def __init__(self, camera: Camera | None = None) -> None:
         self.camera = camera or Camera()
+        self._fit_key: Tuple[int, int] = (0, 0)
+        self._fit_value: Tuple[float, float, float] = (1.0, 0.0, 0.0)
 
     # ------------------------------------------------------------ 局部坐标
     @staticmethod
@@ -87,8 +89,44 @@ class PlayerScene:
         return START_Z * (1.0 - max(0.0, min(1.0, progress)))
 
     # ------------------------------------------------------------ 投影
+    # 铺满窗口：把“整个游玩区”（两个平面的远近两端）缩放平移到尽可能占满窗口。
+    FIT_MARGIN_X = 10.0          # 左右留白（像素）
+    FIT_MARGIN_TOP = 44.0        # 顶部留给 HUD
+    FIT_MARGIN_BOTTOM = 10.0
+
+    def _field_corners(self):
+        """游玩区的极值点：两个平面 × 远近两端 × 左右边界（含鼠标物件高度）。"""
+        top = MOUSE_PLANE_HEIGHT + NOTE_HEIGHT_UNIT
+        for z in (0.0, START_Z):
+            for y in (0.0, top):
+                for x in (K6_LEFT, -K6_LEFT):
+                    yield (x, y, z)
+
+    def _fit_transform(self, width: int, height: int) -> Tuple[float, float, float]:
+        """返回 (scale, dx, dy)：把相机投影结果整体缩放平移到铺满窗口。"""
+        key = (int(width), int(height))
+        if key == self._fit_key:
+            return self._fit_value
+        xs, ys = [], []
+        for corner in self._field_corners():
+            sx, sy, _ = self.camera.project(corner, width, height)
+            xs.append(sx)
+            ys.append(sy)
+        span_x = max(1.0, max(xs) - min(xs))
+        span_y = max(1.0, max(ys) - min(ys))
+        usable_w = max(80.0, width - 2 * self.FIT_MARGIN_X)
+        usable_h = max(80.0, height - self.FIT_MARGIN_TOP - self.FIT_MARGIN_BOTTOM)
+        scale = min(usable_w / span_x, usable_h / span_y)
+        dx = (width - span_x * scale) / 2.0 - min(xs) * scale
+        dy = self.FIT_MARGIN_TOP - min(ys) * scale
+        self._fit_key = key
+        self._fit_value = (scale, dx, dy)
+        return self._fit_value
+
     def point(self, x: float, y: float, z: float, width: int, height: int):
-        return self.camera.project((x, y, z), width, height)
+        sx, sy, view_scale = self.camera.project((x, y, z), width, height)
+        scale, dx, dy = self._fit_transform(width, height)
+        return sx * scale + dx, sy * scale + dy, view_scale * scale
 
     def judgment_lines(self, width: int, height: int) -> Dict[str, Tuple[float, float]]:
         """两条判定线的屏幕 y 坐标（鼠标线应当比 6K 线更靠上）。"""

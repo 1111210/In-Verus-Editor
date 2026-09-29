@@ -69,6 +69,21 @@ class ProjectionTests(unittest.TestCase):
                 self.assertGreaterEqual(sx, -W)
                 self.assertLessEqual(sx, W * 2)
 
+    def test_field_fills_the_window(self) -> None:
+        """整个游玩区尽量铺满窗口：竖直方向基本用满、水平居中且不越界。"""
+        scene = S.PlayerScene()
+        points = [scene.point(*corner, W, H) for corner in scene._field_corners()]
+        xs = [p[0] for p in points]
+        ys = [p[1] for p in points]
+        self.assertGreater(max(ys) - min(ys), H * 0.85, "竖直方向要铺满窗口")
+        self.assertAlmostEqual((min(xs) + max(xs)) / 2.0, W / 2.0, delta=2.0)
+        for value in ys:
+            self.assertGreaterEqual(value, -1.0)
+            self.assertLessEqual(value, H + 1.0)
+        # 换一个窗口尺寸也要重新铺满
+        small = [scene.point(*corner, 1024, 640) for corner in scene._field_corners()]
+        self.assertGreater(max(p[1] for p in small) - min(p[1] for p in small), 640 * 0.85)
+
 
 if __name__ == "__main__":
     unittest.main()
