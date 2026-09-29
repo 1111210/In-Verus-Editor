@@ -739,6 +739,58 @@ class PlayerAppSmokeTests(unittest.TestCase):
             app._draw()                       # 换模式后还能画
         self.assertEqual(seen, ["borderless", "fullscreen", "windowed", "borderless"])
 
+    def test_mouse_marker_fill_rules(self) -> None:
+        """无界：永远实心；关闭：界内实心、出界时判定位置实心 + 实际位置只画边线。"""
+        from rhythm_editor.game.app import MOUSE_LEGAL_WIDTH, MOUSE_LEFT
+
+        app = self.app
+        app._enter_loading()
+        app._start_play()
+        fills = []
+        xs = []
+        original_alpha, original_proj = app._alpha_quad, app._proj
+        app._alpha_quad = lambda points, color, alpha: fills.append(alpha)
+
+        def spy(x, y, z):
+            xs.append(x)
+            return original_proj(x, y, z)
+
+        app._proj = spy
+
+        def norm_of(world_x: float) -> float:
+            return (world_x - MOUSE_LEFT) / MOUSE_LEGAL_WIDTH
+
+        try:
+            def draw_and_reset():
+                fills.clear()
+                xs.clear()
+                app._draw_mouse_marker()
+                return [norm_of(x) for x in xs]
+
+            # 1) 开启无界鼠标：出界的实际位置也画实心
+            app.settings.unbounded_mouse = True
+            app.mouse_norm, app.mouse_raw = 1.35, 1.35
+            drawn = draw_and_reset()
+            self.assertEqual(len(fills), 1, "无界鼠标永远实心")
+            self.assertAlmostEqual(drawn[0], 1.35, delta=1e-6, msg="指针尖在鼠标实际位置")
+
+            # 2) 关闭无界 + 界内：只有判定位置（=实际位置）画实心
+            app.settings.unbounded_mouse = False
+            app.mouse_norm, app.mouse_raw = 0.4, 0.4
+            drawn = draw_and_reset()
+            self.assertEqual(len(fills), 1)
+            self.assertAlmostEqual(drawn[0], 0.4, delta=1e-6)
+
+            # 3) 关闭无界 + 出界：判定位置（夹到 1.0）实心，实际位置（1.3）只画边线
+            app.mouse_norm, app.mouse_raw = 1.0, 1.3
+            drawn = draw_and_reset()
+            self.assertEqual(len(fills), 1, "只有判定位置是实心")
+            self.assertEqual(len(drawn), 6, "判定位置 + 实际位置各一个三角形")
+            self.assertAlmostEqual(drawn[0], 1.0, delta=1e-6, msg="判定位置夹在边界上")
+            self.assertAlmostEqual(drawn[3], 1.3, delta=1e-6, msg="实际位置也画出来")
+        finally:
+            app._alpha_quad, app._proj = original_alpha, original_proj
+
 
 if __name__ == "__main__":
     unittest.main()

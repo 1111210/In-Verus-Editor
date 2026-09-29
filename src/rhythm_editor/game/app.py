@@ -166,6 +166,7 @@ class PlayerApp:
         self.popups: List[Tuple[str, str, float]] = []   # (等级, 文字, 剩余秒数)
         self.pressed_lanes = set()
         self.mouse_norm = 0.5
+        self.mouse_raw = 0.5               # 鼠标实际位置（关闭无界鼠标时可能出界）
         self.message = ""
         self.status_hint = ""
         self.settings_row = 0
@@ -1220,6 +1221,7 @@ class PlayerApp:
         )
         raw = (mx - left) / max(1.0, right - left)
         value = 0.5 + (raw - 0.5) * self.settings.mouse_sensitivity
+        self.mouse_raw = value            # 实际位置（可能出界，用于画“边线”指针）
         if not self.settings.unbounded_mouse:
             value = min(1.0, max(0.0, value))
         return value
@@ -1738,18 +1740,39 @@ class PlayerApp:
                 (255, 60, 50),
             )
 
-    def _draw_mouse_marker(self) -> None:
-        """鼠标判定线后方的三角形标识：**躺在鼠标平面内**（矮胖、只画边线）。"""
-        x = MOUSE_LEFT + self.mouse_norm * MOUSE_LEGAL_WIDTH
+    def _mouse_marker_points(self, norm_x: float):
+        """指针三角形的三个点（躺在鼠标平面内、矮胖）。"""
+        x = MOUSE_LEFT + norm_x * MOUSE_LEGAL_WIDTH
         length = 0.26                      # 沿 z 的长度（矮）
         half_w = 0.07                      # 横向半宽（胖）
-        tip = self._proj(x, MOUSE_PLANE_HEIGHT, length)
-        left = self._proj(x - half_w, MOUSE_PLANE_HEIGHT, 0.0)
-        right = self._proj(x + half_w, MOUSE_PLANE_HEIGHT, 0.0)
-        pygame.draw.polygon(
-            self.screen, MOUSE_TINT,
-            [(tip[0], tip[1]), (left[0], left[1]), (right[0], right[1])], 2,
+        return (
+            self._proj(x, MOUSE_PLANE_HEIGHT, length),
+            self._proj(x - half_w, MOUSE_PLANE_HEIGHT, 0.0),
+            self._proj(x + half_w, MOUSE_PLANE_HEIGHT, 0.0),
         )
+
+    def _draw_marker_shape(self, points, filled: bool) -> None:
+        """画一个指针三角形：``filled`` 时是**半透明实心**，否则只画边线。"""
+        if filled:
+            self._alpha_quad(list(points), MOUSE_TINT, 130)
+        pygame.draw.polygon(
+            self.screen, MOUSE_TINT, [(p[0], p[1]) for p in points], 2
+        )
+
+    def _draw_mouse_marker(self) -> None:
+        """鼠标指针画法。
+
+        * 开启**无界鼠标**：永远按实际位置画半透明实心；
+        * 关闭且鼠标在合法区内：判定位置 = 实际位置，画半透明实心；
+        * 关闭且鼠标出界：**判定位置**（夹在边界上）画实心，
+          **实际位置**只画边线，两者都能看到。
+        """
+        inside = 0.0 <= self.mouse_raw <= 1.0
+        # 判定位置永远是半透明实心
+        self._draw_marker_shape(self._mouse_marker_points(self.mouse_norm), filled=True)
+        if not self.settings.unbounded_mouse and not inside:
+            # 出界时把**实际位置**也用边线标出来
+            self._draw_marker_shape(self._mouse_marker_points(self.mouse_raw), filled=False)
 
     def _draw_popups(self) -> None:
         """判定飘字：在**被判定的物件处**向上飘并淡出。"""
