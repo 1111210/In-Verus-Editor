@@ -37,6 +37,7 @@ from .ui.dialogs import (
     NoteEditDialog,
     SettingsDialog,
     SpeedGroupDialog,
+    VolumeDialog,
     run_dialog,
 )
 from .ui.interactions import ToolController
@@ -830,7 +831,45 @@ class EditorApp:
         settings = self.document.chart.settings
         self.audio.set_volume(settings.music_volume)
         self.metronome.set_volume(settings.metronome_volume)
+        self.metronome.set_enabled(settings.metronome != MODE_OFF)
+        self.hits.set_volume(settings.hit_volume)
+        self.hits.set_enabled(settings.hit_enabled)
         self.hit_volume = settings.hit_volume
+
+    def toggle_hit_sound(self) -> None:
+        """音效菜单：开关打击音效。"""
+        chart = self.document.chart
+        value = not chart.settings.hit_enabled
+        self.document.apply(
+            "开关打击音效",
+            lambda: setattr(chart.settings, "hit_enabled", value),
+        )
+        self._apply_volumes()
+        self.status("打击音效：" + ("开启" if value else "关闭"))
+        self.toolbar.sync()
+
+    def edit_volumes(self) -> None:
+        """音效菜单「音量…」：调音乐 / 节拍音 / 打击音。"""
+        result = run_dialog(VolumeDialog, self.root, self.theme, self.document.chart)
+        if not result:
+            return
+
+        def _apply() -> None:
+            settings = self.document.chart.settings
+            settings.music_volume = float(result["music_volume"])
+            settings.metronome_volume = float(result["metronome_volume"])
+            settings.hit_volume = float(result["hit_volume"])
+            settings.normalize()
+
+        self.document.apply("修改音量", _apply)
+        self._apply_volumes()
+        settings = self.document.chart.settings
+        self.status(
+            f"音量：音乐 {settings.music_volume * 100:.0f}% · "
+            f"节拍音 {settings.metronome_volume * 100:.0f}% · "
+            f"打击音 {settings.hit_volume * 100:.0f}%"
+        )
+        self.toolbar.sync()
 
     def set_grid_division_custom(self) -> None:
         """视图菜单「时间网格细分 → 自定义…」：输入一拍细分多少份。"""

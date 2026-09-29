@@ -102,13 +102,18 @@ class AppFlowTest(unittest.TestCase):
     def test_toolbar_groups_without_menubar(self) -> None:
         toolbar = self.app.toolbar
         labels = set(toolbar._group_buttons)
-        # 面板已拆成「谱面设置 / 速度组 / 编辑器设置」；帮助保留
-        self.assertTrue({"文件", "编辑", "谱面设置", "放置", "视图", "帮助"} <= labels)
-        # 谱面设置要排在 编辑 与 放置 之间
+        # 文件与编辑合并；新增「音效」；帮助收进「编辑器设置」
+        self.assertTrue(
+            {"文件 / 编辑", "谱面设置", "放置物件", "视图", "音效", "编辑器设置"} <= labels
+        )
+        direct = [button.cget("text") for button, _ in toolbar._direct_buttons]
+        self.assertIn("速度组", direct)
+        self.assertIn("编辑物件", direct)
+        # 顺序：文件/编辑 → 谱面设置 → 放置物件 → 编辑物件 → 视图 → 速度组 → 音效 → 编辑器设置
         order = [group.label for group in toolbar._groups]
         self.assertEqual(
             order,
-            ["文件", "编辑", "编辑物件", "谱面设置", "放置", "视图", "速度组", "编辑器设置", "帮助"],
+            ["文件 / 编辑", "谱面设置", "放置物件", "编辑物件", "视图", "速度组", "音效", "编辑器设置"],
         )
         self.assertFalse(hasattr(toolbar, "menubar"), "不再保留系统菜单栏")
         self.assertEqual(str(self.app.root.cget("menu")), "")
@@ -118,7 +123,7 @@ class AppFlowTest(unittest.TestCase):
         self.assertFalse(hasattr(toolbar, "lbl_zoom"))
 
     def test_panel_groups_split(self) -> None:
-        """谱面设置（元数据/偏移）、速度组、编辑器设置三个入口。"""
+        """谱面设置（元数据/偏移）、速度组、编辑器设置；编辑器设置里含帮助。"""
         toolbar = self.app.toolbar
         chart_menu = toolbar._menus["谱面设置"]
         labels = [
@@ -129,23 +134,35 @@ class AppFlowTest(unittest.TestCase):
         self.assertEqual(labels, ["元数据设置…", "BPM 与偏移…"])
         direct = [button.cget("text") for button, _ in toolbar._direct_buttons]
         self.assertIn("速度组", direct)
-        self.assertIn("编辑器设置", direct)
+        editor_menu = toolbar._menus["编辑器设置"]
+        editor_labels = [
+            editor_menu.entrycget(i, "label")
+            for i in range(editor_menu.index("end") + 1)
+            if editor_menu.type(i) == "command"
+        ]
+        self.assertIn("编辑器设置…", editor_labels)
+        self.assertIn("操作指南…", editor_labels)
+        self.assertIn("快捷键…", editor_labels)
+        # 播放按钮固定在工具栏最右端（原「帮助」的位置）
+        self.assertEqual(self.app.toolbar.btn_play.pack_info()["side"], "right")
 
     def test_edit_note_button_is_in_toolbar_not_menu(self) -> None:
-        """「编辑物件」移出二级菜单，作为顶栏按钮放在「编辑」右侧。"""
+        """「编辑物件」是顶栏直执按钮，排在「放置物件」之后。"""
         toolbar = self.app.toolbar
         direct = [button.cget("text") for button, _ in toolbar._direct_buttons]
         self.assertIn("编辑物件", direct)
-        edit_menu = toolbar._menus["编辑"]
+        edit_menu = toolbar._menus["文件 / 编辑"]
         labels = [
             edit_menu.entrycget(i, "label")
             for i in range(edit_menu.index("end") + 1)
             if edit_menu.type(i) == "command"
         ]
         self.assertNotIn("编辑选中物件…", labels)
-        # 顺序：编辑 -> 编辑物件 -> 谱面设置 -> 放置
+        # 顺序：文件/编辑 -> 谱面设置 -> 放置物件 -> 编辑物件
         order = [group.label for group in toolbar._groups]
-        self.assertEqual(order[:4], ["文件", "编辑", "编辑物件", "谱面设置"])
+        self.assertEqual(
+            order[:4], ["文件 / 编辑", "谱面设置", "放置物件", "编辑物件"]
+        )
         # 只有一个物件被选中时才可用
         group = next(g for g in toolbar._groups if g.label == "编辑物件")
         self.assertFalse(group.enabled())
@@ -181,19 +198,20 @@ class AppFlowTest(unittest.TestCase):
         self.assertEqual(toolbar._hscroll.winfo_manager(), "pack")
 
     def test_help_menu_has_guide_and_shortcuts_only(self) -> None:
-        menu = self.app.toolbar._menus["帮助"]
+        # 帮助已并入「编辑器设置」菜单
+        menu = self.app.toolbar._menus["编辑器设置"]
         labels = [
             menu.entrycget(i, "label")
             for i in range(menu.index("end") + 1)
             if menu.type(i) == "command"
         ]
-        self.assertEqual(labels, ["操作指南…", "快捷键…"])
+        self.assertEqual(labels, ["编辑器设置…", "操作指南…", "快捷键…"])
         self.assertNotIn("关于", labels)
 
     def test_auto_check_is_in_edit_menu_and_selects_issues(self) -> None:
         """自动检查放在「编辑」二级菜单里；运行时选中问题物件并弹出报告。"""
         toolbar = self.app.toolbar
-        edit_menu = toolbar._menus["编辑"]
+        edit_menu = toolbar._menus["文件 / 编辑"]
         labels = [
             edit_menu.entrycget(i, "label")
             for i in range(edit_menu.index("end") + 1)
@@ -262,7 +280,7 @@ class AppFlowTest(unittest.TestCase):
     def test_menu_not_reconfigured_every_frame(self) -> None:
         """回归测试：菜单项只在状态变化时才写入，避免展开中的二级菜单频闪。"""
         toolbar = self.app.toolbar
-        menu = toolbar._menus["编辑"]
+        menu = toolbar._menus["文件 / 编辑"]
         calls: list = []
         original = menu.entryconfigure
 
@@ -320,14 +338,14 @@ class AppFlowTest(unittest.TestCase):
         # tk_popup 在 Windows 会进入嵌套事件循环；测试里替换掉真正的弹出动作与“是否展开”查询
         toolbar._post_menu = lambda menu, button: None  # type: ignore[assignment]
         toolbar._menu_is_posted = lambda menu: toolbar._open_group is not None  # type: ignore[assignment]
-        toolbar.toggle_menu("编辑")
-        self.assertEqual(toolbar._open_group, "编辑")
+        toolbar.toggle_menu("文件 / 编辑")
+        self.assertEqual(toolbar._open_group, "文件 / 编辑")
         self.assertTrue(toolbar.is_menu_posted())
-        toolbar.toggle_menu("编辑")            # 再次点击同一个按钮
+        toolbar.toggle_menu("文件 / 编辑")            # 再次点击同一个按钮
         self.assertIsNone(toolbar._open_group)
         self.assertFalse(toolbar.is_menu_posted())
         # 点另一个分组：切换而不是叠加
-        toolbar.toggle_menu("编辑")
+        toolbar.toggle_menu("文件 / 编辑")
         toolbar.toggle_menu("视图")
         self.assertEqual(toolbar._open_group, "视图")
 
@@ -335,12 +353,12 @@ class AppFlowTest(unittest.TestCase):
         toolbar = self.app.toolbar
         toolbar._post_menu = lambda menu, button: None  # type: ignore[assignment]
         toolbar._menu_is_posted = lambda menu: toolbar._open_group is not None  # type: ignore[assignment]
-        toolbar.toggle_menu("编辑")
+        toolbar.toggle_menu("文件 / 编辑")
         toolbar.handle_outside_click(self.app.canvas)      # 点画布 -> 收起
         self.assertIsNone(toolbar._open_group)
-        toolbar.toggle_menu("编辑")
-        toolbar.handle_outside_click(toolbar._menu_buttons["编辑"])   # 点自身按钮 -> 保持
-        self.assertEqual(toolbar._open_group, "编辑")
+        toolbar.toggle_menu("文件 / 编辑")
+        toolbar.handle_outside_click(toolbar._menu_buttons["文件 / 编辑"])   # 点自身按钮 -> 保持
+        self.assertEqual(toolbar._open_group, "文件 / 编辑")
         self.assertTrue(toolbar.close_if_open())           # Esc -> 收起
         self.assertFalse(toolbar.close_if_open())
 
@@ -349,11 +367,11 @@ class AppFlowTest(unittest.TestCase):
         toolbar = self.app.toolbar
         toolbar._post_menu = lambda menu, button: None      # type: ignore[assignment]
         toolbar._menu_is_posted = lambda menu: False        # type: ignore[assignment]
-        toolbar.toggle_menu("编辑")
+        toolbar.toggle_menu("文件 / 编辑")
         self.assertIsNone(toolbar._open_group)
         self.assertFalse(toolbar.is_menu_posted())
         # 再次点击就是重新打开，而不是“关掉不存在的菜单”
-        toolbar.toggle_menu("编辑")
+        toolbar.toggle_menu("文件 / 编辑")
         self.assertIsNone(toolbar._open_group)
 
     def test_fullscreen_toggle(self) -> None:

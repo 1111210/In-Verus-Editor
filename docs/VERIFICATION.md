@@ -201,6 +201,8 @@ python tools/check_audio.py
 | `tests/test_app_flow.py::test_grid_settings_live_in_view_menu_only` | 网格设置只在视图菜单（含自定义项），设置面板已无网格字段 |
 | `tests/test_app_flow.py::test_horizontal_grid_has_no_separate_switch` | 横向辅助网格无独立开关，设置了等分就必然显示 |
 | `tests/test_app_flow.py::test_toolbar_buttons_share_same_height_style` | 直执按钮与菜单按钮样式一致（高度相同） |
+| `tests/test_app_flow.py::test_toolbar_groups_without_menubar` | 顶栏顺序：文件/编辑（合并）→ 谱面设置 → 放置物件 → 编辑物件 → 视图 → 速度组 → 音效 → 编辑器设置 |
+| `tests/test_app_flow.py::test_panel_groups_split` | 编辑器设置菜单含「编辑器设置…/操作指南…/快捷键…」；播放按钮固定在右端 |
 | `tests/test_audio_rate.py`（16 条） | 倍速（重采样，**变速变调**）：长度随倍率伸缩、0.5x 时频率减半（过零率）、静音时钟跟随倍速、倍速夹取、**负延迟**的 heard 位置、延迟范围、**立体声也能慢放**、**分窗口首尾相接**、**调度连续不断音**（回归：pygame 只播一个排队块）、**打开谱面后第一次播放用真实后端**（回归）、**播放中改倍速自动暂停**并保持位置 |
 | `tests/test_app_flow.py::test_rate_buttons_step_and_clamp` | 倍速按钮 ±0.1x 与 0.1~1.0x 夹取，标签同步 |
 | `tests/test_app_flow.py::test_rate_buttons_are_always_available` | 右侧倍速按钮固定在右侧优先分配空间 |

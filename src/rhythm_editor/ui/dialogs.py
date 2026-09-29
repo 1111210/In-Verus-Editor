@@ -367,6 +367,68 @@ class BpmDialog(BaseDialog):
         self.destroy()
 
 
+class VolumeDialog(BaseDialog):
+    """音效菜单「音量…」：音乐 / 节拍音 / 打击音效三路音量（0 ~ 100%）。"""
+
+    title_text = "音量"
+
+    def __init__(self, parent: tk.Misc, theme: Theme, chart: Chart) -> None:
+        self.settings = EditorSettings(
+            music_volume=chart.settings.music_volume,
+            metronome_volume=chart.settings.metronome_volume,
+            hit_volume=chart.settings.hit_volume,
+        )
+        super().__init__(parent, theme)
+
+    def _build(self) -> None:
+        body = self.body
+        box = ttk.LabelFrame(body, text="音量（0 ~ 100%）", padding=8)
+        box.pack(fill="x")
+        box.columnconfigure(1, weight=1)
+        self._vars: Dict[str, tk.DoubleVar] = {}
+        self._labels: Dict[str, ttk.Label] = {}
+        rows = (
+            ("music_volume", "音乐", self.settings.music_volume),
+            ("metronome_volume", "节拍音", self.settings.metronome_volume),
+            ("hit_volume", "打击音效", self.settings.hit_volume),
+        )
+        for row, (key, text, value) in enumerate(rows):
+            ttk.Label(box, text=text).grid(row=row, column=0, sticky="w", padx=(0, 6), pady=3)
+            var = tk.DoubleVar(value=float(value))
+            ttk.Scale(
+                box,
+                from_=0.0,
+                to=1.0,
+                orient="horizontal",
+                variable=var,
+                command=lambda _v, k=key: self._on_volume(k),
+            ).grid(row=row, column=1, sticky="we", pady=3)
+            label = ttk.Label(box, text=f"{value * 100:.0f}%", width=5, anchor="e")
+            label.grid(row=row, column=2, sticky="e", pady=3)
+            self._vars[key] = var
+            self._labels[key] = label
+        ttk.Label(
+            body,
+            text="打击音效：单键 / 多轨按键 / 滑键 / 鼠标点击按键到达判定线，"
+                 "以及长按、空域开头到达判定线时的一声白噪声（在「音效」菜单里开关）。",
+            style="Dim.TLabel",
+            wraplength=460,
+        ).pack(anchor="w", pady=(8, 0))
+
+    def _on_volume(self, key: str) -> None:
+        value = float(self._vars[key].get())
+        setattr(self.settings, key, value)
+        self._labels[key].configure(text=f"{value * 100:.0f}%")
+
+    def _ok(self) -> None:
+        self.result = {
+            "music_volume": float(self._vars["music_volume"].get()),
+            "metronome_volume": float(self._vars["metronome_volume"].get()),
+            "hit_volume": float(self._vars["hit_volume"].get()),
+        }
+        self.destroy()
+
+
 # ---------------------------------------------------------------- 编辑器设置
 class SettingsDialog(BaseDialog):
     title_text = "编辑器设置"
@@ -451,47 +513,7 @@ class SettingsDialog(BaseDialog):
         )
         self.btn_retry_audio.pack(anchor="w", pady=(6, 0))
 
-        # 音量：音乐 / 节拍音 / 打击音（0~100%）
-        volume = ttk.LabelFrame(body, text="音量", padding=8)
-        volume.pack(fill="x", pady=(8, 0))
-        volume.columnconfigure(1, weight=1)
-        self._volume_vars: Dict[str, tk.DoubleVar] = {}
-        self._volume_labels: Dict[str, ttk.Label] = {}
-        for row, (key, text, value) in enumerate(
-            (
-                ("music_volume", "音乐", self.settings.music_volume),
-                ("metronome_volume", "节拍音", self.settings.metronome_volume),
-                ("hit_volume", "打击音效", self.settings.hit_volume),
-            )
-        ):
-            ttk.Label(volume, text=text).grid(row=row, column=0, sticky="w", padx=(0, 6), pady=2)
-            var = tk.DoubleVar(value=float(value))
-            scale = ttk.Scale(
-                volume,
-                from_=0.0,
-                to=1.0,
-                orient="horizontal",
-                variable=var,
-                command=lambda _v, k=key: self._on_volume(k),
-            )
-            scale.grid(row=row, column=1, sticky="we", pady=2)
-            label = ttk.Label(volume, text=f"{value * 100:.0f}%", width=5, anchor="e")
-            label.grid(row=row, column=2, sticky="e", pady=2)
-            self._volume_vars[key] = var
-            self._volume_labels[key] = label
-        ttk.Label(
-            volume,
-            text="打击音效 = 单键 / 多轨按键 / 滑键 / 鼠标点击按键到达判定线，"
-                 "以及长按、空域开头到达判定线时的一声白噪声。",
-            style="Dim.TLabel",
-            wraplength=520,
-        ).grid(row=3, column=0, columnspan=3, sticky="w", pady=(4, 0))
         self._sync_scale_from_value()
-
-    def _on_volume(self, key: str) -> None:
-        value = float(self._volume_vars[key].get())
-        setattr(self.settings, key, value)
-        self._volume_labels[key].configure(text=f"{value * 100:.0f}%")
 
     def _retry_audio(self) -> None:
         """重新初始化音频设备（插好耳机 / 释放独占声卡后无需重启编辑器）。"""
@@ -967,7 +989,11 @@ GUIDE_TEXT = """【界面】
 （同一个时间刻度）与同一套时间网格，所以滚动 / 缩放永远同步。
 按 Tab 进入演示模式后，两个平面叠加显示（鼠标平面压在中四条轨道上）并且不可编辑。
 
-【工具】（顶栏「放置 ▾」菜单，或按数字键 1-7 切换；下面的序号就是数字键）
+【顶栏】从左到右：文件 / 编辑（合并）、谱面设置、放置物件、编辑物件、视图、速度组、
+音效、编辑器设置；最右端是 ▶ 播放 / 暂停 与播放倍速 ［−］［1.0x］［＋］。
+「操作指南 / 快捷键」在「编辑器设置」菜单里。
+
+【工具】（顶栏「放置物件 ▾」菜单，或按数字键 1-7 切换；下面的序号就是数字键）
 1 选择 / 区域选择（数字键 1）：拖动框选、点击选中，用于后续的复制 / 镜像 / 编辑 / 删除。
 2 单轨按键（数字键 2）：点击 6K 区域 -> 在对应轨道放置按键，时间自动吸附网格。
 3 多轨按键（数字键 3）：先点击一条轨道，再点击另一条轨道 -> 生成跨越这两条轨道的多轨按键；
@@ -990,7 +1016,7 @@ Esc 取消当前放置流程；切换工具同样会放弃未完成的操作。�
 
 【选择与编辑】
 选择工具下拖动 = 区域选择；Ctrl + 点击/框选 = 与上次选择做对称差（两次都选中的取消选择）。
-顶栏「编辑 ▾」菜单里可以复制、粘贴（点击目标时间，轨道/横向位置保持不变）、
+顶栏「文件 / 编辑 ▾」菜单里可以复制、粘贴（点击目标时间，轨道/横向位置保持不变）、
 沿游玩区中轴线镜像、编辑选中物件（仅单选时可用）、删除与全选。
 
 【视图】
@@ -1017,8 +1043,10 @@ Home / End 跳到开头 / 结尾。
 
 【播放与演示】
 空格播放 / 暂停；暂停时判定线会自动吸附到时间轴刻度上。
-「视图 → 节拍音」可以打开打拍器（关闭 / 小节音 / 节拍音）：播放时每到小节线或整拍响一声，
+「音效 → 节拍音」可以打开打拍器（关闭 / 小节音 / 节拍音）：播放时每到小节线或整拍响一声，
 慢放不会改变这一声的长度（只有间隔跟着音乐变慢）。
+「音效」菜单还能开关**打击音效**（物件到达判定线时的一声白噪声）并打开「音量…」窗口，
+分别调节音乐 / 节拍音 / 打击音。
 「编辑器设置」里的系统音频延迟用于对齐画面与声音（蓝牙耳机常见 120~250 ms）。
 演示模式在「视图 ▾」菜单里；进入后工具栏隐藏、画面只读，支持滚动、缩放与播放 / 暂停，
 按 Tab 或 Esc 返回编辑。

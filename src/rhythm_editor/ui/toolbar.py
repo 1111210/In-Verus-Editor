@@ -87,7 +87,8 @@ class Toolbar(ttk.Frame):
         can_redo = lambda: app.document.can_redo() and not app.demo_mode  # noqa: E731
         has_clipboard = lambda: bool(app.document.clipboard) and not app.demo_mode  # noqa: E731
 
-        file_group = Group("文件", [
+        # 「文件」与「编辑」整合成一个一级菜单
+        document_group = Group("文件 / 编辑", [
             Entry("新建谱面", app.new_chart, "Ctrl+N"),
             Entry("打开谱面…", app.open_chart, "Ctrl+O"),
             Entry(separator=True),
@@ -95,9 +96,7 @@ class Toolbar(ttk.Frame):
             Entry("另存为…", lambda: app.save_chart(True), "Ctrl+Shift+S"),
             Entry(separator=True),
             Entry("退出", app.on_close),
-        ])
-
-        edit_group = Group("编辑", [
+            Entry(separator=True),
             Entry("撤销", app.undo, "Ctrl+Z", enabled=can_undo),
             Entry("重做", app.redo, "Ctrl+Y", enabled=can_redo),
             Entry(separator=True),
@@ -111,7 +110,7 @@ class Toolbar(ttk.Frame):
             Entry("自动检查（谱面合法性）…", app.run_auto_check, enabled=not_demo),
         ])
 
-        place_group = Group("放置", [
+        place_group = Group("放置物件", [
             Entry(
                 config.TOOL_LABELS[tool],
                 (lambda t=tool: app.set_tool(t)),
@@ -167,17 +166,6 @@ class Toolbar(ttk.Frame):
             Entry(separator=True),
             Entry("时间网格细分", options=grid_options),
             Entry("横向辅助网格", options=hgrid_options),
-            Entry(
-                "节拍音",
-                options=[
-                    Entry(
-                        METRONOME_LABELS[mode],
-                        (lambda m=mode: app.set_metronome(m)),
-                        checked=(lambda m=mode: app.document.chart.settings.metronome == m),
-                    )
-                    for mode in (MODE_OFF, MODE_BAR, MODE_BEAT)
-                ],
-            ),
             Entry(separator=True),
             Entry("跳到开头", lambda: app.jump(0.0), "Home"),
             Entry("跳到结尾", lambda: app.jump(app.document.chart.beat_bounds()[1]), "End"),
@@ -192,31 +180,51 @@ class Toolbar(ttk.Frame):
                   checked=lambda: app.fullscreen),
         ])
 
-        # 原「面板」拆成三栏：谱面设置（元数据 / 偏移）、速度组、编辑器设置
-        # 「编辑物件」从二级菜单移到顶栏：紧跟在「编辑」分组后面
+        # 顶栏顺序：文件/编辑 → 谱面设置 → 放置物件 → 编辑物件 → 视图 → 速度组
+        #           → 音效 → 编辑器设置（帮助收在这里）→ 播放（固定在右端）
         edit_note_group = Group("编辑物件", direct_command=app.edit_selected, enabled=single_selection)
         chart_group = Group("谱面设置", [
             Entry("元数据设置…", app.edit_metadata, enabled=not_demo),
             Entry("BPM 与偏移…", app.edit_timing, enabled=not_demo),
         ])
         speed_group = Group("速度组", direct_command=app.edit_speed_groups, enabled=not_demo)
-        editor_group = Group("编辑器设置", direct_command=app.edit_settings)
-
-        help_group = Group("帮助", [
+        sound_group = Group("音效", [
+            Entry(
+                "打击音效（物件到达判定线）",
+                app.toggle_hit_sound,
+                checked=lambda: app.document.chart.settings.hit_enabled,
+            ),
+            Entry(
+                "节拍音",
+                options=[
+                    Entry(
+                        METRONOME_LABELS[mode],
+                        (lambda m=mode: app.set_metronome(m)),
+                        checked=(lambda m=mode: app.document.chart.settings.metronome == m),
+                    )
+                    for mode in (MODE_OFF, MODE_BAR, MODE_BEAT)
+                ],
+            ),
+            Entry(separator=True),
+            Entry("音量…", app.edit_volumes),
+        ])
+        # 帮助（操作指南 / 快捷键）收进「编辑器设置」菜单里
+        editor_group = Group("编辑器设置", [
+            Entry("编辑器设置…", app.edit_settings),
+            Entry(separator=True),
             Entry("操作指南…", app.show_guide),
             Entry("快捷键…", app.show_shortcuts),
         ])
 
         return [
-            file_group,
-            edit_group,
-            edit_note_group,
+            document_group,
             chart_group,
             place_group,
+            edit_note_group,
             view_group,
             speed_group,
+            sound_group,
             editor_group,
-            help_group,
         ]
 
     # ------------------------------------------------------------------ 构建
@@ -225,8 +233,11 @@ class Toolbar(ttk.Frame):
         # 右侧固定区（不参与横向滚动）：快速缩放 + 帮助，保证窗口再窄也不会被挤掉
         self._right = ttk.Frame(self)
         self._right.pack(side="right", fill="y")
-        self._group_buttons["帮助"] = self._make_menubutton(self._right, self._groups[-1])
-        self._group_buttons["帮助"].pack(side="right", padx=(8, 0))
+        # 播放按钮固定在工具栏最右端（原来「帮助」的位置）
+        self.btn_play = ttk.Button(
+            self._right, text="▶ 播放", style="Accent.TButton", command=app.toggle_play
+        )
+        self.btn_play.pack(side="right", padx=(8, 0))
         # 播放倍速：［−］［当前倍速］［＋］，0.1x 一档，范围 0.1 ~ 1.0x（慢放音调变低）
         ttk.Button(
             self._right, text="+", width=3, command=app.increase_playback_rate
@@ -264,7 +275,7 @@ class Toolbar(ttk.Frame):
         self._strip_canvas.bind("<Button-4>", lambda _e: self._strip_canvas.xview_scroll(-1, "units"))
         self._strip_canvas.bind("<Button-5>", lambda _e: self._strip_canvas.xview_scroll(1, "units"))
 
-        for group in self._groups[:-1]:
+        for group in self._groups:
             if group.direct_command is not None:
                 # 与能展开菜单的按钮用同一套样式，保证高度一致
                 button = ttk.Button(
@@ -278,12 +289,6 @@ class Toolbar(ttk.Frame):
                 button = self._make_menubutton(self._strip, group)
                 self._group_buttons[group.label] = button
             button.pack(side="left", padx=(0, 4))
-            if group.label == "放置":
-                # 播放放在放置菜单之后，作为最常用的动作（演示模式只在「视图」菜单里）
-                self.btn_play = ttk.Button(
-                    self._strip, text="▶ 播放", style="Accent.TButton", command=app.toggle_play
-                )
-                self.btn_play.pack(side="left", padx=(6, 4))
 
     # ------------------------------------------------------------------ 滚动
     def _on_strip_wheel(self, event) -> None:
