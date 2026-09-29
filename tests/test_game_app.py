@@ -941,6 +941,40 @@ class PlayerAppSmokeTests(unittest.TestCase):
             "鼠标平面不再画边线",
         )
 
+    def test_side_lane_highlight_is_under_the_mouse_plane(self) -> None:
+        """图层顺序：侧轨高亮属于 6K 平面，必须在鼠标平面（蓝底渐变）**下面**。"""
+        from rhythm_editor.game.app import LANE_PRESS_TINT, SIDE_TINT
+
+        app = self.app
+        app._enter_loading()
+        app._start_play()
+        app.settings.side_lane_highlight = True
+        app.pressed_lanes = {2}
+        order = []
+        original_quad, original_alpha = app._quad, app._alpha_quad
+        app._quad = lambda points, color: order.append(("quad", color))
+        app._alpha_quad = lambda points, color, alpha: order.append(("gradient", color))
+        try:
+            app._draw_planes(0.0)
+        finally:
+            app._quad, app._alpha_quad = original_quad, original_alpha
+        first_gradient = next(
+            index for index, entry in enumerate(order) if entry[0] == "gradient"
+        )
+        highlight_indexes = [
+            index
+            for index, entry in enumerate(order)
+            if entry == ("quad", SIDE_TINT)
+        ]
+        press_indexes = [
+            index
+            for index, entry in enumerate(order)
+            if entry == ("quad", LANE_PRESS_TINT)
+        ]
+        self.assertEqual(len(highlight_indexes), 2, "第 1 / 第 6 轨各一块高亮")
+        for index in highlight_indexes + press_indexes:
+            self.assertLess(index, first_gradient, "侧轨 / 按下高亮要在鼠标平面下方")
+
     def test_slide_judgement_shows_text_and_sound(self) -> None:
         """滑键判定要出判定文字（回归：以前 on_move 的返回值被丢掉，滑键没有飘字）。"""
         from rhythm_editor.model.notes import MouseSlide

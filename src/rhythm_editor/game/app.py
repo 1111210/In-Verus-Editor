@@ -1540,8 +1540,8 @@ class PlayerApp:
         self._quad([far_left, far_right, near_right, near_left], (24, 26, 36))
         self._line(far_left, near_left, K6_TINT, 1)
         self._line(far_right, near_right, K6_TINT, 1)
-        # 鼠标平面：靠近判定线处略微不透明的蓝色，向轨道尽头渐变为完全透明（不画边线）
-        self._draw_mouse_plane_gradient()
+        # 先画完 6K 平面自己的内容（车道线 / 侧轨高亮 / 按下高亮 / 小节线），
+        # 它们都在**鼠标平面下方**，最后再让鼠标平面的蓝底渐变盖上去
         for lane in range(LANE_COUNT + 1):
             x = K6_LEFT + lane * LANE_WIDTH
             self._line(self._proj(x, 0.0, START_Z), self._proj(x, 0.0, 0.0), (46, 48, 58), 1)
@@ -1582,6 +1582,9 @@ class PlayerApp:
             z = self._note_z(timing.beat_to_song_ms(line), now_ms)
             if 0.0 <= z <= START_Z:
                 self._line(self._proj(K6_LEFT, 0.0, z), self._proj(K6_LEFT + width, 0.0, z), (70, 72, 84), 1)
+        # 鼠标平面（在上方、且更靠镜头）：靠近判定线处略微不透明的蓝色，
+        # 向轨道尽头渐变为完全透明（不画边线）。整层压在 6K 平面内容之上。
+        self._draw_mouse_plane_gradient()
         # 判定平面：两条判定线（鼠标线在 6K 线上方 0.4 单位）
         k6_left = self._proj(K6_LEFT, 0.0, 0.0)
         k6_right = self._proj(K6_LEFT + width, 0.0, 0.0)
