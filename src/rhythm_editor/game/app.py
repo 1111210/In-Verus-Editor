@@ -104,6 +104,7 @@ class PlayerApp:
         self.paths = list(paths or []) or chart_files(self.root)
         self.selected = 0
         self.state = "menu"
+        self.paused = False
         self.running = True
         self.timer = 0.0
         self.chart: Optional[Chart] = None
@@ -198,6 +199,8 @@ class PlayerApp:
         "鼠标灵敏度",
         "侧轨高亮",
         "无界鼠标模式",
+        "音乐音量",
+        "打击音效音量",
     )
 
     def _event_settings(self, event) -> None:
@@ -243,7 +246,14 @@ class PlayerApp:
             s.side_lane_highlight = not s.side_lane_highlight
         elif row == 7:
             s.unbounded_mouse = not s.unbounded_mouse
+        elif row == 8:
+            s.music_volume = round(s.music_volume + 0.05 * step, 2)
+        elif row == 9:
+            s.hit_volume = round(s.hit_volume + 0.05 * step, 2)
         s.normalize()
+        if row in (8, 9) and self.state == "play":
+            self.audio.set_volume(s.music_volume)
+            self.hits.set_volume(s.hit_volume)
 
     def _prompt(self, label: str, initial: str) -> str:
         """极简文本输入（回车确认 / Esc 取消）。"""
@@ -291,9 +301,22 @@ class PlayerApp:
     def _event_play(self, event) -> None:
         assert self.judge is not None
         if event.type == pygame.KEYDOWN:
-            if event.key == pygame.K_ESCAPE:
-                self._finish()
+            if event.key == pygame.K_SPACE:
+                self._toggle_pause()
                 return
+            if event.key == pygame.K_ESCAPE:
+                if self.paused:
+                    self.state = "menu"        # 暂停中再按 Esc：回主界面
+                    self.paused = False
+                else:
+                    self._toggle_pause()
+                return
+            if event.key == pygame.K_r and self.paused:
+                self.paused = False
+                self._start_play()
+                return
+            if self.paused:
+                return                          # 暂停时不接受游玩输入
             for lane, name in enumerate(self.settings.keys):
                 if event.key == key_code(name):
                     self.pressed_lanes.add(lane)
@@ -321,6 +344,9 @@ class PlayerApp:
             if self.timer >= 1.2:
                 self._start_play()
         elif self.state == "play":
+            if self.paused:
+                self.timer += 0.0
+                return
             self.timer += dt
             self.mouse_norm = self._mouse_norm()
             assert self.judge is not None
@@ -340,7 +366,17 @@ class PlayerApp:
 
     def _finish(self) -> None:
         self.audio.pause()
+        self.paused = False
         self.state = "result"
+
+    def _toggle_pause(self) -> None:
+        """空格暂停 / 继续（暂停时音乐也停下）。"""
+        self.paused = not self.paused
+        if self.paused:
+            self.audio.pause()
+        else:
+            self.audio.set_rate(self.audio.rate)     # 保持当前倍速
+            self.audio.play(self.audio.position_ms())
 
     def _inside_region(self, now_ms: float) -> Optional[Note]:
         """当前鼠标是否在某个空域内（判定范围两边各放宽 0.01）。"""
@@ -409,6 +445,8 @@ class PlayerApp:
             f"{s.mouse_sensitivity:.2f}x",
             "开" if s.side_lane_highlight else "关",
             "开" if s.unbounded_mouse else "关",
+            f"{s.music_volume * 100:.0f}%",
+            f"{s.hit_volume * 100:.0f}%",
         ]
         for index, label in enumerate(self.SETTING_ROWS):
             y = 100 + index * 44
@@ -455,6 +493,10 @@ class PlayerApp:
         self._draw_hud(now_ms)
         if now_ms < -LEAD_MS + 400:
             self.center_text("准备…", self.h * 0.66, self.f_big, (255, 226, 120))
+        if self.paused:
+            pygame.draw.rect(self.screen, (0, 0, 0), (0, self.h * 0.32, self.w, 220))
+            self.center_text("已暂停", self.h * 0.36, self.f_big, WHITE)
+            self.center_text("空格 继续 · R 重试 · Esc 回主界面", self.h * 0.45, self.f_mid, ACCENT)
 
     def _draw_planes(self, now_ms: float) -> None:
         assert self.chart is not None

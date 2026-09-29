@@ -97,6 +97,25 @@ class PlayerAppSmokeTests(unittest.TestCase):
         app._draw_play()          # 高亮 + 飘字都要能画出来（不抛异常）
         self.assertIn(2, app.pressed_lanes)
 
+    def test_volumes_and_pause(self) -> None:
+        """设置里能调音乐/打击音量；空格暂停并能在暂停后继续。"""
+        app = self.app
+        app.settings_row = 8
+        before = app.settings.music_volume
+        app._adjust_setting(-1)
+        self.assertLess(app.settings.music_volume, before)
+        app.settings_row = 9
+        hit_before = app.settings.hit_volume
+        app._adjust_setting(-1)
+        self.assertLess(app.settings.hit_volume, hit_before)
+        app._enter_loading()
+        app._start_play()
+        app._toggle_pause()
+        self.assertTrue(app.paused)
+        app._draw_play()          # 暂停遮罩也要能画
+        app._toggle_pause()
+        self.assertFalse(app.paused)
+
 
 if __name__ == "__main__":
     unittest.main()
