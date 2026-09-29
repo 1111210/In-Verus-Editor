@@ -321,11 +321,23 @@ class ViewState:
         last = min(max((window_high - low) / span, first + 0.01), 1.0)
         return 1.0 - last, 1.0 - first
 
+    def window_fraction(self) -> float:
+        """可视窗口在文档范围内占多大比例（= 滚动条滑块的长度）。"""
+        low, high = self.scroll_doc_range()
+        span = max(1e-6, high - low)
+        return min(1.0, self.visible_seconds() / span)
+
     def set_from_fraction(self, fraction: float) -> None:
-        """把可视窗口的“低端”（较早的一侧）移到滚动条比例处（方向同 :meth:`scroll_fractions`）。"""
+        """把滑块放到滚动条比例 ``fraction`` 处（方向同 :meth:`scroll_fractions`）。
+
+        ``fraction`` 是**滑块上边缘**的位置，而滑块长度等于可视窗口占比，
+        所以窗口的“低端”（较早的一侧）在 ``1 - fraction - 窗口占比`` 处 ——
+        少减这一项，拖动时滑块就会先跳出去一个滑块长度再跟着鼠标走。
+        """
         timing = self.chart.timing
         low, high = self.scroll_doc_range()
-        position = 1.0 - float(fraction)
+        position = 1.0 - float(fraction) - self.window_fraction()
+        position = min(1.0, max(0.0, position))
         window_low = low + position * (high - low)
         self.set_beat(timing.seconds_to_beat(window_low + self.seconds_below()))
 

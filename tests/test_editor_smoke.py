@@ -944,6 +944,8 @@ class EditorSmokeTest(unittest.TestCase):
     def test_scrollbar_fractions_track_view(self) -> None:
         """竖向滚动条：滑块位置跟随可视时间窗口，拖动可跳转时间。"""
         self.chart.settings.grid_division = 4
+        for beat in (0.0, 40.0, 80.0):          # 让文档明显长于可视窗口
+            self.chart.add(LaneNote(f"SL{int(beat)}", 0, 0, beat))
         self.view.set_beat(0.0)
         first, last = self.view.scroll_fractions()
         self.assertGreaterEqual(first, 0.0)
@@ -960,6 +962,23 @@ class EditorSmokeTest(unittest.TestCase):
         self.view.set_from_fraction(1.0)
         earlier_first, _ = self.view.scroll_fractions()
         self.assertLessEqual(later_first, earlier_first)
+
+    def test_scrollbar_drag_round_trip_keeps_thumb_under_cursor(self) -> None:
+        """回归：拖动滑块时不能“先跳一个滑块长度”。
+
+        `set_from_fraction(f)` 应当把**滑块上边缘**放到 f，再读回来必须还是 (f, f+窗口占比)。
+        """
+        for beat in (0.0, 40.0, 80.0):
+            self.chart.add(LaneNote(f"DL{int(beat)}", 0, 0, beat))
+        self.view.set_beat(0.0)
+        width = self.view.window_fraction()
+        self.assertGreater(width, 0.0)
+        self.assertLess(width, 0.9)
+        for fraction in (0.0, 0.2, 0.5, 0.8, 1.0 - width):
+            self.view.set_from_fraction(fraction)
+            first, last = self.view.scroll_fractions()
+            self.assertAlmostEqual(first, fraction, delta=0.02, msg=f"f={fraction}")
+            self.assertAlmostEqual(last - first, width, delta=0.02, msg=f"f={fraction}")
 
     def test_note_geometry_reflects_speed_group(self) -> None:
         from rhythm_editor.model.speed import SpeedSegment
