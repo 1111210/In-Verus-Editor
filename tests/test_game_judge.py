@@ -229,3 +229,35 @@ class HoldJudgeTests(unittest.TestCase):
         judge.update(100.0, inside_hold=None, held=False)
         judge.update(600.0, inside_hold=None, held=False)
         self.assertGreaterEqual(judge.counts[BREAK], 2, judge.counts)
+
+    def test_multi_lane_hold_partial_release_keeps_exact(self) -> None:
+        """多轨长按：只松开其中一行、其它行还按着 —— 不算“抬起”，仍是 EXACT。"""
+        chart = make_chart([LaneNote("H2", 1, 3, 0.0, 1.0)])
+        judge = Judge(chart)
+        hold = chart.lane_notes[0]
+        judge.on_press(chart.timing.beat_to_song_ms(0.0), lane=1)
+        judge.update(100.0, inside_hold=None, held={1, 2, 3})     # 三条轨道都按住
+        judge.update(300.0, inside_hold=None, held={1, 2})        # 少了第 4 轨 -> 抬起
+        judge.update(600.0, inside_hold=None, held={1, 2})
+        self.assertEqual(judge.counts[NEAR], 0, judge.counts)
+        self.assertEqual(judge.counts[BREAK], 0, judge.counts)
+        self.assertGreaterEqual(judge.counts[EXACT], 3, judge.counts)
+
+    def test_multi_lane_hold_all_rows_released_together_is_near(self) -> None:
+        """多轨长按：出现“所有行同时抬起”的瞬间 -> 该区间 Near。"""
+        chart = make_chart([LaneNote("H4", 1, 3, 0.0, 2.0)])
+        judge = Judge(chart)
+        judge.on_press(chart.timing.beat_to_song_ms(0.0), lane=1)
+        judge.update(100.0, inside_hold=None, held={1, 2, 3})
+        judge.update(300.0, inside_hold=None, held=set())         # 全部同时抬起
+        judge.update(1200.0, inside_hold=None, held=set())
+        self.assertGreaterEqual(judge.counts[NEAR], 1, judge.counts)
+
+    def test_multi_lane_hold_all_lanes_is_exact(self) -> None:
+        chart = make_chart([LaneNote("H3", 1, 3, 0.0, 1.0)])
+        judge = Judge(chart)
+        judge.on_press(chart.timing.beat_to_song_ms(0.0), lane=1)
+        for step in range(0, 7):
+            judge.update(step * 100.0, inside_hold=None, held={1, 2, 3})
+        self.assertEqual(judge.counts[BREAK], 0, judge.counts)
+        self.assertGreaterEqual(judge.counts[EXACT], 3, judge.counts)

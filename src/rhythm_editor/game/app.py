@@ -23,6 +23,7 @@ from ..audio import AudioPlayer
 from ..io.chart_io import chart_audio_path, load_chart
 from ..model.chart import Chart
 from ..model.notes import LaneNote, MouseClick, MouseRegion, MouseSlide, Note
+from ..metronome import Metronome
 from . import settings as psettings
 from .judge import BREAK, EXACT, EXACT_MIXED, GRADES, NEAR, Judge
 from .scene import (
@@ -50,6 +51,7 @@ ACCENT = (90, 170, 255)
 MOUSE_TINT = (90, 220, 255)
 K6_TINT = (120, 160, 255)
 SIDE_TINT = (58, 35, 82)
+LANE_PRESS_TINT = (44, 86, 150)     # 按下轨道时的高亮底色
 GRADE_COLORS = {
     EXACT: (255, 226, 120),
     EXACT_MIXED: (140, 235, 160),
@@ -107,6 +109,8 @@ class PlayerApp:
         self.chart: Optional[Chart] = None
         self.chart_path = ""
         self.judge: Optional[Judge] = None
+        self.hits = Metronome()          # 打击音效（白噪声，复用编辑器那套）
+        self.popups: List[Tuple[str, str, float]] = []   # (等级, 文字, 剩余秒数)
         self.pressed_lanes = set()
         self.mouse_norm = 0.5
         self.message = ""
@@ -271,6 +275,9 @@ class PlayerApp:
         self.message = ""
         self.audio.latency_ms = self.settings.audio_latency_ms
         self.audio.set_volume(self.settings.music_volume)
+        self.hits.set_volume(self.settings.hit_volume)
+        self.hits.set_enabled(True)
+        self.popups.clear()
         self.audio.load(chart_audio_path(self.chart_path, self.chart))
         self.audio.play(self.chart.timing.beat_to_song_ms(0.0))     # 从第 0 拍起播
         self.state = "play"
@@ -290,7 +297,7 @@ class PlayerApp:
             for lane, name in enumerate(self.settings.keys):
                 if event.key == key_code(name):
                     self.pressed_lanes.add(lane)
-                    self.judge.on_press(self._now_ms(), lane=lane)
+                    self._register(self.judge.on_press(self._now_ms(), lane=lane))
                     break
         elif event.type == pygame.KEYUP:
             for lane, name in enumerate(self.settings.keys):
@@ -298,7 +305,15 @@ class PlayerApp:
                     self.pressed_lanes.discard(lane)
                     break
         elif event.type == pygame.MOUSEBUTTONDOWN:
-            self.judge.on_press(self._now_ms(), x=self.mouse_norm)   # 左右键都可以
+            self._register(self.judge.on_press(self._now_ms(), x=self.mouse_norm))
+
+    def _register(self, result) -> None:
+        """记录一条判定：命中音效 + 飘字。"""
+        if result is None:
+            return
+        if result.grade != BREAK:
+            self.hits.play_hit()
+        self.popups.append((result.grade, result.grade, 0.7))
 
     def _update(self, dt: float) -> None:
         if self.state == "loading":
@@ -311,8 +326,13 @@ class PlayerApp:
             assert self.judge is not None
             now_ms = self._now_ms()
             self.judge.on_move(now_ms, self.mouse_norm)
-            self.judge.update(now_ms, inside_hold=self._inside_region(now_ms),
-                              held=bool(self.pressed_lanes))
+            for result in self.judge.update(
+                now_ms, inside_hold=self._inside_region(now_ms), held=set(self.pressed_lanes)
+            ):
+                self._register(result)
+            self.popups = [
+                (grade, text, left - dt) for grade, text, left in self.popups if left > dt
+            ]
             if self.judge.judged_notes >= self.judge.total_notes and now_ms > 0:
                 self._finish()
             elif not self.audio.is_playing and now_ms > 0:
@@ -431,6 +451,7 @@ class PlayerApp:
         self._draw_planes(now_ms)
         self._draw_notes(now_ms)
         self._draw_mouse_marker()
+        self._draw_popups()
         self._draw_hud(now_ms)
         if now_ms < -LEAD_MS + 400:
             self.center_text("准备…", self.h * 0.66, self.f_big, (255, 226, 120))
@@ -463,6 +484,21 @@ class PlayerApp:
                     ],
                     SIDE_TINT,
                 )
+        # 按下轨道时对应轨道高亮（按住期间一直亮）
+        for lane in sorted(self.pressed_lanes):
+            if not 0 <= lane < LANE_COUNT:
+                continue
+            x0 = K6_LEFT + lane * LANE_WIDTH
+            x1 = x0 + LANE_WIDTH
+            self._quad(
+                [
+                    self._proj(x0, 0.0, START_Z),
+                    self._proj(x1, 0.0, START_Z),
+                    self._proj(x1, 0.0, 0.0),
+                    self._proj(x0, 0.0, 0.0),
+                ],
+                LANE_PRESS_TINT,
+            )
         # 6K 平面只画小节线（不画更细的节拍线）
         timing = self.chart.timing
         beat = timing.song_ms_to_beat(max(0.0, now_ms))
@@ -617,6 +653,21 @@ class PlayerApp:
             self.screen, MOUSE_TINT,
             [(tip[0], tip[1]), (left[0], left[1]), (right[0], right[1])], 2,
         )
+
+    def _draw_popups(self) -> None:
+        """判定飘字：在判定平面中央向上飘并淡出。"""
+        if not self.popups:
+            return
+        base_y = self.scene.judgment_lines(self.w, self.h)["mouse"]
+        for index, (grade, text, left) in enumerate(self.popups[-6:]):
+            surface = self.f_mid.render(text, True, GRADE_COLORS.get(grade, WHITE))
+            alpha = max(0.0, min(1.0, left / 0.7))
+            surface.set_alpha(int(255 * alpha))
+            offset = (0.7 - left) * 60.0
+            self.screen.blit(
+                surface,
+                (self.w / 2 - surface.get_width() / 2 + index * 6, base_y - 90 - offset),
+            )
 
     def _draw_hud(self, now_ms: float) -> None:
         assert self.chart is not None and self.judge is not None

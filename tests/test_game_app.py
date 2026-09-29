@@ -84,6 +84,19 @@ class PlayerAppSmokeTests(unittest.TestCase):
         psettings.save_settings(app.settings)
         self.assertEqual(psettings.load_settings().player_name, "测试玩家")
 
+    def test_lane_highlight_and_popups(self) -> None:
+        """按下轨道时该轨高亮；判定结果会生成飘字。"""
+        from rhythm_editor.game.judge import Judged
+
+        app = self.app
+        app._enter_loading()
+        app._start_play()
+        app.pressed_lanes.add(2)
+        app._register(Judged("L1", "EXACT", 0.0))
+        self.assertEqual(len(app.popups), 1)
+        app._draw_play()          # 高亮 + 飘字都要能画出来（不抛异常）
+        self.assertIn(2, app.pressed_lanes)
+
 
 if __name__ == "__main__":
     unittest.main()

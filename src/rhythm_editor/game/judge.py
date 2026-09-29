@@ -27,6 +27,7 @@ from typing import Dict, List, Optional, Tuple
 
 from ..model.chart import Chart
 from ..model.notes import LaneNote, MouseClick, MouseRegion, MouseSlide, Note
+from .. import config
 
 EXACT = "EXACT"
 EXACT_MIXED = "Exact"
@@ -139,8 +140,8 @@ class Judge:
         self._mouse_x = 0.0
         self._mouse_prev = 0.0
         self._mouse_seen = False
-        self._held_prev = True
-        self._samples: List[Tuple[float, bool, Optional[str]]] = []
+        self._held_prev: set = set(range(config.LANE_COUNT))
+        self._samples: List[Tuple[float, frozenset, Optional[str]]] = []
 
     # ------------------------------------------------------------ 输入
     def on_press(self, now_ms: float, lane: Optional[int] = None, x: Optional[float] = None) -> Optional[Judged]:
@@ -295,18 +296,23 @@ class Judge:
         now_ms: float,
         inside_click: Optional[Note] = None,
         inside_hold: Optional[Note] = None,
-        held: bool = True,
+        held=True,
     ) -> List[Judged]:
-        """按“听到的歌曲毫秒”推进一次；返回本次新增的判定。"""
+        """按“听到的歌曲毫秒”推进一次；返回本次新增的判定。
+
+        ``held`` 可以是 ``bool``（全部按住 / 全部松开），也可以是**按住的轨道集合**
+        （多轨长按要求它覆盖的每条轨道都按住）。
+        """
         out: List[Judged] = []
         delta = max(0.0, min(50.0, now_ms - self._last_ms))
         self._last_ms = now_ms
+        held_lanes = self._normalize_held(held)
         # 本帧是否发生了“抬起”事件（长按判定用）
-        released_now = self._held_prev and not held
-        self._held_prev = bool(held)
-        # 逐帧采样：(歌曲毫秒, 是否按住, 鼠标在哪个空域里)
+        released_now = bool(self._held_prev - held_lanes)
+        self._held_prev = set(held_lanes)
+        # 逐帧采样：(歌曲毫秒, 按住的轨道集合, 鼠标在哪个空域里)
         self._samples.append(
-            (now_ms, bool(held), None if inside_hold is None else inside_hold.id)
+            (now_ms, frozenset(held_lanes), None if inside_hold is None else inside_hold.id)
         )
         if len(self._samples) > 20000:      # 剪掉过老的采样，避免长曲内存增长
             self._samples = self._samples[-10000:]
@@ -326,6 +332,18 @@ class Judge:
                 )
             )
         return out
+
+    @staticmethod
+    def _normalize_held(held) -> set:
+        """``held`` -> 按住的轨道集合（兼容 bool 写法）。"""
+        if held is True:
+            return set(range(config.LANE_COUNT))
+        if held is False or held is None:
+            return set()
+        try:
+            return {int(lane) for lane in held}
+        except TypeError:  # pragma: no cover - 兜底
+            return set()
 
     def _update_interval(
         self,
@@ -350,6 +368,22 @@ class Judge:
             state.index += 1
         return out
 
+    def _window_samples(self, start_ms: float, end_ms: float):
+        """区间窗口内的采样（含边界前一个点，便于识别跨边界的事件）。"""
+        window = []
+        previous = None
+        for sample in self._samples:
+            if sample[0] < start_ms:
+                previous = sample
+                continue
+            if sample[0] > end_ms:
+                break
+            if previous is not None and not window:
+                window.append(previous)
+            window.append(sample)
+            previous = sample
+        return window
+
     def _grade_interval(
         self, state: _IntervalState, start_ms: float, end_ms: float, start_beat: float
     ) -> Judged:
@@ -361,6 +395,7 @@ class Judge:
         """
         note = state.note
         is_hold = type(note).__name__ == "LaneNote"
+        lanes = set(range(note.lane_start, note.lane_end + 1)) if is_hold else set()
         hold_end_ms = self.timing.beat_to_song_ms(state.end_beat) if is_hold else end_ms
         pressed = False
         released_at: Optional[float] = None
@@ -377,20 +412,20 @@ class Judge:
                 break
             # “开始前就按住 / 已经在空域里”也算这个区间内有按下
             if previous is not None and previous[0] < start_ms:
-                before = previous[1] if is_hold else (previous[2] == note.id)
+                before = lanes.issubset(previous[1]) if is_hold else (previous[2] == note.id)
                 if before:
                     pressed = pressed or is_hold
                     seen_inside = seen_inside or (not is_hold)
-            inside = held_now if is_hold else (inside_id == note.id)
+            inside = lanes.issubset(held_now) if is_hold else (inside_id == note.id)
             if inside:
                 pressed = pressed or is_hold
                 seen_inside = True
-            if is_hold and previous is not None and previous[1] and not held_now:
+            if is_hold and previous is not None and lanes.issubset(previous[1]) and not lanes.issubset(held_now):
                 released_at = stamp
             if previous is not None and previous[0] >= start_ms:
                 gap = stamp - previous[0]
                 before_inside = (
-                    previous[1] if is_hold else (previous[2] == note.id)
+                    lanes.issubset(previous[1]) if is_hold else (previous[2] == note.id)
                 )
                 if before_inside:
                     inside_seconds += gap
@@ -398,16 +433,26 @@ class Judge:
                     outside_seconds += gap
             previous = sample
         if is_hold:
-            if not pressed and released_at is None:
+            # 多轨长按：“抬起”只在**所有行同时抬起**的瞬间才成立；
+            # 只要其中任意一行还在按，就当作仍在按住（分段松键不降级）。
+            all_up_ms = None
+            any_press = False
+            for sample in self._window_samples(start_ms, end_ms):
+                stamp, held_now, _inside_id = sample
+                if lanes & set(held_now):
+                    any_press = True
+                if lanes.isdisjoint(held_now):
+                    all_up_ms = stamp
+            if not any_press:
                 return self._judge_result(note.id, BREAK, start_beat)
-            grace = released_at is not None and (hold_end_ms - released_at) <= 50.0
-            if pressed and released_at is None:
+            if all_up_ms is None:
                 return self._judge_result(note.id, EXACT, start_beat)
-            if grace and (end_ms >= hold_end_ms - 50.0 or not pressed):
+            grace = (hold_end_ms - all_up_ms) <= 50.0
+            if grace and end_ms >= all_up_ms - 1e-9:
                 return self._judge_result(note.id, EXACT, start_beat)
-            if not pressed:
-                return self._judge_result(note.id, BREAK, start_beat)
-            return self._judge_result(note.id, NEAR, start_beat)
+            if start_ms <= all_up_ms <= end_ms:
+                return self._judge_result(note.id, NEAR, start_beat)
+            return self._judge_result(note.id, EXACT, start_beat)
         if not seen_inside:
             return self._judge_result(note.id, BREAK, start_beat)
         outside = outside_seconds
