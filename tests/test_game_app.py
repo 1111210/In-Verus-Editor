@@ -553,6 +553,61 @@ class PlayerAppSmokeTests(unittest.TestCase):
         self.assertTrue(app.message)
         app._draw()                          # 尺寸变化后还能正常画
 
+    def test_player_feeds_the_stretch_audio_backend_every_frame(self) -> None:
+        """每帧都要 poll 音频后端：不喂的话低倍速只播第一段，谱面时钟跟着卡住。"""
+        app = self.app
+        app._enter_loading()
+        app._start_play()
+        calls = []
+        original = app.audio.poll
+        app.audio.poll = lambda: (calls.append(1), original())[1]
+        try:
+            for _ in range(10):
+                app._update(1 / 120)
+        finally:
+            app.audio.poll = original
+        self.assertGreaterEqual(len(calls), 10, "每帧都要喂音频后端")
+
+    def test_audio_gap_does_not_end_the_game_immediately(self) -> None:
+        """换窗口时音频可能短暂停下：要等 0.5 秒以上才判定“播完了”。"""
+        app = self.app
+        app._enter_loading()
+        app._start_play()
+        app._now_ms = lambda: 1000.0
+        original = type(app.audio).is_playing
+        type(app.audio).is_playing = property(lambda self: False)
+        try:
+            for _ in range(30):                 # 0.25 秒
+                app._update(1 / 120)
+            self.assertEqual(app.state, "play", "短暂无声不该立刻结束")
+            for _ in range(60):                 # 再 0.5 秒
+                app._update(1 / 120)
+            self.assertEqual(app.state, "result")
+        finally:
+            type(app.audio).is_playing = original
+
+    def test_notes_beyond_the_horizon_are_not_drawn(self) -> None:
+        """比可视范围更远的滑键 / 点击按键不画（否则会全堆在屏幕最上方）。"""
+        from rhythm_editor.model.notes import MouseClick, MouseSlide
+
+        app = self.app
+        app._enter_loading()
+        chart = app.chart
+        markers = [n for n in chart.all_notes() if isinstance(n, (MouseSlide, MouseClick))]
+        self.assertTrue(markers, "示例谱面应有滑键 / 点击按键")
+        scroll = app.settings.scroll_ms
+        for now in (0.0, 1000.0):
+            drawn = [n for n in markers if app._note_ahead(n, now) and app._note_visible(n, now)]
+            for note in drawn:
+                self.assertLessEqual(
+                    app._head_ms(note) - now, scroll + 1e-6, "远于可视范围的物件不该被画"
+                )
+        first = min(markers, key=lambda n: app._head_ms(n))
+        head = app._head_ms(first)
+        just_entered = head - scroll + 1.0
+        self.assertTrue(app._note_ahead(first, just_entered))
+        self.assertFalse(app._note_ahead(first, just_entered - 2.0))
+
 
 if __name__ == "__main__":
     unittest.main()

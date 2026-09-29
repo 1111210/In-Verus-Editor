@@ -174,6 +174,7 @@ class PlayerApp:
         self.pause_wall = 0.0
         self.audio_start_ms = 0.0
         self.lead_wait_ms = 0.0
+        self.idle_seconds = 0.0            # 音频连续停多久（用来判“真的播完了”）
         # 鼠标 UI 的命中区域（每帧绘制时写入）与半透明叠加层
         self.ui: dict = {}
         self.hover = ""
@@ -1054,6 +1055,9 @@ class PlayerApp:
         self.popups.append((result.grade, result.grade, 0.7))
 
     def _update(self, dt: float) -> None:
+        # 慢放后端（重采样）需要每帧喂下一段窗口；不喂的话低倍速时只会播第一段，
+        # 谱面时钟会跟着卡住、音乐随后消失
+        self.audio.poll()
         if self.state == "loading":
             self.timer += dt
             if self.timer >= 1.2:
@@ -1080,7 +1084,12 @@ class PlayerApp:
             if self.judge.judged_notes >= self.judge.total_notes and now_ms > 0:
                 self._finish()
             elif not self.audio.is_playing and now_ms > 0:
-                self._finish()
+                # 换窗口的瞬间可能短暂“没在播”，多等一会儿再判定结束
+                self.idle_seconds += dt
+                if self.idle_seconds > 0.5:
+                    self._finish()
+            else:
+                self.idle_seconds = 0.0
 
     def _finish(self) -> None:
         self.audio.pause()
@@ -1494,12 +1503,20 @@ class PlayerApp:
             return now_ms <= self.chart.timing.beat_to_song_ms(note.beat_end) + 1e-6
         return now_ms <= self._head_ms(note) + 1e-6
 
+    def _note_ahead(self, note: Note, now_ms: float) -> bool:
+        """物件是否已经进入可视范围。
+
+        比 ``scroll_ms`` 更远的物件必须**不画**：``note_z`` 会把进度夹在 0~1，
+        否则它们会全部贴在起点（屏幕最上方）堆成一排。
+        """
+        return self._head_ms(note) - now_ms <= self.settings.scroll_ms
+
     def _draw_notes(self, now_ms: float) -> None:
         assert self.chart is not None
         visible = [
             n
             for n in self.chart.all_notes()
-            if self._note_z(self._head_ms(n), now_ms) <= START_Z and self._note_visible(n, now_ms)
+            if self._note_ahead(n, now_ms) and self._note_visible(n, now_ms)
         ]
         visible.sort(key=lambda n: (self._layer_of(n), n.head_beat))
         for note in visible:
