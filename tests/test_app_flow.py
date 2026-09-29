@@ -197,6 +197,55 @@ class AppFlowTest(unittest.TestCase):
         self.assertTrue(narrow, "窄窗口应自动出现横向滚动条")
         self.assertEqual(toolbar._hscroll.winfo_manager(), "pack")
 
+    def test_sound_effects_follow_the_music_clock_not_the_ui(self) -> None:
+        """延迟不为 0 时：音效按“软件位置”触发（与音乐同步），UI 仍用听到的位置。
+
+        场景：后端位置 1000ms、系统延迟 200ms -> 耳朵听到的是 800ms。
+        120BPM 下 800ms 是第 1.6 拍、1000ms 是第 2 拍；在 2.0 拍放一个物件：
+        音效应当在**后端位置到达第 2 拍**时触发（此刻 UI 才显示到 1.6 拍），
+        这样听到音效时正好与歌曲对齐。
+        """
+        from rhythm_editor.model.notes import LaneNote
+
+        app = self.app
+        app.document.chart.add(LaneNote("L1", 0, 0, 2.0))
+        from rhythm_editor.model.timing import BpmSegment
+
+        app.document.chart.timing.set_segments([BpmSegment(0.0, 120.0, 4)])
+        app.document.chart.timing.offset_ms = 0.0
+
+        class StubAudio:
+            latency_ms = 200.0
+            rate = 1.0
+            path = "stub.wav"
+            is_playing = True
+            backend = None
+            usable_audio = True
+
+            def position_ms(self) -> float:
+                return 1000.0
+
+            def heard_position_ms(self) -> float:
+                return 800.0
+
+            def poll(self) -> None:  # pragma: no cover
+                return
+
+        fired: list = []
+        app.hits.play_hit = lambda: fired.append(app.view.current_beat)  # type: ignore[assignment]
+        original_audio = app.audio
+        app.audio = StubAudio()  # type: ignore[assignment]
+        app._hit_last_beat = 1.9
+        app._metronome_last_beat = 1.9
+        try:
+            app._advance_playback()
+        finally:
+            app.audio = original_audio
+
+        self.assertEqual(len(fired), 1, "后端位置到达第 2 拍时应当触发打击音")
+        self.assertAlmostEqual(app.view.current_beat, 1.6, places=6, msg="判定线用听到的位置")
+
+
     def test_help_menu_has_guide_and_shortcuts_only(self) -> None:
         # 帮助已并入「编辑器设置」菜单
         menu = self.app.toolbar._menus["编辑器设置"]

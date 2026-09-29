@@ -287,8 +287,14 @@ class EditorApp:
         song_ms = self.audio.heard_position_ms()
         beat = timing.song_ms_to_beat(song_ms)
         self.view.current_beat = beat
-        self._tick_metronome(timing, beat)
-        self._tick_hit_sound(beat)
+        # 音效（节拍音 / 打击音）要跟**音乐**同步，不是跟 UI 同步：
+        # 我们自己播放的声音同样要经过 latency 才被听到，所以按“软件位置”
+        # （还没减延迟的后端位置）触发；等听到时正好与歌曲对拍。
+        # UI 的判定线仍然用 heard（耳朵听到的位置），所以物件到达判定线时
+        # 音效早已在 latency 之前触发过了。
+        sound_beat = timing.song_ms_to_beat(self.audio.position_ms())
+        self._tick_metronome(timing, sound_beat)
+        self._tick_hit_sound(sound_beat)
         backend = getattr(self.audio, "backend", None)
         if backend is not None and not getattr(backend, "is_playing", True):
             # 音乐刚播完：记下此刻的播放位置（秒），之后还要再走 margin 秒才考虑停止
