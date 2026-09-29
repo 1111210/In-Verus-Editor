@@ -66,6 +66,8 @@
 | `music_volume` | number | 1.0 | 歌曲音量（0 ~ 1） |
 | `metronome_volume` | number | 0.6 | 节拍音音量（0 ~ 1） |
 | `hit_volume` | number | 0.6 | 打击音效音量（0 ~ 1） |
+| `hit_enabled` | bool | true | 打击音效开关 |
+| `side_lane_highlight` | bool | false | 侧轨高亮：6K 第 1 / 第 6 轨背景暗紫 |
 
 ## 1.4 speed_groups
 

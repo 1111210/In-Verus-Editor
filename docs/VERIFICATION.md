@@ -217,8 +217,8 @@ python tools/check_audio.py
 | `tests/test_editor_smoke.py::test_note_layer_order_matches_readability_spec` | 七层绘制顺序（画布图元次序）符合规格 |
 | `tests/test_editor_smoke.py::test_hit_priority_follows_layer_order` | 命中优先级与图层一致（点击按键 > 滑键 > 空域 > 单轨单键 > …） |
 | `tests/test_undo_records.py`（10 条） | 差量撤销：增删/粘贴/镜像/编辑/改组/改元数据与 BPM 的撤销重做等价性、记录量只随改动量增长、栈上限、选择还原 |
-| `tests/test_editor_smoke.py::test_tap_note_style` | 单键图案：白边 + 亮蓝环 + 中间白横线（位置居中） |
-| `tests/test_editor_smoke.py::test_hold_note_style_and_constant_center_line` | 长按图案：两侧蓝线 + 白竖线（粗细与轨道数无关）+ 开头白横线贴在起始拍上 |
+| `tests/test_editor_smoke.py::test_tap_note_style` | 单键图案：实心蓝细矩形（厚度 9px，以判定时刻居中）+ 白边 + 白横线压在节拍线上 |
+| `tests/test_editor_smoke.py::test_hold_note_style_and_constant_center_line` | 长按图案：实心蓝矩形 + 白竖线（粗细与轨道数无关）+ 开头套用单键样式（细矩形 + 压线白横线） |
 | `tests/test_editor_smoke.py::test_multi_holds_stack_by_lane_span` | 多轨层内排序：跨得越多越靠下层 |
 | `tests/test_chart_io.py::test_suffix` | 只支持 JSON：任何后缀都会被规范成 `.json` |
 | `tests/test_app_flow.py::test_fullscreen_toggle` | 全屏开关切换 |

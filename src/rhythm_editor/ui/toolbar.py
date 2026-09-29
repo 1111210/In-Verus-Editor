@@ -166,6 +166,11 @@ class Toolbar(ttk.Frame):
             Entry(separator=True),
             Entry("时间网格细分", options=grid_options),
             Entry("横向辅助网格", options=hgrid_options),
+            Entry(
+                "侧轨高亮（第 1 / 6 轨 · 暗紫）",
+                app.toggle_side_lane_highlight,
+                checked=lambda: app.document.chart.settings.side_lane_highlight,
+            ),
             Entry(separator=True),
             Entry("跳到开头", lambda: app.jump(0.0), "Home"),
             Entry("跳到结尾", lambda: app.jump(app.document.chart.beat_bounds()[1]), "End"),

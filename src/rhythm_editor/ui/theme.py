@@ -22,6 +22,7 @@ class Theme:
     lane_alt2: str = "#0a0a0a"
     lane_border: str = "#2f2f2f"
     lane_border_strong: str = "#4d4d4d"
+    lane_side_highlight: str = "#3a2352"   # 侧轨高亮：第 1 / 第 6 轨背景（暗紫）
 
     grid_sub: str = "#1a1a1a"
     grid_beat: str = "#2b2b2b"

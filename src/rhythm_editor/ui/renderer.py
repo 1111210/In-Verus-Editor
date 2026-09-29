@@ -167,7 +167,9 @@ class Renderer:
         )
 
         self.scene.set_layer(1)
-        self._draw_lanes(view, theme, "lane")
+        self._draw_lanes(
+            view, theme, "lane", chart.settings.side_lane_highlight
+        )
         self.scene.set_layer(2)
         self._draw_time_grid(chart, view, beat_low, beat_high, *layout.pane_6k, "grid6", True, False)
         self._draw_time_grid(chart, view, beat_low, beat_high, *layout.pane_mouse, "gridm", False, True)
@@ -206,7 +208,9 @@ class Renderer:
             outline=theme.lane_border,
             width=1,
         )
-        self._draw_lanes(view, theme, "lane")
+        self._draw_lanes(
+            view, theme, "lane", chart.settings.side_lane_highlight
+        )
         self.scene.set_layer(2)
         self._draw_time_grid(
             chart,
@@ -286,10 +290,20 @@ class Renderer:
         )
 
     # ------------------------------------------------------------------ 轨道
-    def _draw_lanes(self, view: ViewState, theme: Theme, key_prefix: str = "lane") -> None:
+    def _draw_lanes(
+        self,
+        view: ViewState,
+        theme: Theme,
+        key_prefix: str = "lane",
+        highlight_sides: bool = False,
+    ) -> None:
         layout = view.layout
         for index, (x0, x1) in enumerate(layout.lane_rects):
-            fill = theme.lane_alt if index % 2 == 0 else theme.lane_alt2
+            if highlight_sides and index in (0, len(layout.lane_rects) - 1):
+                # 侧轨高亮：第 1 / 第 6 轨背景用暗紫色
+                fill = theme.lane_side_highlight
+            else:
+                fill = theme.lane_alt if index % 2 == 0 else theme.lane_alt2
             self.scene.rect(
                 f"{key_prefix}:{index}",
                 x0,
@@ -563,45 +577,42 @@ class Renderer:
                 top = bottom - TAP_MIN_PX
             style = "hold"
         else:
-            top = y_head - TAP_MIN_PX
-            bottom = y_head
+            # 单键：细矩形**以判定时刻为垂直中点**，白色横线正好压在节拍线上
+            top = y_head - TAP_MIN_PX / 2.0
+            bottom = y_head + TAP_MIN_PX / 2.0
             style = "tap"
         if bottom < y_min or top > y_max:
             return
         self._hit_entries.append((note, (x0, top, x1, bottom), None))
         if style == "hold":
-            # 长按：两侧蓝色边线 + 中间白色竖线（粗细固定，不随跨轨道数变化）
-            self.scene.line(
-                f"note-side-l:{note.id}", x0, top, x0, bottom,
-                fill=theme.note_blue, width=3,
-            )
-            self.scene.line(
-                f"note-side-r:{note.id}", x1, top, x1, bottom,
-                fill=theme.note_blue, width=3,
+            # 长按：实心蓝色矩形打底，上面画白色竖线（粗细固定）+ 开头白横线
+            self.scene.rect(
+                f"note-body:{note.id}", x0, top, x1, bottom,
+                fill=theme.note_blue, outline=theme.note_white, width=1,
             )
             center = (x0 + x1) / 2.0
             self.scene.line(
                 f"note:{note.id}", center, top, center, bottom,
                 fill=theme.note_white, width=theme.note_line_width,
             )
-            # 开头处与单键相同的白色横线
+            # 开头：与单键同款（细矩形 + 压在起始拍线上的白色横线）
+            self.scene.rect(
+                f"note-head-body:{note.id}",
+                x0, y_head - TAP_MIN_PX / 2.0, x1, y_head + TAP_MIN_PX / 2.0,
+                fill=theme.note_blue, outline=theme.note_white, width=1,
+            )
             self.scene.line(
                 f"note-head:{note.id}", x0, y_head, x1, y_head,
                 fill=theme.note_white, width=theme.note_line_width,
             )
         else:
-            # 单键 / 多轨单键：外侧白色边 + 亮蓝色环 + 中间一条白色横线
+            # 单键 / 多轨单键：实心蓝色矩形打底 + 中间一条白色横线（压在节拍线上）
             self.scene.rect(
                 f"note:{note.id}", x0, top, x1, bottom,
-                fill="", outline=theme.note_white, width=2,
+                fill=theme.note_blue, outline=theme.note_white, width=1,
             )
-            self.scene.rect(
-                f"note-ring:{note.id}", x0 + 2, top + 2, x1 - 2, bottom - 2,
-                fill="", outline=theme.note_blue, width=3,
-            )
-            middle = (top + bottom) / 2.0
             self.scene.line(
-                f"note-line:{note.id}", x0 + 2, middle, x1 - 2, middle,
+                f"note-line:{note.id}", x0 + 1, y_head, x1 - 1, y_head,
                 fill=theme.note_white, width=theme.note_line_width,
             )
         if selected:

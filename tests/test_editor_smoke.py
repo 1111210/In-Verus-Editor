@@ -19,7 +19,7 @@ from rhythm_editor.model.chart import Chart
 from rhythm_editor.model.document import Document
 from rhythm_editor.model.notes import BoundaryCurve, LaneNote, MouseClick, MouseRegion, MouseSlide
 from rhythm_editor.ui.interactions import ToolController
-from rhythm_editor.ui.geometry import notes_at
+from rhythm_editor.ui.geometry import TAP_MIN_PX, notes_at
 from rhythm_editor.ui.renderer import RenderState, Renderer
 from rhythm_editor.ui.scene import Scene
 from rhythm_editor.ui.theme import DARK
@@ -375,45 +375,51 @@ class EditorSmokeTest(unittest.TestCase):
         self.assertLess(index("slide:SL"), index("click-left:CK"))
 
     def test_tap_note_style(self) -> None:
-        """单键 / 多轨单键：外侧白色边 + 亮蓝色环 + 中间一条白色横线。"""
+        """单键 / 多轨单键：实心蓝色矩形 + 白边，白色横线压在节拍线上。"""
         self.chart.add(LaneNote("T1", 2, 2, 2.0))
         self.view.set_beat(0.0)
         self.draw()
         outer = dict(self.scene._items["note:T1"][2][1])
-        ring = dict(self.scene._items["note-ring:T1"][2][1])
         line = dict(self.scene._items["note-line:T1"][2][1])
         self.assertEqual(outer["outline"], DARK.note_white)
-        self.assertEqual(outer["fill"], "")
-        self.assertEqual(ring["outline"], DARK.note_blue)
-        self.assertEqual(ring["fill"], "")
+        self.assertEqual(outer["fill"], DARK.note_blue, "实心蓝色矩形打底")
         self.assertEqual(line["fill"], DARK.note_white)
         self.assertEqual(int(line["width"]), DARK.note_line_width)
-        # 白色横线在按键中间
         outer_coords = self.scene._items["note:T1"][2][0]
         line_coords = self.scene._items["note-line:T1"][2][0]
-        self.assertAlmostEqual(line_coords[1], (outer_coords[1] + outer_coords[3]) / 2, places=6)
+        # 单键更薄，且以判定时刻为垂直中点：白色横线正好落在节拍线上
+        self.assertAlmostEqual(outer_coords[3] - outer_coords[1], TAP_MIN_PX, delta=0.01)
+        self.assertAlmostEqual(
+            (outer_coords[1] + outer_coords[3]) / 2, self.view.beat_to_y(2.0), places=6
+        )
+        self.assertAlmostEqual(line_coords[1], self.view.beat_to_y(2.0), places=6)
 
     def test_hold_note_style_and_constant_center_line(self) -> None:
-        """长按：两侧蓝色边线 + 中间白竖线（粗细固定，不随跨轨道数变化）+ 开头白横线。"""
+        """长按：实心蓝色矩形 + 白色竖线（粗细固定），开头套用单键样式。"""
         self.chart.add(LaneNote("H1", 1, 1, 2.0, 4.0))     # 单轨长按
         self.chart.add(LaneNote("H2", 0, 5, 2.0, 4.0))     # 跨 6 轨的长按
         self.view.set_beat(0.0)
         self.draw()
         widths = set()
         for note_id in ("H1", "H2"):
-            left = dict(self.scene._items[f"note-side-l:{note_id}"][2][1])
-            right = dict(self.scene._items[f"note-side-r:{note_id}"][2][1])
+            body = dict(self.scene._items[f"note-body:{note_id}"][2][1])
             center = dict(self.scene._items[f"note:{note_id}"][2][1])
             head = dict(self.scene._items[f"note-head:{note_id}"][2][1])
-            self.assertEqual(left["fill"], DARK.note_blue)
-            self.assertEqual(right["fill"], DARK.note_blue)
+            head_body = dict(self.scene._items[f"note-head-body:{note_id}"][2][1])
+            self.assertEqual(body["fill"], DARK.note_blue, "长按主体是实心蓝色矩形")
+            self.assertEqual(body["outline"], DARK.note_white)
             self.assertEqual(center["fill"], DARK.note_white)
             self.assertEqual(head["fill"], DARK.note_white)
             self.assertEqual(int(head["width"]), DARK.note_line_width)
+            # 开头与单键同款：实心蓝矩形 + 白边
+            self.assertEqual(head_body["fill"], DARK.note_blue)
+            self.assertEqual(head_body["outline"], DARK.note_white)
+            head_coords = self.scene._items[f"note-head-body:{note_id}"][2][0]
+            self.assertAlmostEqual(head_coords[3] - head_coords[1], TAP_MIN_PX, delta=0.01)
             widths.add(int(center["width"]))
             # 开头横线位于起始拍的网格线（判定边）上
-            head_coords = self.scene._items[f"note-head:{note_id}"][2][0]
-            self.assertAlmostEqual(head_coords[1], self.view.beat_to_y(2.0), places=6)
+            line_coords = self.scene._items[f"note-head:{note_id}"][2][0]
+            self.assertAlmostEqual(line_coords[1], self.view.beat_to_y(2.0), places=6)
         self.assertEqual(widths, {DARK.note_line_width}, "白竖线粗细应与轨道数无关")
 
     def test_multi_holds_stack_by_lane_span(self) -> None:
@@ -943,14 +949,17 @@ class EditorSmokeTest(unittest.TestCase):
         self.assertGreaterEqual(first, 0.0)
         self.assertLess(first, last)
         self.assertLessEqual(last, 1.0)
-        # 往后拖：判定线前进
-        self.view.set_from_fraction(0.5)
-        self.assertGreater(self.view.current_beat, 0.0)
-        later_first, _ = self.view.scroll_fractions()
-        self.assertGreater(later_first, first)
-        # 回到开头
-        self.view.set_from_fraction(0.0)
+        # 方向是反的：比例 1.0 = 曲首、0.0 = 曲末
+        self.view.set_from_fraction(1.0)
         self.assertLess(self.view.current_beat, 1.0)
+        head = self.view.current_beat
+        self.view.set_from_fraction(0.0)
+        self.assertGreater(self.view.current_beat, head)
+        # 往后走时滑块往上（比例变小）
+        later_first, _ = self.view.scroll_fractions()
+        self.view.set_from_fraction(1.0)
+        earlier_first, _ = self.view.scroll_fractions()
+        self.assertLessEqual(later_first, earlier_first)
 
     def test_note_geometry_reflects_speed_group(self) -> None:
         from rhythm_editor.model.speed import SpeedSegment
@@ -990,8 +999,12 @@ class EditorSmokeTest(unittest.TestCase):
         self.draw()
         self.assertIn("note:L1", self.scene._items)
         coords = self.scene._items["note:L1"][2][0]
-        # 按键的判定边（下边缘）正好压在判定线上
-        self.assertAlmostEqual(max(coords[1], coords[3]), self.view.layout.judgment_y, places=6)
+        # 单键以判定时刻为垂直中点：白色横线压在判定线上
+        line_coords = self.scene._items["note-line:L1"][2][0]
+        self.assertAlmostEqual(line_coords[1], self.view.layout.judgment_y, places=6)
+        self.assertAlmostEqual(
+            (coords[1] + coords[3]) / 2, self.view.layout.judgment_y, places=6
+        )
         hits = notes_at(
             self.chart,
             self.view,

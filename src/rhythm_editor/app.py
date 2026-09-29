@@ -409,7 +409,8 @@ class EditorApp:
             self.view.set_from_fraction(float(args[1]))
             self.status(f"时间轴：第 {self.view.current_beat:.3f} 拍")
         elif args[0] == "scroll":
-            number = int(args[1])
+            # 滚动条方向是反的（往下 = 往回走），所以这里的符号也要反过来
+            number = -int(args[1])
             what = args[2] if len(args) > 2 else "units"
             if what == "pages":
                 self.view.scroll_beats(number * self.view.visible_beats() * 0.9)
@@ -852,6 +853,17 @@ class EditorApp:
         )
         self._apply_volumes()
         self.status("打击音效：" + ("开启" if value else "关闭"))
+        self.toolbar.sync()
+
+    def toggle_side_lane_highlight(self) -> None:
+        """视图菜单：第 1 / 第 6 轨背景高亮（暗紫色）。"""
+        chart = self.document.chart
+        value = not chart.settings.side_lane_highlight
+        self.document.apply(
+            "侧轨高亮",
+            lambda: setattr(chart.settings, "side_lane_highlight", value),
+        )
+        self.status("侧轨高亮：" + ("开启（第 1 / 6 轨暗紫）" if value else "关闭"))
         self.toolbar.sync()
 
     def edit_volumes(self) -> None:

@@ -307,7 +307,11 @@ class ViewState:
         return low_s - pad, high_s + pad
 
     def scroll_fractions(self) -> Tuple[float, float]:
-        """当前可视时间窗口在文档范围内的位置（0..1），用于设置滚动条滑块。"""
+        """当前可视时间窗口在滚动条上的位置（0..1），用于设置滑块。
+
+        **方向是反的**：滚动条顶端 = 曲末、底端 = 曲首（往下拖是往回走），
+        这样“往下拖 = 时间往前走”的旧手感被反过来。
+        """
         timing = self.chart.timing
         low, high = self.scroll_doc_range()
         span = max(1e-6, high - low)
@@ -315,13 +319,14 @@ class ViewState:
         window_high = window_low + self.visible_seconds()
         first = min(max((window_low - low) / span, 0.0), 1.0)
         last = min(max((window_high - low) / span, first + 0.01), 1.0)
-        return first, last
+        return 1.0 - last, 1.0 - first
 
     def set_from_fraction(self, fraction: float) -> None:
-        """把可视窗口的“低端”（较早的一侧）移到文档的指定比例处。"""
+        """把可视窗口的“低端”（较早的一侧）移到滚动条比例处（方向同 :meth:`scroll_fractions`）。"""
         timing = self.chart.timing
         low, high = self.scroll_doc_range()
-        window_low = low + float(fraction) * (high - low)
+        position = 1.0 - float(fraction)
+        window_low = low + position * (high - low)
         self.set_beat(timing.seconds_to_beat(window_low + self.seconds_below()))
 
     def visible_seconds(self) -> float:

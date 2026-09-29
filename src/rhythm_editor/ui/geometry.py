@@ -14,7 +14,8 @@ from ..model.notes import LaneNote, MouseClick, MouseNote, MouseRegion, MouseSli
 from ..model.speed import SpeedGroup
 from .view import ViewState
 
-TAP_MIN_PX = 13.0
+# 单键厚度（细矩形，以判定时刻为垂直中点）
+TAP_MIN_PX = 9.0
 SLIDE_MIN_PX = 22.0
 REGION_SAMPLES = 40
 MIN_SLIDE_PX = 18.0
@@ -116,7 +117,8 @@ def lane_note_bounds(note: LaneNote, chart: Chart, view: ViewState) -> Bounds:
         if bottom - top < TAP_MIN_PX:
             bottom = top + TAP_MIN_PX
     else:
-        top, bottom = y_head - TAP_MIN_PX, y_head
+        # 单键：与渲染一致，以判定时刻为垂直中点
+        top, bottom = y_head - TAP_MIN_PX / 2.0, y_head + TAP_MIN_PX / 2.0
     return x0, top, x1, bottom
 
 
