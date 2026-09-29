@@ -28,6 +28,7 @@ from typing import Dict, List, Optional, Tuple
 from ..model.chart import Chart
 from ..model.notes import LaneNote, MouseClick, MouseRegion, MouseSlide, Note
 from .. import config
+from .settings import RATE_MAX, RATE_MIN
 
 EXACT = "EXACT"
 EXACT_MIXED = "Exact"
@@ -113,7 +114,7 @@ class Judge:
         self.chart = chart
         self.timing = chart.timing
         # 倍速：只影响分数倍率（分数 = 当前计分 × 倍速^1.5），不影响判定窗口
-        self.rate = min(1.0, max(0.1, float(rate)))
+        self.rate = min(RATE_MAX, max(RATE_MIN, float(rate)))
         self.results: List[Judged] = []
         self.notes: Dict[str, Note] = {n.id: n for n in chart.all_notes()}
         self._counts: Dict[str, int] = {g: 0 for g in GRADES}

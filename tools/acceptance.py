@@ -173,7 +173,7 @@ def report() -> int:
     player_settings = game_settings.PlayerSettings()
     player_settings.normalize()
     item(
-        "游玩器设置（键位 / 厚度 / 延迟 / 可视毫秒 / 灵敏度 / 无界鼠标 / 玩家名）",
+        "游玩器设置（键位 / 厚度 / 延迟 / 流速 / 灵敏度 / 无界鼠标 / 玩家名 / 倍速）",
         player_settings.keys[:2] == ["shift", "a"]
         and 0.1 <= player_settings.mouse_sensitivity <= 10.0
         and 200.0 <= player_settings.scroll_ms <= 20_000.0,

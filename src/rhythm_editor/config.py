@@ -58,9 +58,11 @@ SCROLL_WHEEL_SNAP = True          # 滚轮滚动后仍然吸附到时间网格�
 SCROLL_WHEEL_FAST_BEATS = 1.0     # Shift + 滚轮：一次滚动 1 拍
 PENDING_COLOR = "#ffd166"
 
-# 播放倍速：0.1 ~ 1.0，每 0.1 一档（慢放用重采样，音调随之变低）
+# 播放倍速：0.1 ~ 1.0，每 0.1 一档（慢放用重采样，音调随之变低）；
+# 音频引擎本身允许到 RATE_LIMIT_MAX（游玩器可以把倍速开到 3x = 加速）
 RATE_MIN = 0.1
 RATE_MAX = 1.0
+RATE_LIMIT_MAX = 3.0
 RATE_STEP = 0.1
 DEFAULT_RATE = 1.0
 

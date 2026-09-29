@@ -14,6 +14,13 @@ from typing import Dict, List, Optional
 ENV_PLAYER_SETTINGS = "VERUS_PLAYER_SETTINGS"
 
 DEFAULT_KEYS: List[str] = ["shift", "a", "s", "d", "f", "space"]
+SPEED_MIN = 1.0
+SPEED_MAX = 10.0
+SPEED_STEP = 0.1
+BASE_SCROLL_MS = 1500.0        # 流速 1.0 对应的可视毫秒；n 流速 = 1500 / n 毫秒
+RATE_MIN = 0.1                 # 游玩倍速：0.1 ~ 3.0（0.1 一档）
+RATE_MAX = 3.0
+RATE_STEP = 0.1
 
 
 @dataclass
@@ -24,12 +31,12 @@ class PlayerSettings:
     keys: List[str] = field(default_factory=lambda: list(DEFAULT_KEYS))
     note_thickness: float = 0.35          # 物件厚度（单位，除空域外）
     audio_latency_ms: float = 0.0         # 系统音频延迟（毫秒，可为负）
-    scroll_ms: float = 1500.0             # 1x 时“同时可见”的毫秒数（类似缩放）
+    speed: float = 1.0                    # 流速 1.0 ~ 10.0（0.1 一档）；可视毫秒 = 1500 / 流速
     side_lane_highlight: bool = False     # 6K 第 1 / 第 6 轨高亮
     mouse_sensitivity: float = 1.0        # 0.1 ~ 10
     unbounded_mouse: bool = False         # 无界鼠标：实际位置即判定位置
     renderer: str = "software"            # software / opengl
-    rate: float = 1.0                     # 游玩倍速 0.1 ~ 1.0x（每 0.1 一档）
+    rate: float = 1.0                     # 游玩倍速 0.1 ~ 3.0x（每 0.1 一档）
     music_volume: float = 1.0
     hit_volume: float = 0.6
     recent: List[str] = field(default_factory=list)     # 最近打开的谱面（最多 8 条）
@@ -43,9 +50,9 @@ class PlayerSettings:
             self.keys.append(DEFAULT_KEYS[len(self.keys)])
         self.note_thickness = min(1.0, max(0.05, float(self.note_thickness)))
         self.audio_latency_ms = min(5000.0, max(-5000.0, float(self.audio_latency_ms)))
-        self.scroll_ms = min(20_000.0, max(200.0, float(self.scroll_ms)))
+        self.speed = round(min(SPEED_MAX, max(SPEED_MIN, float(self.speed))), 1)
         self.mouse_sensitivity = min(10.0, max(0.1, float(self.mouse_sensitivity)))
-        self.rate = round(min(1.0, max(0.1, float(self.rate))), 1)
+        self.rate = round(min(RATE_MAX, max(RATE_MIN, float(self.rate))), 1)
         self.music_volume = min(1.0, max(0.0, float(self.music_volume)))
         self.hit_volume = min(1.0, max(0.0, float(self.hit_volume)))
         self.player_name = (self.player_name or "Player")[:24]
@@ -62,6 +69,12 @@ class PlayerSettings:
         self.normalize()
         return asdict(self)
 
+    @property
+    def scroll_ms(self) -> float:
+        """1x 下“同时可见”的毫秒数（由流速推出：1500 / speed）。"""
+        speed = min(SPEED_MAX, max(SPEED_MIN, float(self.speed or SPEED_MIN)))
+        return BASE_SCROLL_MS / speed
+
     @classmethod
     def from_dict(cls, data: Optional[Dict[str, object]]) -> "PlayerSettings":
         data = data or {}
@@ -70,7 +83,7 @@ class PlayerSettings:
             keys=list(data.get("keys", DEFAULT_KEYS)),  # type: ignore[arg-type]
             note_thickness=float(data.get("note_thickness", 0.35)),
             audio_latency_ms=float(data.get("audio_latency_ms", 0.0)),
-            scroll_ms=float(data.get("scroll_ms", 1500.0)),
+            speed=float(data.get("speed", _speed_from_legacy(data.get("scroll_ms")))),
             side_lane_highlight=bool(data.get("side_lane_highlight", False)),
             mouse_sensitivity=float(data.get("mouse_sensitivity", 1.0)),
             unbounded_mouse=bool(data.get("unbounded_mouse", False)),
@@ -82,6 +95,17 @@ class PlayerSettings:
         )
         obj.normalize()
         return obj
+
+
+def _speed_from_legacy(scroll_ms: object) -> float:
+    """老存档里只有 ``scroll_ms``：换算成流速（1500 / 毫秒），没有就用 1.0。"""
+    try:
+        value = float(scroll_ms)          # type: ignore[arg-type]
+    except (TypeError, ValueError):
+        return 1.0
+    if value <= 0.0:
+        return 1.0
+    return min(SPEED_MAX, max(SPEED_MIN, BASE_SCROLL_MS / value))
 
 
 def settings_path() -> str:

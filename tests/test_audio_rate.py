@@ -68,8 +68,12 @@ class AudioPlayerRateTests(unittest.TestCase):
         self.assertAlmostEqual(player.rate, 0.7)
         player.set_rate(0.04)          # 低于下限 -> 夹到 0.1
         self.assertAlmostEqual(player.rate, 0.1)
-        player.set_rate(3.0)           # 高于上限 -> 夹到 1.0
-        self.assertAlmostEqual(player.rate, 1.0)
+        player.set_rate(2.0)           # 加速：>1x 也走重采样后端
+        self.assertAlmostEqual(player.rate, 2.0)
+        player.set_rate(9.0)           # 高于上限 -> 夹到 RATE_LIMIT_MAX = 3.0
+        self.assertAlmostEqual(player.rate, config.RATE_LIMIT_MAX)
+        self.assertAlmostEqual(player.rate, 3.0)
+        player.set_rate(1.0)
         self.assertFalse(player.stretch_active)
 
     def test_heard_position_applies_signed_latency(self) -> None:

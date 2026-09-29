@@ -41,6 +41,7 @@ class PlayerAppSmokeTests(unittest.TestCase):
         if not os.path.isfile(chart):
             self.skipTest("缺少示例谱面")
         self.pygame = pygame
+        psettings.save_settings(psettings.PlayerSettings())    # 每个用例都从默认设置开始
         self.app = PlayerApp([chart])
         self.addCleanup(self._close)
 
@@ -409,6 +410,82 @@ class PlayerAppSmokeTests(unittest.TestCase):
         self.assertEqual(forced.renderer_name, "software")
         self.assertEqual(psettings.load_settings().renderer, "software")
         forced.running = False
+
+    def test_settings_speed_row_with_dot_input(self) -> None:
+        """第 4 行是流速（1~10，0.1 一档，可视毫秒 = 1500/流速），● 可以自定义输入。"""
+        app = self.app
+        pygame = self.pygame
+        app.settings_row = 4
+        self.assertAlmostEqual(app.settings.speed, 1.0)
+        app._adjust_setting(1)
+        self.assertAlmostEqual(app.settings.speed, 1.1)
+        self.assertAlmostEqual(app.settings.scroll_ms, 1500.0 / 1.1)
+        for _ in range(200):                       # 上限 10
+            app._adjust_setting(1)
+        self.assertAlmostEqual(app.settings.speed, 10.0)
+        self.assertAlmostEqual(app.settings.scroll_ms, 150.0)
+        for _ in range(500):                       # 下限 1
+            app._adjust_setting(-1)
+        self.assertAlmostEqual(app.settings.speed, 1.0)
+
+        # 点 ● -> 输入 4.5 回车
+        app.state = "settings"
+        app._draw()
+        dot = app.ui["set_dot:4"]
+        queue = [
+            [pygame.event.Event(pygame.TEXTINPUT, text="4.5")],
+            [pygame.event.Event(pygame.KEYDOWN, key=pygame.K_RETURN)],
+        ]
+        original = pygame.event.get
+        pygame.event.get = lambda *a, **k: queue.pop(0) if queue else []
+        try:
+            app._event_settings(
+                pygame.event.Event(pygame.MOUSEBUTTONDOWN, button=1, pos=dot.center)
+            )
+        finally:
+            pygame.event.get = original
+        self.assertAlmostEqual(app.settings.speed, 4.5)
+        self.assertAlmostEqual(app.settings.scroll_ms, 1500.0 / 4.5)
+
+    def test_settings_buttons_only_on_numeric_rows(self) -> None:
+        """文本 / 开关类选项不再出现 − + 按钮；数字类才有 − ● +。"""
+        app = self.app
+        pygame = self.pygame
+        app.state = "settings"
+        app._draw()
+        for row in (0, 1, 6, 7, 10):               # 玩家名 / 键位 / 开关 / 后端
+            self.assertNotIn(f"set_minus:{row}", app.ui)
+            self.assertNotIn(f"set_plus:{row}", app.ui)
+            self.assertNotIn(f"set_dot:{row}", app.ui)
+            self.assertIn(f"set:{row}", app.ui)
+        for row in sorted(app.NUMERIC_ROWS):       # 数字类：− ● +
+            self.assertIn(f"set_minus:{row}", app.ui)
+            self.assertIn(f"set_dot:{row}", app.ui)
+            self.assertIn(f"set_plus:{row}", app.ui)
+        # 非数字行仍然可以点行切换 / 输入
+        app.settings_row = 6
+        self.assertFalse(app.settings.side_lane_highlight)
+        row = app.ui["set:6"]
+        app._event_settings(pygame.event.Event(pygame.MOUSEBUTTONDOWN, button=1, pos=row.center))
+        self.assertTrue(app.settings.side_lane_highlight, "点已选中的行 = 切换开关")
+
+    def test_rate_can_go_up_to_three(self) -> None:
+        """倍速上限扩大到 3x（0.1 一档），分数 = 基础分 × 倍速^1.5。"""
+        app = self.app
+        app.settings_row = 11
+        for _ in range(60):
+            app._adjust_setting(1)
+        self.assertAlmostEqual(app.settings.rate, 3.0)
+        app._enter_loading()
+        app._start_play()
+        self.assertAlmostEqual(app.judge.rate, 3.0)
+        app.judge._judge_result("X", "EXACT", 0.0)
+        self.assertEqual(app.judge.score, round(app.judge.base_score * (3.0 ** 1.5)))
+        app._adjust_rate(-1)
+        self.assertAlmostEqual(app.settings.rate, 2.9)
+        for _ in range(60):
+            app._adjust_setting(-1)
+        self.assertAlmostEqual(app.settings.rate, 0.1)
 
 
 if __name__ == "__main__":

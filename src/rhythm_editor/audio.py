@@ -568,7 +568,8 @@ class AudioPlayer:
         target = self.path if path is None else path
         if not target:
             return self._silent_clock
-        want_stretch = self.rate < config.RATE_MAX - 1e-9
+        # 只要不是 1.0x 就必须用重采样后端（< 1 慢放，> 1 加速）
+        want_stretch = abs(self.rate - 1.0) > 1e-9
         if want_stretch and STRETCH_AVAILABLE:
             if self._stretch_backend is None:
                 try:
@@ -668,7 +669,7 @@ class AudioPlayer:
     # ------------------------------------------------------------------ 倍速
     def set_rate(self, rate: float) -> None:
         """设置播放倍速（0.1 ~ 1.0x，步进 0.1）：慢放通过重采样实现，音调随之变低。"""
-        rate = round(max(config.RATE_MIN, min(config.RATE_MAX, float(rate))), 2)
+        rate = round(max(config.RATE_MIN, min(config.RATE_LIMIT_MAX, float(rate))), 2)
         if abs(rate - self.rate) < 1e-9:
             return
         was_playing = self._playing

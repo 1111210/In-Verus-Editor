@@ -191,9 +191,12 @@ class ScoreTests(unittest.TestCase):
         self.assertEqual(judge.score, round(base * (0.5 ** 1.5)))
         judge.rate = 0.1
         self.assertEqual(judge.score, round(base * (0.1 ** 1.5)))
-        # 倍速被夹在 0.1 ~ 1.0
-        self.assertEqual(Judge(chart, rate=3.0).rate, 1.0)
+        # 倍速被夹在 0.1 ~ 3.0（上限 3 倍）
+        self.assertEqual(Judge(chart, rate=3.0).rate, 3.0)
+        self.assertEqual(Judge(chart, rate=9.0).rate, 3.0)
         self.assertEqual(Judge(chart, rate=0.01).rate, 0.1)
+        judge.rate = 3.0
+        self.assertEqual(judge.score, round(base * (3.0 ** 1.5)))
 
     def test_earliest_judge_time_wins_when_several_are_hittable(self) -> None:
         """同时可判多个物件时，取**判定时刻最靠前**的那个。"""

@@ -546,15 +546,51 @@ class PlayerApp:
         "6K 键位（回车逐轨输入）",
         "物件厚度",
         "系统音频延迟(ms)",
-        "1x 可视毫秒",
+        "流速（可视毫秒 = 1500 / 流速）",
         "鼠标灵敏度",
         "侧轨高亮",
         "无界鼠标模式",
         "音乐音量",
         "打击音效音量",
         "渲染后端（软件 / OpenGL）",
-        "倍速（0.1~1.0x）",
+        "倍速（0.1~3.0x）",
     )
+    # 数字类选项（有 − / ● / + 三个按钮；点 ● 可以自定义输入）：行号 -> (最小, 最大, 步进)
+    NUMERIC_ROWS = {
+        2: (0.05, 1.0, 0.05),
+        3: (-5000.0, 5000.0, 5.0),
+        4: (psettings.SPEED_MIN, psettings.SPEED_MAX, psettings.SPEED_STEP),
+        5: (0.1, 10.0, 0.1),
+        8: (0.0, 1.0, 0.05),
+        9: (0.0, 1.0, 0.05),
+        11: (psettings.RATE_MIN, psettings.RATE_MAX, psettings.RATE_STEP),
+    }
+
+    def _setting_value_text(self, row: int) -> str:
+        s = self.settings
+        if row == 0:
+            return s.player_name
+        if row == 1:
+            return " ".join(s.keys)
+        if row == 2:
+            return f"{s.note_thickness:.2f}"
+        if row == 3:
+            return f"{s.audio_latency_ms:.0f} ms"
+        if row == 4:
+            return f"{s.speed:.1f}（可视 {s.scroll_ms:.0f} ms）"
+        if row == 5:
+            return f"{s.mouse_sensitivity:.2f}x"
+        if row == 6:
+            return "开" if s.side_lane_highlight else "关"
+        if row == 7:
+            return "开" if s.unbounded_mouse else "关"
+        if row == 8:
+            return f"{s.music_volume * 100:.0f}%"
+        if row == 9:
+            return f"{s.hit_volume * 100:.0f}%"
+        if row == 10:
+            return "OpenGL（切换即生效）" if s.renderer == "opengl" else "软件"
+        return f"{s.rate:.1f}x（得分 ×{s.rate ** 1.5:.2f}）"
 
     def _event_settings(self, event) -> None:
         if event.type == pygame.MOUSEWHEEL:
@@ -580,7 +616,7 @@ class PlayerApp:
             psettings.save_settings(s)
 
     def _click_settings(self, pos) -> None:
-        """鼠标点设置行：选中；再点一次那一行 = 编辑 / 切换；◀ ▶ 直接调整。"""
+        """鼠标点设置行：选中；再点一次那一行 = 编辑 / 切换；数字行的 − ● + 直接操作。"""
         key = self._hit_ui(pos)
         if not key:
             return
@@ -592,6 +628,9 @@ class PlayerApp:
         elif kind == "set_plus":
             self.settings_row = index
             self._adjust_setting(1)
+        elif kind == "set_dot":
+            self.settings_row = index
+            self._prompt_number(index)
         elif kind == "set":
             if index == self.settings_row:
                 self._edit_setting_text()
@@ -601,11 +640,12 @@ class PlayerApp:
 
     def _edit_setting_text(self) -> None:
         s = self.settings
-        if self.settings_row == 0:
+        row = self.settings_row
+        if row == 0:
             entered = self._prompt("玩家名称", s.player_name)
             if entered is not None:
                 s.player_name = entered
-        elif self.settings_row == 1:
+        elif row == 1:
             for index, name in enumerate(s.keys):
                 picked = self._prompt_key(f"第 {index + 1} 轨（现在是 {name}）")
                 if not picked or picked == name:
@@ -615,51 +655,97 @@ class PlayerApp:
                     other = s.keys.index(picked)
                     s.keys[other] = name
                 s.keys[index] = picked
-        else:
-            self._adjust_setting(1)
-        s.normalize()
-
-    def _adjust_setting(self, step: int) -> None:
-        s = self.settings
-        row = self.settings_row
-        if row == 2:
-            s.note_thickness += 0.05 * step
-        elif row == 3:
-            s.audio_latency_ms += 5.0 * step
-        elif row == 4:
-            s.scroll_ms += 100.0 * step
-        elif row == 5:
-            s.mouse_sensitivity = round(s.mouse_sensitivity + 0.1 * step, 2)
+        elif row in self.NUMERIC_ROWS:
+            self._prompt_number(row)
         elif row == 6:
             s.side_lane_highlight = not s.side_lane_highlight
         elif row == 7:
             s.unbounded_mouse = not s.unbounded_mouse
-        elif row == 8:
-            s.music_volume = round(s.music_volume + 0.05 * step, 2)
-        elif row == 9:
-            s.hit_volume = round(s.hit_volume + 0.05 * step, 2)
         elif row == 10:
-            self.settings_row = row
             self._switch_renderer()
-            return
+        s.normalize()
+
+    def _setting_number(self, row: int) -> float:
+        s = self.settings
+        return {
+            2: s.note_thickness,
+            3: s.audio_latency_ms,
+            4: s.speed,
+            5: s.mouse_sensitivity,
+            8: s.music_volume,
+            9: s.hit_volume,
+            11: s.rate,
+        }[row]
+
+    def _set_setting_number(self, row: int, value: float) -> None:
+        s = self.settings
+        if row == 2:
+            s.note_thickness = value
+        elif row == 3:
+            s.audio_latency_ms = value
+        elif row == 4:
+            s.speed = value
+        elif row == 5:
+            s.mouse_sensitivity = value
+        elif row == 8:
+            s.music_volume = value
+            if self.state == "play":
+                self.audio.set_volume(s.music_volume)
+        elif row == 9:
+            s.hit_volume = value
+            if self.state == "play":
+                self.hits.set_volume(s.hit_volume)
         elif row == 11:
-            s.rate = round(min(1.0, max(0.1, s.rate + 0.1 * step)), 1)
+            s.rate = value
             if self.judge is not None:
                 self.judge.rate = s.rate
             self.audio.set_rate(s.rate)
         s.normalize()
-        if row in (8, 9) and self.state == "play":
-            self.audio.set_volume(s.music_volume)
-            self.hits.set_volume(s.hit_volume)
 
-    def _prompt(self, label: str, initial: str) -> Optional[str]:
+    def _prompt_number(self, row: int) -> None:
+        """数字类选项的自定义输入（点 ● 或在选中行按回车）。"""
+        low, high, step = self.NUMERIC_ROWS[row]
+        current = self._setting_number(row)
+        entered = self._prompt(
+            f"{self.SETTING_ROWS[row]}：{low:g} ~ {high:g}（{step:g} 一档）",
+            f"{current:g}",
+            select_all=True,
+        )
+        if entered is None:
+            return
+        text = entered.strip().replace("，", ".").replace(",", ".")
+        if text.endswith("x"):
+            text = text[:-1]
+        try:
+            value = float(text)
+        except ValueError:
+            self.message = f"“{entered}”不是数字"
+            return
+        value = min(high, max(low, round(value / step) * step))
+        self._set_setting_number(row, round(value, 2))
+        self.message = ""
+
+    def _adjust_setting(self, step: int) -> None:
+        row = self.settings_row
+        if row in self.NUMERIC_ROWS:
+            low, high, delta = self.NUMERIC_ROWS[row]
+            value = min(high, max(low, self._setting_number(row) + delta * step))
+            self._set_setting_number(row, round(value, 2))
+        elif row in (0, 1):
+            return                                    # 文本类：回车 / 点行才输入
+        else:
+            self._edit_setting_text()                 # 开关 / 后端：左右键等价于切换
+
+    def _prompt(self, label: str, initial: str, select_all: bool = False) -> Optional[str]:
         """窗口内文本输入（回车确认 / Esc 取消）。
 
         用 ``TEXTINPUT`` 事件收字（**中文 IME 也能输入**），并且走和主循环一样的
         ``_present()`` 呈现路径，所以 OpenGL 后端下也能看到自己打的字。
+        ``select_all=True`` 时第一次输入 / 退格会**替换**原文本（数字类选项用）。
         """
         entered = initial or ""
         caret = len(entered)
+        replacing = bool(select_all)
         text_input = True
         try:
             pygame.key.start_text_input()
@@ -679,8 +765,13 @@ class PlayerApp:
                     self.running = False
                     break
                 if event.type == pygame.TEXTINPUT:
-                    entered = entered[:caret] + event.text + entered[caret:]
-                    caret += len(event.text)
+                    if replacing:
+                        entered = event.text
+                        caret = len(entered)
+                        replacing = False
+                    else:
+                        entered = entered[:caret] + event.text + entered[caret:]
+                        caret += len(event.text)
                 elif event.type == pygame.KEYDOWN:
                     if event.key in (pygame.K_RETURN, pygame.K_KP_ENTER):
                         result = entered
@@ -690,7 +781,11 @@ class PlayerApp:
                         done = True
                         break
                     if event.key == pygame.K_BACKSPACE:
-                        if caret > 0:
+                        if replacing:
+                            entered = ""
+                            caret = 0
+                            replacing = False
+                        elif caret > 0:
                             entered = entered[: caret - 1] + entered[caret:]
                             caret -= 1
                     elif event.key == pygame.K_DELETE:
@@ -930,7 +1025,9 @@ class PlayerApp:
     def _adjust_rate(self, step: int) -> None:
         """游玩中调倍速（与编辑器一致：换后端容易出问题，因此自动暂停）。"""
         old = self.settings.rate
-        self.settings.rate = round(min(1.0, max(0.1, old + 0.1 * step)), 1)
+        self.settings.rate = round(
+            min(psettings.RATE_MAX, max(psettings.RATE_MIN, old + psettings.RATE_STEP * step)), 1
+        )
         if abs(self.settings.rate - old) < 1e-9:
             return
         psettings.save_settings(self.settings)
@@ -1072,46 +1169,72 @@ class PlayerApp:
 
     def _draw_settings(self, extra: str = "") -> None:
         self.text(
-            "设置（↑↓ 或滚轮选择 · ←→ 或点按钮调整 · 回车输入/切换 · Esc 保存并返回）",
+            "设置（↑↓ / 滚轮选择 · ←→ 或 − + 调整 · ● 自定义输入 · 回车输入/切换 · Esc 返回）",
             (40, 26),
             self.f_mid,
             WHITE,
         )
-        s = self.settings
-        values = [
-            s.player_name,
-            " ".join(s.keys),
-            f"{s.note_thickness:.2f}",
-            f"{s.audio_latency_ms:.0f} ms",
-            f"{s.scroll_ms:.0f} ms",
-            f"{s.mouse_sensitivity:.2f}x",
-            "开" if s.side_lane_highlight else "关",
-            "开" if s.unbounded_mouse else "关",
-            f"{s.music_volume * 100:.0f}%",
-            f"{s.hit_volume * 100:.0f}%",
-            "OpenGL（需重启/切换即生效）" if s.renderer == "opengl" else "软件",
-            f"{s.rate:.1f}x（得分 ×{s.rate ** 1.5:.2f}）",
-        ]
+        # 窗口矮的时候自动压缩行距，保证 12 行 + 底部说明都能放下
+        top = 96
+        pitch = min(44, max(30, (self.h - top - 80) // len(self.SETTING_ROWS)))
         for index, label in enumerate(self.SETTING_ROWS):
-            y = 100 + index * 44
+            y = top + index * pitch
             chosen = index == self.settings_row
             row = pygame.Rect(40, y - 6, self.w - 80, 40)
             self.ui[f"set:{index}"] = row
             if chosen:
                 pygame.draw.rect(self.screen, PANEL, row, border_radius=6)
-            self.text(("> " if chosen else "  ") + label, (60, y), self.f_mid, ACCENT if chosen else DIM)
-            self.text(values[index], (640, y), self.f_mid, WHITE)
-            minus = pygame.Rect(self.w - 150, y - 6, 34, 38)
-            plus = pygame.Rect(self.w - 60, y - 6, 34, 38)
-            self.ui[f"set_minus:{index}"] = minus
-            self.ui[f"set_plus:{index}"] = plus
-            pygame.draw.rect(self.screen, (44, 44, 58), minus, border_radius=4)
-            pygame.draw.rect(self.screen, (44, 44, 58), plus, border_radius=4)
-            self.text("-", (minus.x + 12, y - 2), self.f_mid, WHITE)
-            self.text("+", (plus.x + 11, y - 2), self.f_mid, WHITE)
+            label_text = ("> " if chosen else "  ") + label
+            self.text(label_text, (60, y), self.f_mid, ACCENT if chosen else DIM)
+            numeric = index in self.NUMERIC_ROWS
+            value_right = self.w - 60
+            if numeric:                       # 数字类：− ● +（● = 自定义输入）
+                minus = pygame.Rect(self.w - 196, y - 6, 34, 38)
+                dot = pygame.Rect(self.w - 150, y - 6, 34, 38)
+                plus = pygame.Rect(self.w - 104, y - 6, 34, 38)
+                self.ui[f"set_minus:{index}"] = minus
+                self.ui[f"set_dot:{index}"] = dot
+                self.ui[f"set_plus:{index}"] = plus
+                for rect, glyph in ((minus, "-"), (plus, "+")):
+                    pygame.draw.rect(self.screen, (44, 44, 58), rect, border_radius=4)
+                    glyph_surface = self.f_mid.render(glyph, True, WHITE)
+                    self.screen.blit(
+                        glyph_surface,
+                        (
+                            rect.centerx - glyph_surface.get_width() / 2,
+                            rect.centery - glyph_surface.get_height() / 2,
+                        ),
+                    )
+                # 中间是**圆点按钮**：点它就能自定义输入数值
+                pygame.draw.rect(self.screen, (44, 44, 58), dot, border_radius=4)
+                pygame.draw.circle(
+                    self.screen,
+                    ACCENT if self.hover == f"set_dot:{index}" else WHITE,
+                    dot.center,
+                    9,
+                )
+                value_right = minus.x - 16
+            label_width = self.f_mid.size(label_text)[0]
+            text = self._fit_text(
+                self._setting_value_text(index), self.f_mid, value_right - (60 + label_width + 24)
+            )
+            surface = self.f_mid.render(text, True, WHITE)
+            self.screen.blit(surface, (value_right - surface.get_width(), y))
         if extra:
-            self.text(extra, (60, self.h - 80), self.f_mid, (255, 226, 120))
-        self.text("设置保存在 player.json（全局，不写进谱面）", (60, self.h - 40), self.f_small, DIM)
+            self.text(extra, (60, self.h - 62), self.f_small, (255, 226, 120))
+        self.text("设置保存在 player.json（全局，不写进谱面）", (60, self.h - 30), self.f_small, DIM)
+
+    @staticmethod
+    def _fit_text(text: str, font, max_width: int) -> str:
+        """把文字裁到 ``max_width`` 内（超出部分用 …），免得压到别的控件上。"""
+        if max_width <= 12:
+            return ""
+        if font.size(text)[0] <= max_width:
+            return text
+        trimmed = text
+        while trimmed and font.size(trimmed + "…")[0] > max_width:
+            trimmed = trimmed[:-1]
+        return trimmed + "…"
 
     def _draw_loading(self) -> None:
         assert self.chart is not None
