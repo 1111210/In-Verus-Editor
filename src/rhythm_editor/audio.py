@@ -55,8 +55,12 @@ STRETCH_AVAILABLE = _PYGAME is not None and _NP is not None
 # 时间伸缩参数
 STRETCH_FRAME = 2048          # 每帧样本数（约 46ms @44.1kHz）
 STRETCH_OVERLAP = 4           # 75% 重叠
-STRETCH_WINDOW_MS = 20_000.0  # 一次处理 20 秒原始音频（控制内存）
-STRETCH_QUEUE_AHEAD_MS = 5_000.0
+# 一次伸缩处理多少**输出**音频（原始窗口 = 这个值 × rate）：
+# 太小会频繁合成、太大则一次合成就要几百毫秒，导致画面/声音卡顿
+STRETCH_TARGET_OUTPUT_MS = 4_000.0
+STRETCH_WINDOW_MIN_MS = 400.0
+STRETCH_WINDOW_MAX_MS = 6_000.0
+STRETCH_QUEUE_AHEAD_MS = 8_000.0   # 原始音频还剩这么多毫秒就去准备下一个窗口
 
 
 def audio_backend_name() -> str:
@@ -176,6 +180,11 @@ def time_stretch(
     total = data.shape[0]
     if total <= frame:
         return samples
+    # 多声道：用**下混单声道**做相似度搜索，再把选中的起点同时应用到所有声道
+    #（早期版本直接对多声道矩阵做相关，立体声文件会维度不匹配而报错）
+    mono = data.mean(axis=1, dtype=np.float32) if channels > 1 else data[:, 0].astype(
+        np.float32, copy=False
+    )
     hop_out = max(1, frame // max(1, overlap))
     hop_in = hop_out * rate
     n_frames = int((total - frame) / hop_in) + 1
@@ -192,19 +201,18 @@ def time_stretch(
         if index > 0:
             max_start = total - frame
             target_start = min(previous_start + hop_out, max_start)
-            target = data[target_start:target_start + probe].astype(np.float32)
+            target = mono[target_start:target_start + probe]
             if target.shape[0] == probe:
                 low = max(0, nominal - search)
                 high = min(max_start, nominal + search)
                 if high > low:
                     window_view = np.lib.stride_tricks.sliding_window_view(
-                        data[low:high + probe], probe, axis=0
+                        mono[low:high + probe], probe, axis=0
                     )
-                    candidates = window_view.astype(np.float32)
                     # 归一化互相关（避免选到能量更大的无关片段）
                     target_norm = float(np.linalg.norm(target)) + 1e-6
-                    candidate_norm = np.linalg.norm(candidates, axis=1) + 1e-6
-                    scores = (candidates @ target) / (candidate_norm * target_norm)
+                    candidate_norm = np.linalg.norm(window_view, axis=1) + 1e-6
+                    scores = (window_view @ target) / (candidate_norm * target_norm)
                     start = low + int(np.argmax(scores))
             start = max(0, min(max_start, start))
         segment = data[start:start + frame]
@@ -294,6 +302,12 @@ def _ensure_mixer() -> Tuple[int, int, int]:
             _PYGAME.mixer.quit()
             _PYGAME.mixer.init(frequency=44100, size=-16, channels=2, buffer=1024)
         info = _PYGAME.mixer.get_init()
+        try:
+            # 0 号通道留给歌曲（拉伸后端固定用它），节拍音等自动选空闲通道，
+            # 避免“滴”声把正在播放的歌曲顶掉
+            _PYGAME.mixer.set_reserved(1)
+        except Exception:  # pragma: no cover - 老版本 pygame
+            pass
     return int(info[0]), int(info[1]), int(info[2])
 
 
@@ -414,9 +428,14 @@ class StretchedSoundBackend:  # pragma: no cover - 依赖 pygame + numpy
         if self._samples is None:
             return None
         start = max(0, int(start_ms / 1000.0 * self.freq))
+        # 原始窗口大小随倍速缩放：输出窗口长度大致固定，单次合成开销可控
+        window_ms = min(
+            STRETCH_WINDOW_MAX_MS,
+            max(STRETCH_WINDOW_MIN_MS, STRETCH_TARGET_OUTPUT_MS * self.rate),
+        )
         stop = min(
             int(self._samples.shape[0]),
-            start + int(STRETCH_WINDOW_MS / 1000.0 * self.freq),
+            start + int(window_ms / 1000.0 * self.freq),
         )
         if stop - start < STRETCH_FRAME * 2:
             return None
@@ -517,6 +536,8 @@ class AudioPlayer:
         self.latency_ms = 0.0
         self._playing = False
         self._paused_at_ms = 0.0
+        # 出问题时的说明（界面会显示）
+        self.last_error = ""
         # 没有音频文件时用静音时钟推进（pygame.music 没有载入文件时不会走时间）
         self._silent_clock = SilentBackend()
         self._plain_backend = self._create_plain_backend()
@@ -572,12 +593,14 @@ class AudioPlayer:
                         f"（未载入歌曲，播放为静音时钟）· {_fmt_rate(self.rate)}"
                     )
                 return f"音频后端：silent（{_silent_reason()}，静音）· {_fmt_rate(self.rate)}"
-            return f"音频后端：{self.backend.name}（未载入歌曲）· {_fmt_rate(self.rate)}"
+            text = f"音频后端：{self.backend.name}（未载入歌曲）· {_fmt_rate(self.rate)}"
+            return f"{text} · {self.last_error}" if self.last_error else text
         base = os.path.basename(self.path)
         if not self.usable_audio:
             return f"音频后端：silent（{_silent_reason()}，静音播放）· {base} · {_fmt_rate(self.rate)}"
         tone = "· 不变调" if self.stretch_active else ""
-        return f"音频后端：{self.backend.name} · {base} · {_fmt_rate(self.rate)}{tone}"
+        text = f"音频后端：{self.backend.name} · {base} · {_fmt_rate(self.rate)}{tone}"
+        return f"{text} · {self.last_error}" if self.last_error else text
 
     # ------------------------------------------------------------------ 载入
     def load(self, path: Optional[str]) -> bool:
@@ -665,10 +688,16 @@ class AudioPlayer:
         start = max(0.0, float(song_ms))
         try:
             self.backend.play(start)
-        except Exception:  # pragma: no cover - 后端异常时退回静音时钟
-            self.backend = SilentBackend()
-            self.backend.set_rate(self.rate)
-            self.backend.play(start)
+        except Exception as exc:  # pragma: no cover - 后端异常
+            # 拉伸合成失败时退回**普通播放**（听得见，只是不慢放），
+            # 而不是直接变成静音 —— 以前这里会静默切成静音时钟，音乐就“没了”
+            self._fallback_plain(f"慢放合成失败（{exc}），已回到 1.0x 播放")
+            try:
+                self.backend.play(start)
+            except Exception:
+                self.backend = SilentBackend()
+                self.backend.set_rate(self.rate)
+                self.backend.play(start)
         self._playing = True
         self._paused_at_ms = start
 
@@ -695,8 +724,30 @@ class AudioPlayer:
         """每帧调用：拉伸后端用它提前准备后续窗口。"""
         try:
             self.backend.poll()
-        except Exception:  # pragma: no cover
-            pass
+        except Exception as exc:  # pragma: no cover
+            self._fallback_plain(f"慢放合成失败（{exc}），已回到 1.0x 播放")
+
+    def _fallback_plain(self, reason: str) -> None:
+        """拉伸后端出问题时退回普通后端（保持可听，并把原因告诉界面）。"""
+        if self.backend is self._plain_backend:
+            return
+        was_playing = self._playing
+        position = self.position_ms()
+        self.rate = config.RATE_MAX
+        self.backend = self._plain_backend
+        if self.path:
+            try:
+                self._plain_backend.load(self.path)
+                self._plain_backend.set_rate(1.0)
+            except Exception:
+                pass
+        self.last_error = reason
+        self._playing = False
+        if was_playing and self.path:
+            try:
+                self.play(position)
+            except Exception:
+                pass
 
     def set_volume(self, volume: float) -> None:
         try:

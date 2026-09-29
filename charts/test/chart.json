@@ -1,0 +1,44 @@
+{
+  "format": "inverus.chart",
+  "version": 1,
+  "metadata": {
+    "title": "未命名曲目",
+    "artist": "未知歌手",
+    "difficulty_name": "普通",
+    "difficulty_level": "1",
+    "author": "作者",
+    "audio_file": ""
+  },
+  "timing": {
+    "offset_ms": 0.0,
+    "bpm_segments": [
+      {
+        "start_beat": 0.0,
+        "bpm": 120.0,
+        "beats_per_bar": 4
+      }
+    ]
+  },
+  "editor": {
+    "zoom_seconds": 4.0,
+    "grid_division": 4,
+    "horizontal_divisions": 0,
+    "audio_latency_ms": 0.0,
+    "metronome": "bar"
+  },
+  "speed_groups": [
+    {
+      "id": 0,
+      "name": "默认组",
+      "segments": [
+        {
+          "start_beat": 0.0,
+          "multiplier": 1.0
+        }
+      ],
+      "note_ids": []
+    }
+  ],
+  "lanes": [],
+  "mouse": []
+}

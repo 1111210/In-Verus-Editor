@@ -139,6 +139,18 @@ class TimeStretchTests(unittest.TestCase):
         same = time_stretch(tone, 1.0)
         self.assertEqual(len(same), len(tone))
 
+    def test_stereo_music_can_be_slowed(self) -> None:
+        """回归：立体声（真实音乐文件）慢放不能崩 —— 以前多声道相关会维度不匹配。"""
+        import numpy as np
+
+        mono = self._tone(1.0, freq=440.0)
+        stereo = np.repeat(mono.reshape(-1, 1), 2, axis=1)
+        slowed = time_stretch(stereo, 0.5)
+        self.assertEqual(slowed.shape[1], 2, "必须保持双声道")
+        self.assertAlmostEqual(slowed.shape[0] / stereo.shape[0], 2.0, delta=0.05)
+        # 左右声道内容一致（同一段正弦）时，两声道应当仍然基本一致
+        self.assertGreater(float(np.corrcoef(slowed[:, 0], slowed[:, 1])[0, 1]), 0.99)
+
 
 if __name__ == "__main__":
     unittest.main()
