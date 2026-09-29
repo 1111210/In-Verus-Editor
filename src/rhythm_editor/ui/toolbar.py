@@ -227,7 +227,7 @@ class Toolbar(ttk.Frame):
         self._right.pack(side="right", fill="y")
         self._group_buttons["帮助"] = self._make_menubutton(self._right, self._groups[-1])
         self._group_buttons["帮助"].pack(side="right", padx=(8, 0))
-        # 播放倍速：［−］［当前倍速］［＋］，0.1x 一档，范围 0.1 ~ 1.0x（变速不变调）
+        # 播放倍速：［−］［当前倍速］［＋］，0.1x 一档，范围 0.1 ~ 1.0x（慢放音调变低）
         ttk.Button(
             self._right, text="+", width=3, command=app.increase_playback_rate
         ).pack(side="right", padx=(4, 0))

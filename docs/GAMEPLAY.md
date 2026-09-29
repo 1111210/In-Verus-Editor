@@ -168,7 +168,7 @@
 | 空域边界曲线与缓动 | `model/notes.py` 的 `BoundaryCurve` / `MouseRegion.left_at()/right_at()` |
 | 物件几何（含命中框） | `ui/geometry.py`（`HitCache`、`note_geometry()`） |
 | 合法性检查 | `model/validate.py`（`validate_chart()` / `format_report()`） |
-| 变速不变调播放 | `audio.py`（`set_rate()`，0.1 ~ 1.0x） |
+| 变速播放（慢放降调，重采样实现） | `audio.py`（`set_rate()`，0.1 ~ 1.0x） |
 | 延迟校准 | `editor.audio_latency_ms` + `AudioPlayer.heard_position_ms()` |
 
 ## 8. 非法谱面的处理策略

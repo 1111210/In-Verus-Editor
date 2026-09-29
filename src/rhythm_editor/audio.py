@@ -1,10 +1,10 @@
-"""音频播放后端与倍速（变速不变调）。
+"""音频播放后端与倍速（变速变调：慢放会同时降低音调）。
 
 后端
 ----
 * ``PygameBackend``            —— ``pygame.mixer.music`` 流式播放（倍速 = 1.0x 时使用）
-* ``StretchedSoundBackend``    —— 用 Hann 窗重叠相加（OLA）做**时间伸缩**，
-  播放拉伸后的 PCM（倍速 < 1.0x 时使用，音调不变）
+* ``StretchedSoundBackend``    —— 用**线性插值重采样**把样本拉长后播放
+  （倍速 < 1.0x 时使用；慢放 = 降采样，所以音调随之变低，等价于“降低采样率”）
 * ``SilentBackend``            —— 静音时钟（没有 pygame / 没有音频文件时的兜底）
 
 所有后端的 ``position_ms()`` 都返回**歌曲原始时间轴**上的位置，
@@ -67,7 +67,7 @@ def audio_backend_name() -> str:
     if _PYGAME is None:
         return "silent"
     if STRETCH_AVAILABLE:
-        return "pygame.mixer + OLA"
+        return "pygame.mixer + resample"
     return "pygame.mixer"
 
 
@@ -158,12 +158,11 @@ def time_stretch(
     search: int = 64,
     probe: int = 256,
 ):
-    """把 PCM 样本按 ``rate`` 伸缩（rate < 1 变慢），**音调不变**。
+    """把 PCM 样本按 1/rate 拉长（rate < 1 变慢、音调随之变低）。
 
-    采用 WSOLA（波形相似重叠相加）：输出每次前进 ``hop``、输入每次前进 ``hop * rate``，
-    并在 ``±search`` 范围内搜索“与上一帧自然延续最相似”的位置，再重叠相加。
-    搜索保证帧与帧之间相位连贯（否则会出现周期性的相位跳变杂音），
-    而播放速率始终是原速，因此**频率（音调）不变**。
+    实现是线性插值重采样 —— 等价于“把采样率按 rate 倍降低后再按原速播放”：
+    慢放 0.5x 时长度翻倍、频率减半。比 WSOLA 便宜得多（一次 O(n) 查表），
+    单个窗口的合成开销从几十毫秒降到几毫秒，也不再需要相似度搜索。
     """
     if _NP is None:  # pragma: no cover - 无 numpy 时直接原样返回
         return samples
@@ -171,64 +170,27 @@ def time_stretch(
     rate = max(0.05, float(rate))
     if abs(rate - 1.0) < 1e-6:
         return samples
-    data = samples
+    data = np.asarray(samples)
     squeeze = False
     if data.ndim == 1:
         data = data.reshape(-1, 1)
         squeeze = True
-    channels = data.shape[1]
     total = data.shape[0]
-    if total <= frame:
+    if total < 2:
         return samples
-    # 多声道：用**下混单声道**做相似度搜索，再把选中的起点同时应用到所有声道
-    #（早期版本直接对多声道矩阵做相关，立体声文件会维度不匹配而报错）
-    mono = data.mean(axis=1, dtype=np.float32) if channels > 1 else data[:, 0].astype(
-        np.float32, copy=False
-    )
-    hop_out = max(1, frame // max(1, overlap))
-    hop_in = hop_out * rate
-    n_frames = int((total - frame) / hop_in) + 1
-    out_len = n_frames * hop_out + frame
-    out = np.zeros((out_len, channels), dtype=np.float32)
-    norm = np.zeros((out_len, 1), dtype=np.float32)
-    window = np.hanning(frame + 1)[:frame].astype(np.float32)
-    probe = max(32, min(int(probe), frame - hop_out))
-    pos = 0.0
-    previous_start = 0
-    for index in range(n_frames):
-        nominal = int(pos)
-        start = nominal
-        if index > 0:
-            max_start = total - frame
-            target_start = min(previous_start + hop_out, max_start)
-            target = mono[target_start:target_start + probe]
-            if target.shape[0] == probe:
-                low = max(0, nominal - search)
-                high = min(max_start, nominal + search)
-                if high > low:
-                    window_view = np.lib.stride_tricks.sliding_window_view(
-                        mono[low:high + probe], probe, axis=0
-                    )
-                    # 归一化互相关（避免选到能量更大的无关片段）
-                    target_norm = float(np.linalg.norm(target)) + 1e-6
-                    candidate_norm = np.linalg.norm(window_view, axis=1) + 1e-6
-                    scores = (window_view @ target) / (candidate_norm * target_norm)
-                    start = low + int(np.argmax(scores))
-            start = max(0, min(max_start, start))
-        segment = data[start:start + frame]
-        if segment.shape[0] < frame:  # pragma: no cover - 收尾
-            break
-        offset = index * hop_out
-        out[offset:offset + frame] += segment.astype(np.float32) * window[:, None]
-        norm[offset:offset + frame, 0] += window
-        previous_start = start
-        pos += hop_in
-    np.maximum(norm, 1e-3, out=norm)
-    out /= norm
+    # 采样位置 = 0, rate, 2*rate, ...（rate<1 时样本被拉开 -> 变慢变低）
+    out_len = max(1, int(round(total / rate)))
+    index = np.arange(out_len, dtype=np.float32) * rate
+    low = np.floor(index).astype(np.int64)
+    frac = (index - low)[:, None].astype(np.float32)
+    np.clip(low, 0, total - 2, out=low)
+    left = data[low].astype(np.float32)
+    right = data[low + 1].astype(np.float32)
+    out = left + (right - left) * frac
     result = out[:, 0] if squeeze else out
-    if samples.dtype == np.int16:
+    if data.dtype == np.int16:
         return np.clip(result, -32768, 32767).astype(np.int16)
-    return result.astype(samples.dtype)
+    return result.astype(data.dtype)
 
 
 class SilentBackend:
@@ -382,7 +344,7 @@ class PygameBackend:  # pragma: no cover - 依赖 pygame
 class StretchedSoundBackend:  # pragma: no cover - 依赖 pygame + numpy
     """时间伸缩播放后端：把 PCM 分窗口拉伸（音调不变）后用 Sound 播放。"""
 
-    name = "pygame+OLA"
+    name = "pygame+resample"
     supports_seek = True
 
     def __init__(self) -> None:
@@ -598,7 +560,7 @@ class AudioPlayer:
         base = os.path.basename(self.path)
         if not self.usable_audio:
             return f"音频后端：silent（{_silent_reason()}，静音播放）· {base} · {_fmt_rate(self.rate)}"
-        tone = "· 不变调" if self.stretch_active else ""
+        tone = "· 变调" if self.stretch_active else ""
         text = f"音频后端：{self.backend.name} · {base} · {_fmt_rate(self.rate)}{tone}"
         return f"{text} · {self.last_error}" if self.last_error else text
 
@@ -658,13 +620,15 @@ class AudioPlayer:
 
     # ------------------------------------------------------------------ 倍速
     def set_rate(self, rate: float) -> None:
-        """设置播放倍速（0.1 ~ 1.0x，步进 0.1），变速不变调。"""
+        """设置播放倍速（0.1 ~ 1.0x，步进 0.1）：慢放通过重采样实现，音调随之变低。"""
         rate = round(max(config.RATE_MIN, min(config.RATE_MAX, float(rate))), 2)
         if abs(rate - self.rate) < 1e-9:
             return
         was_playing = self._playing
         position = self.position_ms()
         self.rate = rate
+        # 切换后端前先把旧的停掉（否则被换下的后端会继续出声，听起来像“停不下来”）
+        self._stop_all_backends()
         backend = self._select_backend()
         if backend is not self.backend:
             self.backend = backend
@@ -704,21 +668,35 @@ class AudioPlayer:
     def pause(self) -> float:
         """暂停并返回当前歌曲位置（毫秒）。"""
         position = self.position_ms()
-        try:
-            self.backend.pause()
-        except Exception:
-            pass
+        self._stop_all_backends()
         self._playing = False
         self._paused_at_ms = position
         return position
 
     def stop(self) -> None:
-        try:
-            self.backend.stop()
-        except Exception:
-            pass
+        self._stop_all_backends()
         self._playing = False
         self._paused_at_ms = 0.0
+
+    def _stop_all_backends(self) -> None:
+        """把**所有**后端都停掉。
+
+        以前只停当前后端：切换倍速（拉伸后端 ↔ 普通后端）时，被换下的那个还在出声，
+        听感就是“按了暂停/停止以后声音还响一会儿”。这里连同队列里的窗口一起清掉，
+        并且直接把混音器里所有通道停掉，确保立刻静音。
+        """
+        for backend in (self.backend, self._plain_backend, self._stretch_backend):
+            if backend is None:
+                continue
+            try:
+                backend.stop()
+            except Exception:
+                pass
+        if _PYGAME is not None:
+            try:
+                _PYGAME.mixer.stop()      # 连排队等待播放的窗口一起清空
+            except Exception:  # pragma: no cover
+                pass
 
     def poll(self) -> None:
         """每帧调用：拉伸后端用它提前准备后续窗口。"""

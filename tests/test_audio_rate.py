@@ -116,8 +116,8 @@ class TimeStretchTests(unittest.TestCase):
         self.assertAlmostEqual(len(fast) / len(tone), 1.25, delta=0.05)
         self.assertEqual(slow.dtype.name, "int16")
 
-    def test_pitch_is_preserved(self) -> None:
-        """变速不变调：过零率（≈ 2×频率）在伸缩前后保持一致。"""
+    def test_pitch_drops_with_rate(self) -> None:
+        """变速变调（重采样）：0.5x 慢放时频率减半（过零率随之减半）。"""
         import numpy as np
 
         tone = self._tone(1.0, freq=440.0)
@@ -129,10 +129,10 @@ class TimeStretchTests(unittest.TestCase):
             return crossings / 2.0 / seconds
 
         base = zero_cross_per_second(tone)
-        slowed = zero_cross_per_second(time_stretch(tone, 0.5))
-        self.assertAlmostEqual(slowed, base, delta=15.0)
         self.assertGreater(base, 400.0)
         self.assertLess(base, 480.0)
+        slowed = zero_cross_per_second(time_stretch(tone, 0.5))
+        self.assertAlmostEqual(slowed, base * 0.5, delta=15.0)
 
     def test_rate_one_returns_input(self) -> None:
         tone = self._tone(0.2)

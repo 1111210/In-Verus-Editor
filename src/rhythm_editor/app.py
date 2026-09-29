@@ -559,7 +559,7 @@ class EditorApp:
 
     # ------------------------------------------------------------------ 倍速
     def set_playback_rate(self, rate: float, announce: bool = True) -> None:
-        """播放倍速（0.1 ~ 1.0x，0.1 一档）：同时改变谱面推进速度与音频速度（不变调）。"""
+        """播放倍速（0.1 ~ 1.0x，0.1 一档）：同时改变谱面推进速度与音频速度（慢放音调变低）。"""
         step = config.RATE_STEP
         rate = round(round(float(rate) / step) * step, 1)
         rate = max(config.RATE_MIN, min(config.RATE_MAX, rate))
@@ -568,7 +568,7 @@ class EditorApp:
             return
         self.audio.set_rate(rate)
         if announce:
-            tone = "（不变调）" if self.audio.stretch_active else ""
+            tone = "（变调：重采样）" if self.audio.stretch_active else ""
             extra = "" if self.audio.usable_audio else "（静音时钟）"
             self.status(f"播放倍速：{rate:.1f}x{tone}{extra}")
         self.toolbar.sync()
