@@ -62,27 +62,6 @@ class PlayerSettingsTests(unittest.TestCase):
         s2.normalize()
         self.assertEqual(s2.recent, ["a.json", "b.json"])
 
-    def test_records_track_best_score_combo_and_plays(self) -> None:
-        """本地成绩：记录最佳分数 / 最大连击 / 游玩次数，只有更高分才算新纪录。"""
-        s = PS.PlayerSettings()
-        self.assertTrue(s.update_record("c.json", 1000, 10, 0.8))
-        self.assertFalse(s.update_record("c.json", 900, 12, 0.7), "更低分不算新纪录")
-        record = s.record_for("c.json")
-        self.assertEqual(record["score"], 1000)
-        self.assertEqual(record["max_combo"], 12)
-        self.assertEqual(record["plays"], 2)
-        self.assertAlmostEqual(record["accuracy"], 0.8)
-        # 存档往返保留成绩
-        with tempfile.TemporaryDirectory() as tmp:
-            path = os.path.join(tmp, "player.json")
-            PS.save_settings(s, path)
-            self.assertEqual(PS.load_settings(path).record_for("c.json")["score"], 1000)
-
-    def test_broken_records_are_repaired(self) -> None:
-        s = PS.PlayerSettings.from_dict({"records": {"a.json": "坏数据", "b.json": {"score": "12"}}})
-        self.assertEqual(s.records["b.json"]["score"], 12)
-        self.assertNotIn("a.json", s.records)
-
 
 if __name__ == "__main__":
     unittest.main()

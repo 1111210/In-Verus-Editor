@@ -31,8 +31,6 @@ class PlayerSettings:
     music_volume: float = 1.0
     hit_volume: float = 0.6
     recent: List[str] = field(default_factory=list)     # 最近打开的谱面（最多 8 条）
-    # 每张谱面的本地成绩：{路径: {"score": int, "max_combo": int, "plays": int, "accuracy": float}}
-    records: Dict[str, Dict[str, float]] = field(default_factory=dict)
 
     def normalize(self) -> None:
         self.keys = [
@@ -54,32 +52,6 @@ class PlayerSettings:
             if text and text not in unique:
                 unique.append(text)
         self.recent = unique[:8]
-        clean_records: Dict[str, Dict[str, float]] = {}
-        for path, record in self.records.items():
-            if not isinstance(record, dict):
-                continue
-            clean_records[str(path)] = {
-                "score": int(record.get("score", 0)),
-                "max_combo": int(record.get("max_combo", 0)),
-                "plays": int(record.get("plays", 0)),
-                "accuracy": float(record.get("accuracy", 0.0)),
-            }
-        self.records = clean_records
-
-    def record_for(self, path: str) -> Dict[str, float]:
-        return self.records.get(path, {"score": 0, "max_combo": 0, "plays": 0, "accuracy": 0.0})
-
-    def update_record(self, path: str, score: int, max_combo: int, accuracy: float) -> bool:
-        """写入一局成绩；返回是否刷新了最高分。"""
-        best = self.record_for(path)
-        improved = int(score) > int(best["score"])
-        self.records[path] = {
-            "score": max(int(score), int(best["score"])),
-            "max_combo": max(int(max_combo), int(best["max_combo"])),
-            "plays": int(best["plays"]) + 1,
-            "accuracy": max(float(accuracy), float(best["accuracy"])),
-        }
-        return improved
 
     def to_dict(self) -> Dict[str, object]:
         self.normalize()
@@ -100,7 +72,6 @@ class PlayerSettings:
             music_volume=float(data.get("music_volume", 1.0)),
             hit_volume=float(data.get("hit_volume", 0.6)),
             recent=list(data.get("recent", [])),  # type: ignore[arg-type]
-            records=dict(data.get("records", {})),  # type: ignore[arg-type]
         )
         obj.normalize()
         return obj
