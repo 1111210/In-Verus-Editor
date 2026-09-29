@@ -14,6 +14,7 @@ from __future__ import annotations
 import os
 import subprocess
 import sys
+import time
 from typing import List, Optional, Tuple
 
 import pygame
@@ -99,22 +100,30 @@ def chart_files(root: str, folder: str = "charts") -> List[str]:
 
 
 def key_code(name: str) -> int:
-    """键位名 -> pygame 键值（支持 shift / space / a …）。"""
+    """键位名 -> pygame 键值（支持 shift / left shift / space / a …）。"""
     name = (name or "").strip().lower()
     special = {
         "shift": pygame.K_LSHIFT,
+        "left shift": pygame.K_LSHIFT,
+        "right shift": pygame.K_RSHIFT,
         "space": pygame.K_SPACE,
         "ctrl": pygame.K_LCTRL,
+        "left ctrl": pygame.K_LCTRL,
+        "right ctrl": pygame.K_RCTRL,
         "alt": pygame.K_LALT,
         "enter": pygame.K_RETURN,
         "tab": pygame.K_TAB,
     }
     if name in special:
         return special[name]
-    try:
-        return pygame.key.key_code(name)
-    except Exception:
-        return pygame.K_UNKNOWN
+    for candidate in (name, name.replace("left ", "").replace("right ", "")):
+        try:
+            code = pygame.key.key_code(candidate)
+        except Exception:
+            code = pygame.K_UNKNOWN
+        if code != pygame.K_UNKNOWN:
+            return code
+    return pygame.K_UNKNOWN
 
 
 class PlayerApp:
@@ -153,6 +162,18 @@ class PlayerApp:
         self.message = ""
         self.status_hint = ""
         self.settings_row = 0
+        # 引导时间（首拍 1.5 秒）：offset 不够时先用挂钟静音等待，保证音乐和物件同步
+        self.audio_started = True
+        self.play_wall = 0.0
+        self.pause_wall = 0.0
+        self.audio_start_ms = 0.0
+        self.lead_wait_ms = 0.0
+        # 鼠标 UI 的命中区域（每帧绘制时写入）与半透明叠加层
+        self.ui: dict = {}
+        self.hover = ""
+        self._overlay: Optional[pygame.Surface] = None
+        self.gl_cost = 0.0                 # OpenGL 呈现耗时（指数平滑，太慢就回退）
+        self.gl_frames = 0
 
     # ------------------------------------------------------------ 显示后端
     def _make_display(self, width: int, height: int):
@@ -173,8 +194,26 @@ class PlayerApp:
     def _present(self) -> None:
         """把这一帧送到屏幕（GL 时上传纹理后交换缓冲）。"""
         if self.gl_presenter is not None:
+            started = time.perf_counter()
             self.gl_presenter.present(self.screen)
+            pygame.display.flip()
+            cost = time.perf_counter() - started
+            self.gl_cost = self.gl_cost * 0.9 + cost * 0.1 if self.gl_cost else cost
+            self.gl_frames += 1
+            # OpenGL 在这台机器上慢到没法玩（<25fps）时自动回退，别让输入也跟着卡住
+            if self.gl_frames > 180 and self.gl_cost > 0.04:
+                self._fallback_to_software("OpenGL 呈现过慢")
+            return
         pygame.display.flip()
+
+    def _fallback_to_software(self, why: str) -> None:
+        self.settings.renderer = "software"
+        psettings.save_settings(self.settings)
+        self.gl_presenter = None
+        self.gl_frames = 0
+        self.gl_cost = 0.0
+        self.screen = self._make_display(self.w, self.h)
+        self.message = f"{why}，已自动切回软件渲染"
 
     # ------------------------------------------------------------ 通用
     @property
@@ -214,8 +253,13 @@ class PlayerApp:
             elif self.state == "settings":
                 self._event_settings(event)
             elif self.state == "loading":
-                if event.type == pygame.KEYDOWN and event.key == pygame.K_ESCAPE:
-                    self.state = "menu"
+                if event.type == pygame.KEYDOWN:
+                    if event.key == pygame.K_ESCAPE:
+                        self.state = "menu"
+                    elif event.key in (pygame.K_RETURN, pygame.K_KP_ENTER, pygame.K_SPACE):
+                        self._start_play()
+                elif event.type == pygame.MOUSEBUTTONDOWN:
+                    self._start_play()
             elif self.state == "play":
                 self._event_play(event)
             elif self.state == "result":
@@ -223,6 +267,16 @@ class PlayerApp:
 
     # ------------------------------------------------------------ 菜单
     def _event_menu(self, event) -> None:
+        if event.type == pygame.MOUSEWHEEL:
+            self.selected = (self.selected - event.y) % self._menu_rows()
+            return
+        if event.type == pygame.MOUSEMOTION:
+            self.hover = self._hit_ui(event.pos) or ""
+            return
+        if event.type == pygame.MOUSEBUTTONDOWN and event.button == 1:
+            self.hover = self._hit_ui(event.pos) or ""
+            self._click_menu(self.hover)
+            return
         if event.type != pygame.KEYDOWN:
             return
         rows = self._menu_rows()
@@ -239,6 +293,34 @@ class PlayerApp:
             self.open_external_chart()
         elif event.key == pygame.K_s:
             self.state = "settings"
+
+    def _hit_ui(self, pos) -> Optional[str]:
+        """鼠标位置命中的 UI 元素名（每帧绘制时写入 ``self.ui``）。
+
+        命中多个时取**面积最小**的那个，这样行里的 ◀ ▶ 按钮优先于整行。
+        """
+        best: Optional[Tuple[int, str]] = None
+        for key, rect in self.ui.items():
+            if rect is None or not rect.collidepoint(pos):
+                continue
+            area = rect.width * rect.height
+            if best is None or area < best[0]:
+                best = (area, key)
+        return best[1] if best is not None else None
+    def _click_menu(self, key: Optional[str]) -> None:
+        if not key:
+            return
+        kind, _, raw = key.partition(":")
+        if kind == "chart":
+            index = int(raw)
+            if index == self.selected:          # 再点一次 = 开始（等价于回车）
+                self._enter_loading()
+            else:
+                self.selected = index
+        elif kind == "action":
+            offset = int(raw)
+            self.selected = len(self.paths) + offset
+            self._activate_selected()
 
     def _menu_rows(self) -> int:
         """主界面的可选项数：谱面列表 + 「打开其他路径」 + 「设置」。"""
@@ -390,6 +472,12 @@ class PlayerApp:
     )
 
     def _event_settings(self, event) -> None:
+        if event.type == pygame.MOUSEWHEEL:
+            self.settings_row = (self.settings_row - event.y) % len(self.SETTING_ROWS)
+            return
+        if event.type == pygame.MOUSEBUTTONDOWN and event.button == 1:
+            self._click_settings(event.pos)
+            return
         if event.type != pygame.KEYDOWN:
             return
         s = self.settings
@@ -406,13 +494,42 @@ class PlayerApp:
             self._adjust_setting(1 if event.key == pygame.K_RIGHT else -1)
             psettings.save_settings(s)
 
+    def _click_settings(self, pos) -> None:
+        """鼠标点设置行：选中；再点一次那一行 = 编辑 / 切换；◀ ▶ 直接调整。"""
+        key = self._hit_ui(pos)
+        if not key:
+            return
+        kind, _, raw = key.partition(":")
+        index = int(raw)
+        if kind == "set_minus":
+            self.settings_row = index
+            self._adjust_setting(-1)
+        elif kind == "set_plus":
+            self.settings_row = index
+            self._adjust_setting(1)
+        elif kind == "set":
+            if index == self.settings_row:
+                self._edit_setting_text()
+            else:
+                self.settings_row = index
+        psettings.save_settings(self.settings)
+
     def _edit_setting_text(self) -> None:
         s = self.settings
         if self.settings_row == 0:
-            s.player_name = self._prompt("玩家名称", s.player_name)
+            entered = self._prompt("玩家名称", s.player_name)
+            if entered is not None:
+                s.player_name = entered
         elif self.settings_row == 1:
             for index, name in enumerate(s.keys):
-                s.keys[index] = self._prompt(f"第 {index + 1} 轨键位", name)
+                picked = self._prompt_key(f"第 {index + 1} 轨（现在是 {name}）")
+                if not picked or picked == name:
+                    continue
+                # 别的轨道占着这个键就交换，避免两条轨道共用一个键（会互相抢判）
+                if picked in s.keys:
+                    other = s.keys.index(picked)
+                    s.keys[other] = name
+                s.keys[index] = picked
         else:
             self._adjust_setting(1)
         s.normalize()
@@ -449,53 +566,206 @@ class PlayerApp:
             self.audio.set_volume(s.music_volume)
             self.hits.set_volume(s.hit_volume)
 
-    def _prompt(self, label: str, initial: str) -> str:
-        """极简文本输入（回车确认 / Esc 取消）。"""
-        entered = initial
-        while self.running:
-            self._draw_settings(extra=f"{label}：{entered}_")
-            pygame.display.flip()
+    def _prompt(self, label: str, initial: str) -> Optional[str]:
+        """窗口内文本输入（回车确认 / Esc 取消）。
+
+        用 ``TEXTINPUT`` 事件收字（**中文 IME 也能输入**），并且走和主循环一样的
+        ``_present()`` 呈现路径，所以 OpenGL 后端下也能看到自己打的字。
+        """
+        entered = initial or ""
+        caret = len(entered)
+        text_input = True
+        try:
+            pygame.key.start_text_input()
+        except Exception:                        # pragma: no cover - 老版本 pygame
+            text_input = False
+        try:
+            pygame.key.set_repeat(400, 40)       # 退格 / 方向键可以按住
+        except Exception:                        # pragma: no cover
+            pass
+        result: Optional[str] = None
+        done = False
+        while self.running and not done:
+            self._draw_input_overlay(label, entered, caret)
+            self._present()
             for event in pygame.event.get():
                 if event.type == pygame.QUIT:
                     self.running = False
-                    return entered
-                if event.type != pygame.KEYDOWN:
-                    continue
-                if event.key == pygame.K_RETURN:
-                    return entered
-                if event.key == pygame.K_ESCAPE:
-                    return initial
-                if event.key == pygame.K_BACKSPACE:
-                    entered = entered[:-1]
-                elif event.unicode and event.unicode.isprintable():
-                    entered += event.unicode
-        return entered
+                    break
+                if event.type == pygame.TEXTINPUT:
+                    entered = entered[:caret] + event.text + entered[caret:]
+                    caret += len(event.text)
+                elif event.type == pygame.KEYDOWN:
+                    if event.key in (pygame.K_RETURN, pygame.K_KP_ENTER):
+                        result = entered
+                        done = True
+                        break
+                    if event.key == pygame.K_ESCAPE:
+                        done = True
+                        break
+                    if event.key == pygame.K_BACKSPACE:
+                        if caret > 0:
+                            entered = entered[: caret - 1] + entered[caret:]
+                            caret -= 1
+                    elif event.key == pygame.K_DELETE:
+                        if caret < len(entered):
+                            entered = entered[:caret] + entered[caret + 1:]
+                    elif event.key == pygame.K_LEFT:
+                        caret = max(0, caret - 1)
+                    elif event.key == pygame.K_RIGHT:
+                        caret = min(len(entered), caret + 1)
+                    elif event.key == pygame.K_HOME:
+                        caret = 0
+                    elif event.key == pygame.K_END:
+                        caret = len(entered)
+                    elif not text_input and event.unicode and event.unicode.isprintable():
+                        entered = entered[:caret] + event.unicode + entered[caret:]
+                        caret += len(event.unicode)
+        try:
+            pygame.key.stop_text_input()
+        except Exception:                        # pragma: no cover
+            pass
+        try:
+            pygame.key.set_repeat()
+        except Exception:                        # pragma: no cover
+            pass
+        return result
+
+    def _draw_input_overlay(self, label: str, text: str, caret: int) -> None:
+        self.screen.fill(BG)
+        self.center_text("输入", 110, self.f_mid, DIM)
+        self.text(label, (120, 180), self.f_mid, WHITE)
+        box = pygame.Rect(120, 220, self.w - 240, 56)
+        pygame.draw.rect(self.screen, PANEL, box, border_radius=6)
+        pygame.draw.rect(self.screen, ACCENT, box, 2, border_radius=6)
+        shown = text if len(text) <= 48 else "…" + text[-47:]
+        self.text(shown, (box.x + 12, box.y + 12), self.f_mid, WHITE)
+        prefix = self.f_mid.size(text[:caret])[0]
+        cursor_x = box.x + 12 + prefix
+        if len(text) > 48:                       # 太长的文本只滚末尾，光标跟着走
+            cursor_x = box.x + 12 + self.f_mid.size(shown)[0]
+        pygame.draw.line(
+            self.screen, ACCENT, (cursor_x, box.y + 10), (cursor_x, box.y + 44), 2
+        )
+        self.text("回车 确认 · Esc 取消 · 支持中文输入", (120, 300), self.f_small, DIM)
+
+    def _prompt_key(self, label: str) -> Optional[str]:
+        """按键位：**直接按想设的那个键**（Esc 取消），避免手打键名出错。"""
+        result: Optional[str] = None
+        done = False
+        while self.running and not done:
+            self.screen.fill(BG)
+            self.center_text("设定键位", 140, self.f_mid, DIM)
+            self.center_text(label, 210, self.f_big, WHITE)
+            self.center_text("直接按下要用的键（Esc 取消）", 290, self.f_small, ACCENT)
+            self._present()
+            for event in pygame.event.get():
+                if event.type == pygame.QUIT:
+                    self.running = False
+                    break
+                if event.type == pygame.KEYDOWN:
+                    if event.key == pygame.K_ESCAPE:
+                        done = True
+                        break
+                    name = pygame.key.name(event.key)
+                    if name:
+                        result = name
+                    done = True
+                    break
+        return result
 
     # ------------------------------------------------------------ 游玩
     def _start_play(self) -> None:
         assert self.chart is not None
         self.judge = Judge(self.chart, rate=self.settings.rate)
         self.pressed_lanes.clear()
+        self.paused = False
         self.message = ""
         self.audio.latency_ms = self.settings.audio_latency_ms
         self.audio.set_volume(self.settings.music_volume)
         self.hits.set_volume(self.settings.hit_volume)
         self.hits.set_enabled(True)
         self.popups.clear()
+        # 首拍引导 1.5 秒，同时保证**音乐与物件同步**：
+        # 音频从“第 0 拍前 1.5 秒”起播；谱面 offset 不足 1.5 秒时先静音等待补齐。
+        offset_ms = self.chart.timing.beat_to_song_ms(0.0)
+        self.lead_wait_ms = max(0.0, LEAD_MS - offset_ms)
+        self.audio_start_ms = max(0.0, offset_ms - LEAD_MS)
+        self.play_wall = time.perf_counter()
+        self.pause_wall = self.play_wall
+        self.audio_started = self.lead_wait_ms <= 0.0
         self.audio.set_rate(self.settings.rate)
         self.audio.load(chart_audio_path(self.chart_path, self.chart))
-        self.audio.play(self.chart.timing.beat_to_song_ms(0.0))     # 从第 0 拍起播
+        if self.audio_started:
+            self.audio.play(self.audio_start_ms)
         self.state = "play"
         self.timer = 0.0
 
     def _now_ms(self) -> float:
-        """判定用的歌曲毫秒：减去“进入游玩 -> 第 0 拍”的 1.5 秒准备时间。"""
-        assert self.chart is not None
-        return self.audio.heard_position_ms() - self.chart.timing.beat_to_song_ms(0.0) - LEAD_MS
+        """判定用的歌曲毫秒：**就是听到的音频位置**（所以音乐和物件天然同步）。
+
+        首拍引导（1.5 秒）靠“音频从第 0 拍前 1.5 秒起播”实现；谱面 offset 不够时，
+        起播前先静音等待，此时用挂钟推进，第 0 拍仍在进入游玩 1.5 秒后到判定平面。
+        """
+        if self.audio_started:
+            return self.audio.heard_position_ms()
+        now = time.perf_counter()
+        if self.paused:                     # 暂停时引导时间也停住
+            now = self.pause_wall
+        elapsed_ms = (now - self.play_wall) * 1000.0 * self.settings.rate
+        return elapsed_ms - self.lead_wait_ms
+
+    def _begin_audio(self) -> None:
+        """引导时间结束：真正开始播放（此后判定时钟就是音频位置）。"""
+        self.audio_started = True
+        self.audio.play(self.audio_start_ms)
 
     def _event_play(self, event) -> None:
         assert self.judge is not None
+        if self.paused:
+            # 暂停时鼠标可以点「继续 / 重试 / 回主界面」
+            if event.type == pygame.MOUSEMOTION:
+                self.hover = self._hit_ui(event.pos) or ""
+                return
+            if event.type == pygame.MOUSEBUTTONDOWN and event.button == 1:
+                key = self._hit_ui(event.pos)
+                if key == "resume":
+                    self._toggle_pause()
+                elif key == "retry":
+                    self.paused = False
+                    self._start_play()
+                elif key == "back":
+                    self.paused = False
+                    self.state = "menu"
+                return
         if event.type == pygame.KEYDOWN:
+            if self.paused:
+                # 暂停中的快捷键（空格 / 回车继续、R 重试、Esc 回主界面）
+                if event.key in (pygame.K_SPACE, pygame.K_RETURN, pygame.K_KP_ENTER):
+                    self._toggle_pause()
+                elif event.key == pygame.K_r:
+                    self.paused = False
+                    self._start_play()
+                elif event.key == pygame.K_ESCAPE:
+                    self.paused = False
+                    self.state = "menu"
+                return
+            # **先看是不是轨道键**：默认第 6 轨就是空格，别让暂停快捷键抢掉它
+            matched = [
+                lane
+                for lane, name in enumerate(self.settings.keys)
+                if event.key == key_code(name)
+            ]
+            if matched:
+                # 同一个键绑了多条轨道时都算按下，但**一次按键最多判一个**物件
+                self.pressed_lanes.update(matched)
+                now = self._now_ms()
+                for lane in matched:
+                    result = self.judge.on_press(now, lane=lane)
+                    if result is not None:
+                        self._register(result)
+                        break
+                return
             if event.key in (pygame.K_MINUS, pygame.K_KP_MINUS, pygame.K_EQUALS, pygame.K_PLUS):
                 step = -1 if event.key in (pygame.K_MINUS, pygame.K_KP_MINUS) else 1
                 self._adjust_rate(step)
@@ -504,28 +774,12 @@ class PlayerApp:
                 self._toggle_pause()
                 return
             if event.key == pygame.K_ESCAPE:
-                if self.paused:
-                    self.state = "menu"        # 暂停中再按 Esc：回主界面
-                    self.paused = False
-                else:
-                    self._toggle_pause()
+                self._toggle_pause()
                 return
-            if event.key == pygame.K_r and self.paused:
-                self.paused = False
-                self._start_play()
-                return
-            if self.paused:
-                return                          # 暂停时不接受游玩输入
-            for lane, name in enumerate(self.settings.keys):
-                if event.key == key_code(name):
-                    self.pressed_lanes.add(lane)
-                    self._register(self.judge.on_press(self._now_ms(), lane=lane))
-                    break
         elif event.type == pygame.KEYUP:
             for lane, name in enumerate(self.settings.keys):
                 if event.key == key_code(name):
                     self.pressed_lanes.discard(lane)
-                    break
         elif event.type == pygame.MOUSEBUTTONDOWN:
             self._register(self.judge.on_press(self._now_ms(), x=self.mouse_norm))
 
@@ -543,6 +797,9 @@ class PlayerApp:
             if self.timer >= 1.2:
                 self._start_play()
         elif self.state == "play":
+            if not self.audio_started and not self.paused:
+                if (time.perf_counter() - self.play_wall) * 1000.0 >= self.lead_wait_ms:
+                    self._begin_audio()
             if self.paused:
                 self.timer += 0.0
                 return
@@ -572,11 +829,17 @@ class PlayerApp:
         """空格暂停 / 继续（暂停时音乐也停下）。"""
         self.paused = not self.paused
         if self.paused:
-            self.audio.pause()
+            self.pause_wall = time.perf_counter()
+            if self.audio_started:
+                self.audio.pause()
         else:
             self.status_hint = ""
-            self.audio.set_rate(self.audio.rate)     # 保持当前倍速
-            self.audio.play(self.audio.position_ms())
+            if self.audio_started:
+                self.audio.set_rate(self.audio.rate)     # 保持当前倍速
+                self.audio.play(self.audio.position_ms())
+            else:
+                # 引导时间内暂停：把起点往后挪，剩余的引导时间不受影响
+                self.play_wall += time.perf_counter() - self.pause_wall
 
     def _adjust_rate(self, step: int) -> None:
         """游玩中调倍速（与编辑器一致：换后端容易出问题，因此自动暂停）。"""
@@ -625,6 +888,7 @@ class PlayerApp:
 
     # ------------------------------------------------------------ 绘制
     def _draw(self) -> None:
+        self.ui.clear()
         self.screen.fill(BG)
         if self.state == "menu":
             self._draw_menu()
@@ -636,6 +900,13 @@ class PlayerApp:
             self._draw_play()
         elif self.state == "result":
             self._draw_result()
+        if self.state in ("menu", "settings", "result") and not pygame.key.get_focused():
+            self.center_text(
+                "窗口没有键盘焦点：先点一下窗口再敲键",
+                self.h - 24,
+                self.f_small,
+                (240, 176, 120),
+            )
 
     def _draw_menu(self) -> None:
         self.center_text("In Verus 游玩器", 64, self.f_big, WHITE)
@@ -665,6 +936,10 @@ class PlayerApp:
             marker = "> " if chosen else "  "
             star = "* " if path in self.settings.recent else ""
             y = 192 + offset * 50
+            row = pygame.Rect(self.w * 0.10, y - 6, self.w * 0.8, 46)
+            self.ui[f"chart:{index}"] = row
+            if chosen or self.hover == f"chart:{index}":
+                pygame.draw.rect(self.screen, PANEL, row, border_radius=6)
             self.text(
                 f"{marker}{star}{title} · {artist} · 难度 {difficulty} · {bpm:.0f}BPM",
                 (self.w * 0.12, y),
@@ -688,8 +963,14 @@ class PlayerApp:
             index = charts + offset
             chosen = index == self.selected
             y = action_top + offset * row_h
+            row = pygame.Rect(self.w * 0.10, y - 6, self.w * 0.8, row_h - 6)
+            self.ui[f"action:{offset}"] = row
+            hovered = self.hover == f"action:{offset}"
             pygame.draw.rect(
-                self.screen, PANEL, (self.w * 0.10, y - 6, self.w * 0.8, row_h - 6), border_radius=6
+                self.screen,
+                (44, 44, 58) if hovered and not chosen else PANEL,
+                row,
+                border_radius=6,
             )
             self.text(
                 f"{'> ' if chosen else '  '}{label}",
@@ -704,7 +985,12 @@ class PlayerApp:
             )
 
     def _draw_settings(self, extra: str = "") -> None:
-        self.text("设置（↑↓ 选择 · ←→ 调整 · 回车输入/切换 · Esc 保存并返回）", (40, 26), self.f_mid, WHITE)
+        self.text(
+            "设置（↑↓ 或滚轮选择 · ←→ 或点按钮调整 · 回车输入/切换 · Esc 保存并返回）",
+            (40, 26),
+            self.f_mid,
+            WHITE,
+        )
         s = self.settings
         values = [
             s.player_name,
@@ -723,8 +1009,20 @@ class PlayerApp:
         for index, label in enumerate(self.SETTING_ROWS):
             y = 100 + index * 44
             chosen = index == self.settings_row
-            self.text(("▶ " if chosen else "  ") + label, (60, y), self.f_mid, ACCENT if chosen else DIM)
-            self.text(values[index], (620, y), self.f_mid, WHITE)
+            row = pygame.Rect(40, y - 6, self.w - 80, 40)
+            self.ui[f"set:{index}"] = row
+            if chosen:
+                pygame.draw.rect(self.screen, PANEL, row, border_radius=6)
+            self.text(("> " if chosen else "  ") + label, (60, y), self.f_mid, ACCENT if chosen else DIM)
+            self.text(values[index], (640, y), self.f_mid, WHITE)
+            minus = pygame.Rect(self.w - 150, y - 6, 34, 38)
+            plus = pygame.Rect(self.w - 60, y - 6, 34, 38)
+            self.ui[f"set_minus:{index}"] = minus
+            self.ui[f"set_plus:{index}"] = plus
+            pygame.draw.rect(self.screen, (44, 44, 58), minus, border_radius=4)
+            pygame.draw.rect(self.screen, (44, 44, 58), plus, border_radius=4)
+            self.text("-", (minus.x + 12, y - 2), self.f_mid, WHITE)
+            self.text("+", (plus.x + 11, y - 2), self.f_mid, WHITE)
         if extra:
             self.text(extra, (60, self.h - 80), self.f_mid, (255, 226, 120))
         self.text("设置保存在 player.json（全局，不写进谱面）", (60, self.h - 40), self.f_small, DIM)
@@ -748,6 +1046,18 @@ class PlayerApp:
         if len(pts) >= 3:
             pygame.draw.polygon(self.screen, color, pts)
 
+    def _alpha_quad(self, points, color, alpha: int) -> None:
+        """半透明填充：鼠标平面在更靠前的位置，必须能透过它看到下面的 6K 物件。"""
+        pts = [(p[0], p[1]) for p in points]
+        if len(pts) < 3:
+            return
+        if self._overlay is None or self._overlay.get_size() != (self.w, self.h):
+            self._overlay = pygame.Surface((self.w, self.h), pygame.SRCALPHA)
+        overlay = self._overlay
+        overlay.fill((0, 0, 0, 0))
+        pygame.draw.polygon(overlay, (color[0], color[1], color[2], max(0, min(255, alpha))), pts)
+        self.screen.blit(overlay, (0, 0))
+
     def _line(self, a, b, color, width=2) -> None:
         pygame.draw.line(self.screen, color, (a[0], a[1]), (b[0], b[1]), width)
 
@@ -768,7 +1078,25 @@ class PlayerApp:
         if self.paused:
             pygame.draw.rect(self.screen, (0, 0, 0), (0, self.h * 0.32, self.w, 220))
             self.center_text("已暂停", self.h * 0.36, self.f_big, WHITE)
-            self.center_text("空格 继续 · R 重试 · Esc 回主界面", self.h * 0.45, self.f_mid, ACCENT)
+            buttons = (
+                ("resume", "空格 继续", 170),
+                ("retry", "R 重试", 150),
+                ("back", "Esc 回主界面", 210),
+            )
+            total = sum(width + 20 for _key, _label, width in buttons) - 20
+            x = self.w / 2 - total / 2
+            for key, label, width in buttons:
+                rect = pygame.Rect(x, self.h * 0.43, width, 46)
+                self.ui[key] = rect
+                hovered = self.hover == key
+                pygame.draw.rect(self.screen, (44, 44, 58) if hovered else PANEL, rect, border_radius=6)
+                pygame.draw.rect(self.screen, ACCENT, rect, 2, border_radius=6)
+                surface = self.f_mid.render(label, True, ACCENT)
+                self.screen.blit(
+                    surface,
+                    (rect.centerx - surface.get_width() / 2, rect.centery - surface.get_height() / 2),
+                )
+                x += width + 20
             if self.status_hint:
                 self.center_text(self.status_hint, self.h * 0.52, self.f_small, DIM)
 
@@ -780,7 +1108,11 @@ class PlayerApp:
             far_right = self._proj(K6_LEFT + width, y, START_Z)
             near_left = self._proj(K6_LEFT, y, 0.0)
             near_right = self._proj(K6_LEFT + width, y, 0.0)
-            self._quad([far_left, far_right, near_right, near_left], (24, 26, 36))
+            if y > 0.0:
+                # 鼠标平面在上方且更靠近镜头：半透明，免得挡住 6K 平面的远景
+                self._alpha_quad([far_left, far_right, near_right, near_left], (34, 40, 58), 170)
+            else:
+                self._quad([far_left, far_right, near_right, near_left], (24, 26, 36))
             self._line(far_left, near_left, tint, 1)
             self._line(far_right, near_right, tint, 1)
         for lane in range(LANE_COUNT + 1):
@@ -850,9 +1182,22 @@ class PlayerApp:
         assert self.chart is not None
         return self.chart.timing.beat_to_song_ms(note.head_beat)
 
+    def _note_visible(self, note: Note, now_ms: float) -> bool:
+        """判定时刻已过的物件不再显示（长按 / 空域画到它们的末尾过去为止）。"""
+        assert self.chart is not None
+        if isinstance(note, LaneNote) and note.is_hold:
+            return now_ms <= self.chart.timing.beat_to_song_ms(note.tail_beat) + 1e-6
+        if isinstance(note, MouseRegion):
+            return now_ms <= self.chart.timing.beat_to_song_ms(note.beat_end) + 1e-6
+        return now_ms <= self._head_ms(note) + 1e-6
+
     def _draw_notes(self, now_ms: float) -> None:
         assert self.chart is not None
-        visible = [n for n in self.chart.all_notes() if self._note_z(self._head_ms(n), now_ms) <= START_Z]
+        visible = [
+            n
+            for n in self.chart.all_notes()
+            if self._note_z(self._head_ms(n), now_ms) <= START_Z and self._note_visible(n, now_ms)
+        ]
         visible.sort(key=lambda n: (self._layer_of(n), n.head_beat))
         for note in visible:
             if isinstance(note, LaneNote):
@@ -911,7 +1256,8 @@ class PlayerApp:
             right_points.append(self._proj(right_x, MOUSE_PLANE_HEIGHT, z))
         if len(left_points) < 2:
             return
-        self._quad(left_points + list(reversed(right_points)), (40, 70, 140))
+        # 半透明：空域在鼠标平面上，挡住下面的 6K 物件就没法看谱了
+        self._alpha_quad(left_points + list(reversed(right_points)), (60, 110, 200), 104)
         for index in range(len(left_points) - 1):
             self._line(left_points[index], left_points[index + 1], MOUSE_TINT, 2)
             self._line(right_points[index], right_points[index + 1], MOUSE_TINT, 2)
@@ -933,7 +1279,7 @@ class PlayerApp:
         x1 = MOUSE_LEFT + max(lo, hi) * MOUSE_LEGAL_WIDTH
         top = MOUSE_PLANE_HEIGHT + NOTE_HEIGHT_UNIT
         middle = (MOUSE_PLANE_HEIGHT + top) / 2
-        self._quad(
+        self._alpha_quad(
             [
                 self._proj(x0, MOUSE_PLANE_HEIGHT, z),
                 self._proj(x1, MOUSE_PLANE_HEIGHT, z),
@@ -941,6 +1287,7 @@ class PlayerApp:
                 self._proj(x0, top, z),
             ],
             color,
+            132,
         )
         self._line(self._proj(x0, middle, z), self._proj(x1, middle, z), WHITE, 2)
         if isinstance(note, MouseClick):
@@ -1049,10 +1396,33 @@ class PlayerApp:
                 self.f_mid,
                 GRADE_COLORS[grade],
             )
-        self.text("R 重试", (46, self.h - 80), self.f_mid, ACCENT)
-        self.text("Esc 回到主界面", (self.w - 280, self.h - 80), self.f_mid, ACCENT)
+        retry = pygame.Rect(46, self.h - 92, 180, 48)
+        back = pygame.Rect(self.w - 300, self.h - 92, 240, 48)
+        self.ui["retry"] = retry
+        self.ui["back"] = back
+        for rect, label, hovered in (
+            (retry, "R 重试", self.hover == "retry"),
+            (back, "Esc 回到主界面", self.hover == "back"),
+        ):
+            pygame.draw.rect(self.screen, (44, 44, 58) if hovered else PANEL, rect, border_radius=6)
+            pygame.draw.rect(self.screen, ACCENT, rect, 2, border_radius=6)
+            surface = self.f_mid.render(label, True, ACCENT)
+            self.screen.blit(
+                surface,
+                (rect.centerx - surface.get_width() / 2, rect.centery - surface.get_height() / 2),
+            )
 
     def _event_result(self, event) -> None:
+        if event.type == pygame.MOUSEMOTION:
+            self.hover = self._hit_ui(event.pos) or ""
+            return
+        if event.type == pygame.MOUSEBUTTONDOWN and event.button == 1:
+            key = self._hit_ui(event.pos)
+            if key == "retry":
+                self._start_play()
+            elif key == "back":
+                self.state = "menu"
+            return
         if event.type != pygame.KEYDOWN:
             return
         if event.key == pygame.K_r:

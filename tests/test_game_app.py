@@ -5,6 +5,7 @@ from __future__ import annotations
 import os
 import sys
 import tempfile
+import time
 import unittest
 
 os.environ.setdefault("SDL_VIDEODRIVER", "dummy")
@@ -232,6 +233,146 @@ class PlayerAppSmokeTests(unittest.TestCase):
             self.assertIn("找不到文件", app.message)
             self.assertIsNone(app._native_open_dialog(), "无显示 / 测试环境不弹系统对话框")
             app._draw_menu()
+
+    def test_notes_vanish_after_their_judge_time(self) -> None:
+        """判定时刻过去的物件不再显示（长按 / 空域画到末尾过去为止）。"""
+        from rhythm_editor.game.app import START_Z
+        from rhythm_editor.model.notes import LaneNote, MouseRegion
+
+        app = self.app
+        app._enter_loading()
+        chart = app.chart
+        notes = chart.all_notes()
+        last_ms = max(chart.timing.beat_to_song_ms(n.head_beat) for n in notes)
+
+        def visible(now_ms: float):
+            return [
+                n
+                for n in notes
+                if app._note_z(app._head_ms(n), now_ms) <= START_Z
+                and app._note_visible(n, now_ms)
+            ]
+
+        self.assertEqual(visible(last_ms + 5000.0), [], "曲末不该还留着已经过去的物件")
+        taps = [n for n in notes if isinstance(n, LaneNote) and not n.is_hold]
+        if taps:
+            note = taps[0]
+            head = app._head_ms(note)
+            self.assertIn(note, visible(head - 1.0))
+            self.assertNotIn(note, visible(head + 1.0))
+        holds = [n for n in notes if isinstance(n, LaneNote) and n.is_hold]
+        for note in holds[:2]:
+            tail = chart.timing.beat_to_song_ms(note.tail_beat)
+            self.assertIn(note, visible(tail - 1.0), "长按期间要一直画着")
+            self.assertNotIn(note, visible(tail + 1.0))
+        regions = [n for n in notes if isinstance(n, MouseRegion)]
+        for note in regions[:2]:
+            end = chart.timing.beat_to_song_ms(note.beat_end)
+            self.assertIn(note, visible(end - 1.0))
+            self.assertNotIn(note, visible(end + 1.0))
+
+    def test_first_beat_lead_keeps_music_in_sync(self) -> None:
+        """首拍仍在 1.5 秒后到判定平面，但音乐与物件同步（音频提前 1.5 秒起播）。"""
+        from rhythm_editor.game.app import LEAD_MS
+
+        app = self.app
+        app._enter_loading()
+        app._start_play()
+        offset = app.chart.timing.beat_to_song_ms(0.0)
+        self.assertAlmostEqual(app.audio_start_ms, max(0.0, offset - LEAD_MS), places=6)
+        self.assertAlmostEqual(app.lead_wait_ms, max(0.0, LEAD_MS - offset), places=6)
+        # 起步时“第 0 拍”离判定平面还有整整 1.5 秒（判定时间 = offset）
+        self.assertAlmostEqual(app._now_ms(), offset - LEAD_MS, delta=60.0)
+        app._toggle_pause()                    # 暂停时引导时间也不能走
+        frozen = app._now_ms()
+        time.sleep(0.05)
+        self.assertAlmostEqual(app._now_ms(), frozen, delta=1.0)
+        app._toggle_pause()
+        self.assertLess(app._now_ms(), frozen + 5.0)
+
+    def test_prompt_accepts_text_input_and_key_capture(self) -> None:
+        """文字输入走 TEXTINPUT（中文可输入）；键位改为“按下想设的键”。"""
+        app = self.app
+        pygame = self.pygame
+        queue = [
+            [pygame.event.Event(pygame.TEXTINPUT, text="测")],
+            [pygame.event.Event(pygame.TEXTINPUT, text="试")],
+            [pygame.event.Event(pygame.KEYDOWN, key=pygame.K_BACKSPACE)],
+            [pygame.event.Event(pygame.TEXTINPUT, text="A")],
+            [pygame.event.Event(pygame.KEYDOWN, key=pygame.K_RETURN)],
+        ]
+        original = pygame.event.get
+        pygame.event.get = lambda *a, **k: queue.pop(0) if queue else []
+        try:
+            self.assertEqual(app._prompt("玩家名称", ""), "测A")
+            app.settings_row = 1
+            queue.extend(
+                [
+                    [pygame.event.Event(pygame.KEYDOWN, key=pygame.K_LSHIFT)],
+                    [pygame.event.Event(pygame.KEYDOWN, key=pygame.K_ESCAPE)],
+                ]
+            )
+            self.assertEqual(app._prompt_key("第 1 轨"), "left shift")
+            self.assertIsNone(app._prompt_key("第 2 轨"), "Esc 取消返回 None")
+        finally:
+            pygame.event.get = original
+
+    def test_mouse_can_operate_menu_settings_and_result(self) -> None:
+        """鼠标：点谱面行选中 / 再点开始，点设置行与 ◀ ▶，点结算页按钮。"""
+        app = self.app
+        pygame = self.pygame
+        app._draw()                                   # 画出主界面并登记命中区域
+        row = app.ui["chart:0"]
+        app._event_menu(pygame.event.Event(pygame.MOUSEBUTTONDOWN, button=1, pos=row.center))
+        app._event_menu(pygame.event.Event(pygame.MOUSEBUTTONDOWN, button=1, pos=row.center))
+        self.assertEqual(app.state, "loading")
+        app.state = "settings"
+        app._draw()
+        app.settings_row = 0
+        plus = app.ui["set_plus:3"]
+        before = app.settings.audio_latency_ms
+        app._event_settings(pygame.event.Event(pygame.MOUSEBUTTONDOWN, button=1, pos=plus.center))
+        self.assertEqual(app.settings_row, 3)
+        self.assertGreater(app.settings.audio_latency_ms, before)
+        toggle = app.ui["set:6"]
+        app._event_settings(pygame.event.Event(pygame.MOUSEBUTTONDOWN, button=1, pos=toggle.center))
+        app._event_settings(pygame.event.Event(pygame.MOUSEBUTTONDOWN, button=1, pos=toggle.center))
+        self.assertTrue(app.settings.side_lane_highlight, "再点一次该行 = 切换")
+        app._start_play()
+        app._finish()
+        app._draw()
+        app._event_result(pygame.event.Event(pygame.MOUSEBUTTONDOWN, button=1, pos=app.ui["retry"].center))
+        self.assertEqual(app.state, "play")
+        app._finish()
+        app._draw()
+        app._event_result(pygame.event.Event(pygame.MOUSEBUTTONDOWN, button=1, pos=app.ui["back"].center))
+        self.assertEqual(app.state, "menu")
+
+    def test_lane_keys_win_over_ui_shortcuts(self) -> None:
+        """轨道键优先于界面快捷键：默认第 6 轨是空格，按它必须判物件而不是暂停。"""
+        from rhythm_editor.game.app import key_code
+        from rhythm_editor.model.notes import LaneNote
+
+        app = self.app
+        app._enter_loading()
+        chart = app.chart
+        app._start_play()
+        self.assertEqual(app.settings.keys[-1], "space")
+        note = next(n for n in chart.all_notes() if isinstance(n, LaneNote) and n.lane_start == 5)
+        hit_ms = chart.timing.beat_to_song_ms(note.head_beat)
+        app._now_ms = lambda: hit_ms
+        pygame = self.pygame
+        app._event_play(pygame.event.Event(pygame.KEYDOWN, key=key_code("space"), unicode=" "))
+        app._event_play(pygame.event.Event(pygame.KEYUP, key=key_code("space")))
+        self.assertFalse(app.paused, "空格绑成轨道键时不该暂停")
+        self.assertEqual(app.judge.counts["Break"], 0)
+        self.assertGreaterEqual(app.judge.judged_notes, 1)
+        # 没被绑成轨道键的空格（临时解绑）仍然可以暂停
+        app.settings.keys[-1] = "u"
+        app._event_play(pygame.event.Event(pygame.KEYDOWN, key=key_code("space"), unicode=" "))
+        self.assertTrue(app.paused)
+        app._event_play(pygame.event.Event(pygame.KEYDOWN, key=key_code("space"), unicode=" "))
+        self.assertFalse(app.paused, "暂停时空格继续")
 
 
 if __name__ == "__main__":

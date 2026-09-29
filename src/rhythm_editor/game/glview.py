@@ -42,6 +42,7 @@ class GLPresenter:
             raise RuntimeError("没有可用的 PyOpenGL")
         self._texture = GL.glGenTextures(1)
         self._size: Tuple[int, int] = (0, 0)
+        self._allocated = False
         GL.glBindTexture(GL.GL_TEXTURE_2D, self._texture)
         GL.glTexParameteri(GL.GL_TEXTURE_2D, GL.GL_TEXTURE_MIN_FILTER, GL.GL_LINEAR)
         GL.glTexParameteri(GL.GL_TEXTURE_2D, GL.GL_TEXTURE_MAG_FILTER, GL.GL_LINEAR)
@@ -53,13 +54,20 @@ class GLPresenter:
             return
         size = surface.get_size()
         data = pygame.image.tostring(surface, "RGB", False)
-        if size != self._size:
-            self._size = size
         GL.glBindTexture(GL.GL_TEXTURE_2D, self._texture)
-        GL.glTexImage2D(
-            GL.GL_TEXTURE_2D, 0, GL.GL_RGB, size[0], size[1], 0,
-            GL.GL_RGB, GL.GL_UNSIGNED_BYTE, data,
-        )
+        if not self._allocated or size != self._size:
+            # 只在尺寸变化时重新分配纹理，之后用 glTexSubImage2D 覆盖（每帧快很多）
+            self._size = size
+            self._allocated = True
+            GL.glTexImage2D(
+                GL.GL_TEXTURE_2D, 0, GL.GL_RGB, size[0], size[1], 0,
+                GL.GL_RGB, GL.GL_UNSIGNED_BYTE, data,
+            )
+        else:
+            GL.glTexSubImage2D(
+                GL.GL_TEXTURE_2D, 0, 0, 0, size[0], size[1],
+                GL.GL_RGB, GL.GL_UNSIGNED_BYTE, data,
+            )
         GL.glMatrixMode(GL.GL_PROJECTION)
         GL.glLoadIdentity()
         GL.glOrtho(0.0, 1.0, 0.0, 1.0, -1.0, 1.0)

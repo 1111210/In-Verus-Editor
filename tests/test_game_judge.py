@@ -46,6 +46,24 @@ class WindowTests(unittest.TestCase):
 
 
 class ClickJudgeTests(unittest.TestCase):
+    def test_input_type_must_match_note_type(self) -> None:
+        """6K 键只判 6K 按键、鼠标点击只判鼠标点击按键（两种输入不互相抢判）。"""
+        chart = make_chart(
+            [LaneNote("L1", 0, 0, 4.0), MouseClick("M1", 4.0, 0.5, 0.1)]
+        )
+        hit_ms = chart.timing.beat_to_song_ms(4.0)
+        lane_judge = Judge(chart)
+        result = lane_judge.on_press(hit_ms, lane=0)
+        self.assertIsNotNone(result)
+        self.assertEqual(result.note_id, "L1", "按 6K 键不该判鼠标点击按键")
+        self.assertEqual(lane_judge.counts[BREAK], 0)
+
+        click_judge = Judge(chart)
+        result = click_judge.on_press(hit_ms, x=0.5)
+        self.assertIsNotNone(result)
+        self.assertEqual(result.note_id, "M1", "鼠标点击不该判 6K 按键")
+        self.assertEqual(click_judge.counts[BREAK], 0)
+
     def test_nearest_click_object_is_judged(self) -> None:
         chart = make_chart([LaneNote("L1", 0, 0, 4.0), LaneNote("L2", 3, 3, 4.0)])
         judge = Judge(chart)

@@ -149,20 +149,24 @@ class Judge:
 
     # ------------------------------------------------------------ 输入
     def on_press(self, now_ms: float, lane: Optional[int] = None, x: Optional[float] = None) -> Optional[Judged]:
-        """一次按键 / 点击：最多判定一个点击类物件（取时间上最接近的）。"""
+        """一次按键 / 点击：最多判定一个点击类物件（取判定时刻最靠前的）。
+
+        **类型必须匹配**：按 6K 键（``lane=``）只判 6K 按键，鼠标点击（``x=``）只判
+        鼠标点击按键 —— 否则两种输入会互相“抢判”，出现该判的没判、不该判的判了。
+        """
         best: Optional[Tuple[float, float, _ClickState]] = None   # (判定时刻, 偏差, 状态)
         for state in self._clicks:
             note = state.note
-            if state.done or isinstance(note, (MouseRegion,)):
+            if state.done or isinstance(note, (MouseRegion, MouseSlide)):
                 continue
-            if isinstance(note, MouseSlide):
-                continue
-            if isinstance(note, MouseClick) and x is not None:
-                if not self._in_x(note, x):
+            if isinstance(note, MouseClick):
+                if x is None or not self._in_x(note, x):
                     continue
             elif isinstance(note, LaneNote):
-                if lane is not None and not (note.lane_start <= lane <= note.lane_end):
+                if lane is None or not (note.lane_start <= lane <= note.lane_end):
                     continue
+            else:                                  # pragma: no cover - 兜底
+                continue
             judge_ms = self.timing.beat_to_song_ms(getattr(note, "head_beat", 0.0))
             offset = now_ms - judge_ms
             if grade_for_offset(offset) is None:
