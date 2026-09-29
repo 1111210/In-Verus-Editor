@@ -109,9 +109,11 @@ class _IntervalState:
 class Judge:
     """一张谱面的判定状态机（按“听到的歌曲毫秒”推进）。"""
 
-    def __init__(self, chart: Chart, hit_sound=None) -> None:
+    def __init__(self, chart: Chart, hit_sound=None, rate: float = 1.0) -> None:
         self.chart = chart
         self.timing = chart.timing
+        # 倍速：只影响分数倍率（分数 = 当前计分 × 倍速^1.5），不影响判定窗口
+        self.rate = min(1.0, max(0.1, float(rate)))
         self.results: List[Judged] = []
         self.notes: Dict[str, Note] = {n.id: n for n in chart.all_notes()}
         self._counts: Dict[str, int] = {g: 0 for g in GRADES}
@@ -246,11 +248,16 @@ class Judge:
         return sum(r.accuracy for r in self.results) / len(self.results)
 
     @property
-    def score(self) -> int:
-        """分数 = 已取得准度 / 总物件数 × 1e8，四舍五入，再加 EXACT 数。"""
+    def base_score(self) -> int:
+        """基础计分 = 已取得准度 / 总物件数 × 1e8，四舍五入，再加 EXACT 数。"""
         total = max(1, self.total_notes)
         base = sum(r.accuracy for r in self.results) / total * 100_000_000
         return int(round(base)) + self._counts[EXACT]
+
+    @property
+    def score(self) -> int:
+        """最终分数 = 基础计分 × **倍速的 1.5 次方**（1.0x 时与原来一致）。"""
+        return int(round(self.base_score * (self.rate ** 1.5)))
 
     @property
     def break_count(self) -> int:

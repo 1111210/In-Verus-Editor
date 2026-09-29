@@ -120,6 +120,7 @@ class PlayerApp:
         self.pressed_lanes = set()
         self.mouse_norm = 0.5
         self.message = ""
+        self.status_hint = ""
         self.settings_row = 0
 
     # ------------------------------------------------------------ 显示后端
@@ -267,6 +268,7 @@ class PlayerApp:
         "音乐音量",
         "打击音效音量",
         "渲染后端（软件 / OpenGL）",
+        "倍速（0.1~1.0x）",
     )
 
     def _event_settings(self, event) -> None:
@@ -319,6 +321,11 @@ class PlayerApp:
         elif row == 10:
             s.renderer = "opengl" if s.renderer == "software" else "software"
             self.screen = self._make_display(self.w, self.h)
+        elif row == 11:
+            s.rate = round(min(1.0, max(0.1, s.rate + 0.1 * step)), 1)
+            if self.judge is not None:
+                self.judge.rate = s.rate
+            self.audio.set_rate(s.rate)
         s.normalize()
         if row in (8, 9) and self.state == "play":
             self.audio.set_volume(s.music_volume)
@@ -349,7 +356,7 @@ class PlayerApp:
     # ------------------------------------------------------------ 游玩
     def _start_play(self) -> None:
         assert self.chart is not None
-        self.judge = Judge(self.chart)
+        self.judge = Judge(self.chart, rate=self.settings.rate)
         self.pressed_lanes.clear()
         self.message = ""
         self.audio.latency_ms = self.settings.audio_latency_ms
@@ -357,6 +364,7 @@ class PlayerApp:
         self.hits.set_volume(self.settings.hit_volume)
         self.hits.set_enabled(True)
         self.popups.clear()
+        self.audio.set_rate(self.settings.rate)
         self.audio.load(chart_audio_path(self.chart_path, self.chart))
         self.audio.play(self.chart.timing.beat_to_song_ms(0.0))     # 从第 0 拍起播
         self.state = "play"
@@ -370,6 +378,10 @@ class PlayerApp:
     def _event_play(self, event) -> None:
         assert self.judge is not None
         if event.type == pygame.KEYDOWN:
+            if event.key in (pygame.K_MINUS, pygame.K_KP_MINUS, pygame.K_EQUALS, pygame.K_PLUS):
+                step = -1 if event.key in (pygame.K_MINUS, pygame.K_KP_MINUS) else 1
+                self._adjust_rate(step)
+                return
             if event.key == pygame.K_SPACE:
                 self._toggle_pause()
                 return
@@ -444,8 +456,26 @@ class PlayerApp:
         if self.paused:
             self.audio.pause()
         else:
+            self.status_hint = ""
             self.audio.set_rate(self.audio.rate)     # 保持当前倍速
             self.audio.play(self.audio.position_ms())
+
+    def _adjust_rate(self, step: int) -> None:
+        """游玩中调倍速（与编辑器一致：换后端容易出问题，因此自动暂停）。"""
+        old = self.settings.rate
+        self.settings.rate = round(min(1.0, max(0.1, old + 0.1 * step)), 1)
+        if abs(self.settings.rate - old) < 1e-9:
+            return
+        psettings.save_settings(self.settings)
+        if self.judge is not None:
+            self.judge.rate = self.settings.rate
+        self.audio.set_rate(self.settings.rate)
+        if not self.paused:
+            self._toggle_pause()
+        self.status_hint = (
+            f"倍速 {self.settings.rate:.1f}x（得分 ×{self.settings.rate ** 1.5:.2f}）"
+            f" · 已自动暂停，按空格继续"
+        )
 
     def _inside_region(self, now_ms: float) -> Optional[Note]:
         """当前鼠标是否在某个空域内（判定范围两边各放宽 0.01）。"""
@@ -534,6 +564,7 @@ class PlayerApp:
             f"{s.music_volume * 100:.0f}%",
             f"{s.hit_volume * 100:.0f}%",
             "OpenGL（需重启/切换即生效）" if s.renderer == "opengl" else "软件",
+            f"{s.rate:.1f}x（得分 ×{s.rate ** 1.5:.2f}）",
         ]
         for index, label in enumerate(self.SETTING_ROWS):
             y = 100 + index * 44
@@ -584,6 +615,8 @@ class PlayerApp:
             pygame.draw.rect(self.screen, (0, 0, 0), (0, self.h * 0.32, self.w, 220))
             self.center_text("已暂停", self.h * 0.36, self.f_big, WHITE)
             self.center_text("空格 继续 · R 重试 · Esc 回主界面", self.h * 0.45, self.f_mid, ACCENT)
+            if self.status_hint:
+                self.center_text(self.status_hint, self.h * 0.52, self.f_small, DIM)
 
     def _draw_planes(self, now_ms: float) -> None:
         assert self.chart is not None
@@ -811,8 +844,8 @@ class PlayerApp:
             self.text(line, (24, 16 + index * 26), self.f_small, WHITE if index == 0 else DIM)
         counts = self.judge.counts
         right_lines = (
-            f"准度 {self.judge.accuracy * 100:.1f}%",
-            f"分数 {self.judge.score}",
+            f"准度 {self.judge.accuracy * 100:.1f}% · 倍速 {self.settings.rate:.1f}x",
+            f"分数 {self.judge.score}（×{self.settings.rate ** 1.5:.2f}）",
             f"连击 {self.judge.combo}（最大 {self.judge.max_combo}）",
             "  ".join(f"{grade} {counts[grade]}" for grade in GRADES),
         )
@@ -840,7 +873,12 @@ class PlayerApp:
         for index, line in enumerate(left_lines):
             self.text(line, (46, 140 + index * 34), self.f_mid, WHITE if index == 0 else DIM)
         counts = self.judge.counts
-        self.text(f"分数：{self.judge.score}", (half + 46, 140), self.f_big, (255, 226, 120))
+        self.text(
+            f"分数：{self.judge.score}（倍速 {self.settings.rate:.1f}x，×{self.settings.rate ** 1.5:.2f}）",
+            (half + 46, 140),
+            self.f_big,
+            (255, 226, 120),
+        )
         self.text(f"最大连击：{self.judge.max_combo}", (half + 46, 196), self.f_mid, WHITE)
         total = max(1, self.judge.total_notes)
         self.text(

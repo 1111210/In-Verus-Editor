@@ -116,6 +116,23 @@ class PlayerAppSmokeTests(unittest.TestCase):
         app._toggle_pause()
         self.assertFalse(app.paused)
 
+    def test_rate_control_and_score_multiplier(self) -> None:
+        """游玩器倍速：设置里 0.1 一档、0.1~1.0x；游玩中按 [-] 改倍速并自动暂停。"""
+        app = self.app
+        app.settings_row = 11
+        app._adjust_setting(-1)
+        self.assertAlmostEqual(app.settings.rate, 0.9, places=6)
+        app._enter_loading()
+        app._start_play()
+        self.assertAlmostEqual(app.judge.rate, 0.9, places=6)
+        app.judge._judge_result("X", "EXACT", 0.0)
+        self.assertEqual(app.judge.score, round(app.judge.base_score * (0.9 ** 1.5)))
+        app._adjust_rate(-1)
+        self.assertAlmostEqual(app.settings.rate, 0.8, places=6)
+        self.assertTrue(app.paused, "改倍速会自动暂停")
+        self.assertIn("0.8", app.status_hint)
+        app._draw_play()          # 暂停遮罩 + 提示都要能画
+
     def test_renderer_switch_falls_back_without_gl(self) -> None:
         """切到 OpenGL：能建上下文就用 GL，否则自动回退软件渲染（不会崩）。"""
         app = self.app

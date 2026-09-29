@@ -29,6 +29,7 @@ class PlayerSettings:
     mouse_sensitivity: float = 1.0        # 0.1 ~ 10
     unbounded_mouse: bool = False         # 无界鼠标：实际位置即判定位置
     renderer: str = "software"            # software / opengl
+    rate: float = 1.0                     # 游玩倍速 0.1 ~ 1.0x（每 0.1 一档）
     music_volume: float = 1.0
     hit_volume: float = 0.6
     recent: List[str] = field(default_factory=list)     # 最近打开的谱面（最多 8 条）
@@ -44,6 +45,7 @@ class PlayerSettings:
         self.audio_latency_ms = min(5000.0, max(-5000.0, float(self.audio_latency_ms)))
         self.scroll_ms = min(20_000.0, max(200.0, float(self.scroll_ms)))
         self.mouse_sensitivity = min(10.0, max(0.1, float(self.mouse_sensitivity)))
+        self.rate = round(min(1.0, max(0.1, float(self.rate))), 1)
         self.music_volume = min(1.0, max(0.0, float(self.music_volume)))
         self.hit_volume = min(1.0, max(0.0, float(self.hit_volume)))
         self.player_name = (self.player_name or "Player")[:24]
@@ -73,6 +75,7 @@ class PlayerSettings:
             mouse_sensitivity=float(data.get("mouse_sensitivity", 1.0)),
             unbounded_mouse=bool(data.get("unbounded_mouse", False)),
             renderer=str(data.get("renderer", "software")),
+            rate=float(data.get("rate", 1.0)),
             music_volume=float(data.get("music_volume", 1.0)),
             hit_volume=float(data.get("hit_volume", 0.6)),
             recent=list(data.get("recent", [])),  # type: ignore[arg-type]

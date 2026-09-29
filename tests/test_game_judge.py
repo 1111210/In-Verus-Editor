@@ -161,6 +161,22 @@ class RegionJudgeTests(unittest.TestCase):
 
 
 class ScoreTests(unittest.TestCase):
+    def test_score_scales_with_rate_to_the_1_5(self) -> None:
+        """分数 = 基础计分 × 倍速^1.5（1.0x 不变，0.5x 约 0.354 倍）。"""
+        chart = make_chart([LaneNote("L1", 0, 0, 1.0)])
+        judge = Judge(chart)
+        judge.on_press(chart.timing.beat_to_song_ms(1.0), lane=0)     # EXACT
+        base = judge.base_score
+        self.assertEqual(judge.rate, 1.0)
+        self.assertEqual(judge.score, base)
+        judge.rate = 0.5
+        self.assertEqual(judge.score, round(base * (0.5 ** 1.5)))
+        judge.rate = 0.1
+        self.assertEqual(judge.score, round(base * (0.1 ** 1.5)))
+        # 倍速被夹在 0.1 ~ 1.0
+        self.assertEqual(Judge(chart, rate=3.0).rate, 1.0)
+        self.assertEqual(Judge(chart, rate=0.01).rate, 0.1)
+
     def test_earliest_judge_time_wins_when_several_are_hittable(self) -> None:
         """同时可判多个物件时，取**判定时刻最靠前**的那个。"""
         chart = make_chart([LaneNote("L1", 0, 0, 4.0), LaneNote("L2", 0, 0, 4.05)])
