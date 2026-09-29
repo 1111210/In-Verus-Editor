@@ -61,6 +61,7 @@ STRETCH_TARGET_OUTPUT_MS = 4_000.0
 STRETCH_WINDOW_MIN_MS = 400.0
 STRETCH_WINDOW_MAX_MS = 6_000.0
 STRETCH_QUEUE_AHEAD_MS = 8_000.0   # 原始音频还剩这么多毫秒就去准备下一个窗口
+MAX_QUEUED_WINDOWS = 4             # 通道里最多排几个窗口（每个 ≈ 4 秒输出）
 
 
 def audio_backend_name() -> str:
@@ -355,7 +356,9 @@ class StretchedSoundBackend:  # pragma: no cover - 依赖 pygame + numpy
         self._volume = 1.0
         self.rate = 1.0
         self._channel = None
-        self._windows: List[Tuple[object, float, float]] = []
+        # 播放窗口队列 + 下一个窗口的源起点（严格单调，见 poll）
+        self._queue: List[Tuple[object, float, float]] = []
+        self._next_source_ms = 0.0
         self._playing = False
         self._start_source_ms = 0.0
         self._start_time = 0.0
@@ -371,25 +374,30 @@ class StretchedSoundBackend:  # pragma: no cover - 依赖 pygame + numpy
         self._samples = _NP.ascontiguousarray(array)
         self._loaded = path
         self._length_ms = float(self._samples.shape[0]) / self.freq * 1000.0
-        self._windows.clear()
+        self._queue.clear()
+        self._next_source_ms = 0.0
         return True
 
     def unload(self) -> None:
         self.stop()
         self._samples = None
         self._loaded = None
-        self._windows.clear()
+        self._queue.clear()
+        self._next_source_ms = 0.0
 
     def set_rate(self, rate: float) -> None:
         self._paused_ms = self.position_ms()
         self.rate = max(0.05, float(rate))
-        self._windows.clear()
+        self._queue.clear()
+        self._next_source_ms = 0.0
 
     # ------------------------------------------------------------------ 播放
     def _make_window(self, start_ms: float):
         if self._samples is None:
             return None
-        start = max(0, int(start_ms / 1000.0 * self.freq))
+        start = max(0, int(round(start_ms / 1000.0 * self.freq)))
+        if start >= self._samples.shape[0]:
+            return None
         # 原始窗口大小随倍速缩放：输出窗口长度大致固定，单次合成开销可控
         window_ms = min(
             STRETCH_WINDOW_MAX_MS,
@@ -397,9 +405,9 @@ class StretchedSoundBackend:  # pragma: no cover - 依赖 pygame + numpy
         )
         stop = min(
             int(self._samples.shape[0]),
-            start + int(window_ms / 1000.0 * self.freq),
+            start + int(round(window_ms / 1000.0 * self.freq)),
         )
-        if stop - start < STRETCH_FRAME * 2:
+        if stop - start < STRETCH_FRAME:
             return None
         chunk = self._samples[start:stop]
         stretched = time_stretch(chunk, self.rate)
@@ -416,26 +424,52 @@ class StretchedSoundBackend:  # pragma: no cover - 依赖 pygame + numpy
             return
         self._channel = _PYGAME.mixer.Channel(0)
         self._channel.play(first[0])
-        self._windows = [first]
+        self._queue = [first]
+        self._next_source_ms = first[2]          # 下一个窗口的源起点（严格单调）
         self._start_source_ms = max(0.0, float(start_ms))
         self._start_time = time.perf_counter()
         self._playing = True
+        self.poll()
 
     def poll(self) -> None:
-        """播放过程中提前准备下一个窗口并排队，保证连续播放。"""
-        if not self._playing or self._channel is None or not self._windows:
+        """每帧调用：按**严格单调**的源位置补窗口。
+
+        关键点：窗口起点只用 ``_next_source_ms``（上一个窗口的末端）推进，
+        不再从会被裁剪的队列里反推 —— 之前位置跑得比音频快时会跳过窗口，
+        或者把已经播过的窗口再排一次，听感就是片段丢失 / 重叠。
+        """
+        if not self._playing or self._channel is None:
             return
-        position = self.position_ms()
-        last = self._windows[-1]
-        if position > last[1]:
-            # 已经进入后面的窗口，丢掉前面的
-            self._windows = [w for w in self._windows if w[2] > position]
-            last = self._windows[-1] if self._windows else last
-        if last[2] - position <= STRETCH_QUEUE_AHEAD_MS:
-            nxt = self._make_window(last[2])
-            if nxt is not None and (not self._windows or self._windows[-1][2] < nxt[2]):
+        self._prune()
+        guard = 0
+        # 一次 tick 最多补两个窗口：避免在极慢倍速下一口气合成几十秒音频卡住界面
+        while guard < 2 and len(self._queue) < MAX_QUEUED_WINDOWS:
+            guard += 1
+            position = self.position_ms()
+            if self._next_source_ms - position > STRETCH_QUEUE_AHEAD_MS:
+                break
+            nxt = self._make_window(self._next_source_ms)
+            if nxt is None:
+                break
+            try:
+                busy = bool(self._channel.get_busy())
+            except Exception:  # pragma: no cover
+                busy = True
+            if busy:
                 self._channel.queue(nxt[0])
-                self._windows.append(nxt)
+            else:
+                # 通道已经空了：只能直接播（对空通道 queue() 会被丢掉）
+                self._channel.play(nxt[0])
+                self._start_source_ms = nxt[1]
+                self._start_time = time.perf_counter()
+            self._queue.append(nxt)
+            self._next_source_ms = nxt[2]
+
+    def _prune(self) -> None:
+        """丢掉确实已经播完的窗口（保留队尾，供音量同步等使用）。"""
+        position = self.position_ms()
+        while len(self._queue) > 2 and self._queue[0][2] <= position:
+            self._queue.pop(0)
 
     def stop(self) -> None:
         if self._channel is not None:
@@ -444,7 +478,7 @@ class StretchedSoundBackend:  # pragma: no cover - 依赖 pygame + numpy
             except Exception:
                 pass
         self._channel = None
-        self._windows.clear()
+        self._queue = []
         self._playing = False
         self._paused_ms = 0.0
 
@@ -456,18 +490,20 @@ class StretchedSoundBackend:  # pragma: no cover - 依赖 pygame + numpy
             except Exception:
                 pass
         self._channel = None
-        self._windows.clear()
+        self._queue = []
         self._playing = False
 
     def position_ms(self) -> float:
         if not self._playing:
             return self._paused_ms
         elapsed = (time.perf_counter() - self._start_time) * 1000.0 * self.rate
-        return min(self._start_source_ms + elapsed, self._length_ms)
+        position = self._start_source_ms + elapsed
+        # 不超过“已经排上去的音频”末端，否则调度会跑到音频前面
+        return min(position, self._next_source_ms, self._length_ms)
 
     def set_volume(self, volume: float) -> None:
         self._volume = float(volume)
-        for window in self._windows:
+        for window in self._queue:
             try:
                 window[0].set_volume(max(0.0, min(1.0, self._volume)))
             except Exception:

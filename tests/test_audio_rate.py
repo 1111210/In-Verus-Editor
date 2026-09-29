@@ -151,6 +151,31 @@ class TimeStretchTests(unittest.TestCase):
         # 左右声道内容一致（同一段正弦）时，两声道应当仍然基本一致
         self.assertGreater(float(np.corrcoef(slowed[:, 0], slowed[:, 1])[0, 1]), 0.99)
 
+    def test_windows_are_contiguous(self) -> None:
+        """回归：分窗口播放必须首尾相接 —— 不能重叠、也不能漏掉一段。"""
+        import numpy as np
+
+        from rhythm_editor.audio import StretchedSoundBackend
+
+        freq = 44100
+        t = np.arange(freq * 10) / freq
+        tone = (np.sin(2 * np.pi * 440 * t) * 4000).astype(np.int16)
+        backend = StretchedSoundBackend()
+        backend._samples = np.ascontiguousarray(np.repeat(tone.reshape(-1, 1), 2, axis=1))
+        backend._length_ms = 10_000.0
+        for rate in (0.9, 0.5, 0.1):
+            backend.rate = rate
+            cursor = 0.0
+            played = 0.0
+            for _ in range(30):
+                window = backend._make_window(cursor)
+                if window is None:
+                    break
+                self.assertAlmostEqual(window[1], cursor, delta=0.05, msg="窗口起点必须接上一段末端")
+                played += window[0].get_length()
+                cursor = window[2]
+            self.assertAlmostEqual(played * 1000.0, cursor / rate, delta=5.0)
+
 
 if __name__ == "__main__":
     unittest.main()
