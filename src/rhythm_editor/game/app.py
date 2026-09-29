@@ -175,7 +175,8 @@ class PlayerApp:
         self.play_wall = 0.0
         self.pause_wall = 0.0
         self.audio_start_ms = 0.0
-        self.lead_wait_ms = 0.0
+        self.lead_start_ms = 0.0           # 进入游玩那一刻的歌曲毫秒（可能为负）
+        self.lead_wait_real_ms = 0.0       # 需要静音等待的**真实**毫秒（音频还没到 0）
         self.idle_seconds = 0.0            # 音频连续停多久（用来判“真的播完了”）
         self.ending = False                # 谱面已结束、正在等 END_DELAY_S
         self.end_timer = 0.0
@@ -980,14 +981,21 @@ class PlayerApp:
         self.hits.set_volume(self.settings.hit_volume)
         self.hits.set_enabled(True)
         self.popups.clear()
-        # 首拍引导 1.5 秒，同时保证**音乐与物件同步**：
-        # 音频从“第 0 拍前 1.5 秒”起播；谱面 offset 不足 1.5 秒时先静音等待补齐。
+        # 首拍引导：**永远是 1.5 秒真实时间**，且音乐与物件同步。
+        # 判定时钟按倍速推进，所以“进入游玩时的歌曲毫秒”要退到 `offset − 倍速 × 1.5s`：
+        # 倍速再高，第 0 拍也恰好 1.5 秒后才到判定平面；如果这个位置已经是负数
+        # （谱面 offset 很短），先静音等待歌曲位置走到 0，再从 0 开始放音 ——
+        # 中间不会跳时间，所以不会出现“谱面还没开始物件就已经过线”。
+        rate = self.settings.rate
         offset_ms = self.chart.timing.beat_to_song_ms(0.0)
-        self.lead_wait_ms = max(0.0, LEAD_MS - offset_ms)
-        self.audio_start_ms = max(0.0, offset_ms - LEAD_MS)
+        self.lead_start_ms = offset_ms - LEAD_MS * rate
+        self.audio_start_ms = max(0.0, self.lead_start_ms)
+        self.audio_started = self.lead_start_ms >= 0.0
+        self.lead_wait_real_ms = (
+            0.0 if self.audio_started else (-self.lead_start_ms) / max(1e-6, rate)
+        )
         self.play_wall = time.perf_counter()
         self.pause_wall = self.play_wall
-        self.audio_started = self.lead_wait_ms <= 0.0
         self.audio.set_rate(self.settings.rate)
         self.audio.load(chart_audio_path(self.chart_path, self.chart))
         if self.audio_started:
@@ -998,16 +1006,17 @@ class PlayerApp:
     def _now_ms(self) -> float:
         """判定用的歌曲毫秒：**就是听到的音频位置**（所以音乐和物件天然同步）。
 
-        首拍引导（1.5 秒）靠“音频从第 0 拍前 1.5 秒起播”实现；谱面 offset 不够时，
-        起播前先静音等待，此时用挂钟推进，第 0 拍仍在进入游玩 1.5 秒后到判定平面。
+        首拍引导（**1.5 秒真实时间**，与倍速无关）靠“进入游玩时的歌曲毫秒 =
+        `第 0 拍 − 倍速 × 1.5s`”实现；音频还没到 0 时先用挂钟按倍速推进，
+        走到 0 再起播，因此不会出现时间跳跃。
         """
         if self.audio_started:
             return self.audio.heard_position_ms()
         now = time.perf_counter()
         if self.paused:                     # 暂停时引导时间也停住
             now = self.pause_wall
-        elapsed_ms = (now - self.play_wall) * 1000.0 * self.settings.rate
-        return elapsed_ms - self.lead_wait_ms
+        elapsed_real_ms = (now - self.play_wall) * 1000.0
+        return self.lead_start_ms + elapsed_real_ms * self.settings.rate
 
     def _begin_audio(self) -> None:
         """引导时间结束：真正开始播放（此后判定时钟就是音频位置）。"""
@@ -1118,7 +1127,7 @@ class PlayerApp:
                 self._start_play()
         elif self.state == "play":
             if not self.audio_started and not self.paused:
-                if (time.perf_counter() - self.play_wall) * 1000.0 >= self.lead_wait_ms:
+                if (time.perf_counter() - self.play_wall) * 1000.0 >= self.lead_wait_real_ms:
                     self._begin_audio()
             if self.paused:
                 self.timer += 0.0

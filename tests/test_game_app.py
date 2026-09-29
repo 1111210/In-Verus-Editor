@@ -276,7 +276,7 @@ class PlayerAppSmokeTests(unittest.TestCase):
             self.assertNotIn(note, visible(end + 1.0))
 
     def test_first_beat_lead_keeps_music_in_sync(self) -> None:
-        """首拍仍在 1.5 秒后到判定平面，但音乐与物件同步（音频提前 1.5 秒起播）。"""
+        """首拍永远在 1.5 秒后到判定平面（1x），音乐与物件同步。"""
         from rhythm_editor.game.app import LEAD_MS
 
         app = self.app
@@ -284,7 +284,9 @@ class PlayerAppSmokeTests(unittest.TestCase):
         app._start_play()
         offset = app.chart.timing.beat_to_song_ms(0.0)
         self.assertAlmostEqual(app.audio_start_ms, max(0.0, offset - LEAD_MS), places=6)
-        self.assertAlmostEqual(app.lead_wait_ms, max(0.0, LEAD_MS - offset), places=6)
+        self.assertAlmostEqual(
+            app.lead_wait_real_ms, max(0.0, (LEAD_MS - offset) / app.settings.rate), places=6
+        )
         # 起步时“第 0 拍”离判定平面还有整整 1.5 秒（判定时间 = offset）
         self.assertAlmostEqual(app._now_ms(), offset - LEAD_MS, delta=60.0)
         app._toggle_pause()                    # 暂停时引导时间也不能走
@@ -293,6 +295,44 @@ class PlayerAppSmokeTests(unittest.TestCase):
         self.assertAlmostEqual(app._now_ms(), frozen, delta=1.0)
         app._toggle_pause()
         self.assertLess(app._now_ms(), frozen + 5.0)
+
+    def test_lead_in_is_always_real_1500ms_regardless_of_rate(self) -> None:
+        """引导时间是**真实** 1.5 秒：倍速再高也不会缩短，也不会提前跳过谱面开头。"""
+        from rhythm_editor.game.app import LEAD_MS
+        from rhythm_editor.game import app as app_module
+
+        app = self.app
+        app._enter_loading()
+        chart = app.chart
+        offset = chart.timing.beat_to_song_ms(0.0)
+        for rate in (0.5, 1.0, 2.0, 3.0):
+            app.settings.rate = rate
+            clock = [1000.0]
+            original_perf = app_module.time.perf_counter
+            app_module.time.perf_counter = lambda: clock[0]
+            try:
+                app._start_play()
+                start = app._now_ms()
+                self.assertAlmostEqual(
+                    app.lead_start_ms, offset - LEAD_MS * rate, places=6
+                )
+                # 起步时第 0 拍还差“倍速 × 1.5 秒”的歌曲时间；换成真实时间就是 1.5 秒
+                self.assertAlmostEqual(offset - start, LEAD_MS * rate, delta=60.0)
+                self.assertAlmostEqual(
+                    (offset - start) / rate, LEAD_MS, delta=60.0 / rate, msg="真实引导时间恒为 1.5s"
+                )
+                # 任何物件都不会在开局就“已经过线”
+                for note in chart.all_notes():
+                    self.assertGreaterEqual(
+                        app._head_ms(note), start - 1e-6,
+                        msg=f"rate={rate}：开局就有物件到达判定线",
+                    )
+                # 等满引导时间：歌曲时钟正好走到 0，且没有跳过任何歌曲时间
+                clock[0] += app.lead_wait_real_ms / 1000.0
+                self.assertAlmostEqual(app._now_ms(), 0.0, delta=60.0)
+            finally:
+                app_module.time.perf_counter = original_perf
+        app.settings.rate = 1.0
 
     def test_prompt_accepts_text_input_and_key_capture(self) -> None:
         """文字输入走 TEXTINPUT（中文可输入）；键位改为“按下想设的键”。"""
