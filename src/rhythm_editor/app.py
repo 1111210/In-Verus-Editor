@@ -567,10 +567,12 @@ class EditorApp:
             self.toolbar.sync()
             return
         self.audio.set_rate(rate)
+        paused = self.audio.paused_by_rate_change
         if announce:
             tone = "（变调：重采样）" if self.audio.stretch_active else ""
             extra = "" if self.audio.usable_audio else "（静音时钟）"
-            self.status(f"播放倍速：{rate:.1f}x{tone}{extra}")
+            note = "，已自动暂停（按空格继续）" if paused else ""
+            self.status(f"播放倍速：{rate:.1f}x{tone}{extra}{note}")
         self.toolbar.sync()
 
     def increase_playback_rate(self) -> None:

@@ -536,6 +536,8 @@ class AudioPlayer:
         self._paused_at_ms = 0.0
         # 出问题时的说明（界面会显示）
         self.last_error = ""
+        # 上次改倍速时是否因为正在播放而自动暂停
+        self.paused_by_rate_change = False
         # 没有音频文件时用静音时钟推进（pygame.music 没有载入文件时不会走时间）
         self._silent_clock = SilentBackend()
         self._plain_backend = self._create_plain_backend()
@@ -557,6 +559,10 @@ class AudioPlayer:
         return SilentBackend()
 
     def _select_backend(self):
+        if self.path is None:
+            # 没有载入歌曲：一律用静音时钟（改倍速后也要保持，
+            # 否则会切到需要样本的重采样后端，一点播放就不动了）
+            return self._silent_clock
         want_stretch = self.rate < config.RATE_MAX - 1e-9
         if want_stretch and STRETCH_AVAILABLE:
             if self._stretch_backend is None:
@@ -680,8 +686,10 @@ class AudioPlayer:
             pass
         self._paused_at_ms = position
         self._playing = False
-        if was_playing and self.path:
-            self.play(position)
+        # 播放中改倍速会换成另一个后端（普通 ↔ 重采样），无缝接力很容易出现
+        # 片段重叠 / 丢失，所以这里**一律自动暂停**，停在当前位置：
+        # 按空格即可用新倍速继续（界面会提示）。
+        self.paused_by_rate_change = bool(was_playing)
 
     # ------------------------------------------------------------------ 控制
     def play(self, song_ms: float) -> None:

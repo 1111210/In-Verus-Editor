@@ -99,6 +99,24 @@ class AudioPlayerRateTests(unittest.TestCase):
         # 当前环境装了 pygame-ce 与 numpy，因此变速不变调可用
         self.assertTrue(STRETCH_AVAILABLE)
 
+    def test_rate_change_while_playing_pauses(self) -> None:
+        """播放中改倍速会**自动暂停**并停在当前位置（避免换后端造成片段错乱）。"""
+        player = AudioPlayer()
+        player.load(None)            # 无歌曲：静音时钟也遵守同一规则
+        player.play(500.0)
+        time.sleep(0.1)
+        before = player.position_ms()
+        player.set_rate(0.5)
+        self.assertFalse(player.is_playing, "改倍速后应当已暂停")
+        self.assertTrue(player.paused_by_rate_change)
+        self.assertAlmostEqual(player.position_ms(), before, delta=80.0)
+        player.set_rate(0.8)         # 已经暂停：不再重复标记
+        self.assertFalse(player.paused_by_rate_change)
+        player.play(player.position_ms())
+        time.sleep(0.15)
+        self.assertGreater(player.position_ms(), 0.0)
+        player.pause()
+
 
 @unittest.skipUnless(STRETCH_AVAILABLE, "需要 numpy + pygame 才能做时间伸缩")
 class TimeStretchTests(unittest.TestCase):
