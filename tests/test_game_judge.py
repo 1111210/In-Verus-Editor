@@ -122,7 +122,16 @@ class RegionJudgeTests(unittest.TestCase):
     def test_half_beat_intervals(self) -> None:
         chart = make_chart([self._region()])
         judge = Judge(chart)
-        self.assertEqual(judge.total_notes, 4)          # 2 拍 = 4 个半拍区间
+        # 2 拍 = 4 个整半拍区间；不足半拍的**尾段也算一个**（这里恰好整除）
+        self.assertEqual(judge.total_notes, 4)
+
+    def test_partial_tail_is_an_extra_interval(self) -> None:
+        """尾段不足半拍时也算一个判定区间。"""
+        region = MouseRegion("R2", 0.0, 1.3, BoundaryCurve(0.2, 0.2), BoundaryCurve(0.8, 0.8))
+        chart = make_chart([region])
+        judge = Judge(chart)
+        # [0,0.5) [0.5,1.0) + 尾段 [1.0,1.3) = 3 个区间
+        self.assertEqual(judge.total_notes, 3)
 
     def test_always_inside_is_exact(self) -> None:
         chart = make_chart([self._region()])
@@ -130,7 +139,7 @@ class RegionJudgeTests(unittest.TestCase):
         region = chart.mouse_notes[0]
         for step in range(0, 11):
             judge.update(step * 100.0, inside_hold=region)
-        self.assertEqual(judge.counts[EXACT], 4)
+        self.assertEqual(judge.counts[EXACT], 4)   # 2 拍 = 4 个区间
         self.assertEqual(judge.counts[BREAK], 0)
 
     def test_never_inside_is_break(self) -> None:
@@ -152,6 +161,16 @@ class RegionJudgeTests(unittest.TestCase):
 
 
 class ScoreTests(unittest.TestCase):
+    def test_earliest_judge_time_wins_when_several_are_hittable(self) -> None:
+        """同时可判多个物件时，取**判定时刻最靠前**的那个。"""
+        chart = make_chart([LaneNote("L1", 0, 0, 4.0), LaneNote("L2", 0, 0, 4.05)])
+        judge = Judge(chart)
+        # 在 4.0 拍后 20ms 敲：两个都在范围内，应该判更早的 L1
+        hit_ms = chart.timing.beat_to_song_ms(4.0) + 20.0
+        result = judge.on_press(hit_ms, lane=0)
+        self.assertIsNotNone(result)
+        self.assertEqual(result.note_id, "L1")
+
     def test_accuracy_and_score(self) -> None:
         chart = make_chart([LaneNote("L1", 0, 0, 1.0), LaneNote("L2", 1, 1, 2.0)])
         judge = Judge(chart)
@@ -164,3 +183,20 @@ class ScoreTests(unittest.TestCase):
         self.assertAlmostEqual(judge.accuracy, 0.75)   # (1 + 0.5) / 2
         # 分数 = 1.5 / 总物件数(2) × 1e8 + EXACT 数
         self.assertEqual(judge.score, 75_000_000 + 1)
+
+
+class HoldJudgeTests(unittest.TestCase):
+    """长按：抬起事件 → Near；最后一个区间允许提前 ≤50ms 抬起仍算 EXACT。"""
+
+    def _hold(self, start: float, end: float):
+        chart = make_chart([LaneNote("H1", 0, 0, start, end)])
+        return chart, Judge(chart)
+
+    def test_hold_all_time_is_exact(self) -> None:
+        chart, judge = self._hold(0.0, 2.0)
+        hold = chart.lane_notes[0]
+        judge.on_press(chart.timing.beat_to_song_ms(0.0), lane=0)     # 开头 EXACT
+        for step in range(0, 11):
+            judge.update(step * 100.0, inside_hold=hold, held=True)
+        self.assertEqual(judge.counts[BREAK], 0)
+        self.assertGreaterEqual(judge.counts[EXACT], 4)

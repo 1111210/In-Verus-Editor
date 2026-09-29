@@ -98,6 +98,11 @@ class _IntervalState:
     outside_ms: float = 0.0         # 当前区间内“在内”的累计时长
     seen_inside: bool = False
     ever_outside: bool = False      # 长按：只要松开过就最多 Near
+    released: bool = False          # 本区间内是否发生过“抬起”事件
+    release_ms: float = 0.0         # 抬起事件发生的歌曲毫秒
+    release_lead_ms: float = 0.0    # 抬起比区间结束早多少毫秒
+    is_last: bool = False           # 是否是该长按 / 空域的最后一个区间
+    end_beat: float = 0.0           # 物件本身的结束拍（最后一个区间在这里截断）
 
 
 class Judge:
@@ -134,11 +139,12 @@ class Judge:
         self._mouse_x = 0.0
         self._mouse_prev = 0.0
         self._mouse_seen = False
+        self._held_prev = True
 
     # ------------------------------------------------------------ 输入
     def on_press(self, now_ms: float, lane: Optional[int] = None, x: Optional[float] = None) -> Optional[Judged]:
         """一次按键 / 点击：最多判定一个点击类物件（取时间上最接近的）。"""
-        best: Optional[Tuple[float, _ClickState]] = None
+        best: Optional[Tuple[float, float, _ClickState]] = None   # (判定时刻, 偏差, 状态)
         for state in self._clicks:
             note = state.note
             if state.done or isinstance(note, (MouseRegion,)):
@@ -155,11 +161,12 @@ class Judge:
             offset = now_ms - judge_ms
             if grade_for_offset(offset) is None:
                 continue
-            if best is None or abs(offset) < abs(best[0]):
-                best = (offset, state)
+            # 同时可判多个时取**判定时刻最靠前**的那个
+            if best is None or judge_ms < best[0]:
+                best = (judge_ms, offset, state)
         if best is None:
             return None      # 空敲：不消耗、无惩罚
-        offset, state = best
+        _, offset, state = best
         grade = grade_for_offset(offset) or BREAK
         state.done = True
         beat = getattr(state.note, "head_beat", 0.0)
@@ -252,7 +259,9 @@ class Judge:
         while current < end - 1e-9:
             starts.append(current)
             current += REGION_INTERVAL_BEATS
-        return _IntervalState(note=note, intervals=starts)
+        # 尾段不足半拍时，最后一个区间的结束时刻会超过物件末尾，
+        # 由 ``end_beat`` 夹住（它本身就是“最后一个判定区间”）
+        return _IntervalState(note=note, intervals=starts, end_beat=end)
 
     def _judge_result(self, note_id: str, grade: str, beat: float, offset: float = 0.0) -> Judged:
         result = Judged(note_id, grade, beat, offset)
@@ -263,6 +272,14 @@ class Judge:
     def _interval_grade(self, state: _IntervalState) -> str:
         if not state.seen_inside:
             return BREAK
+        if state.note.__class__.__name__ == "LaneNote":
+            # 长按：区间内**出现过抬起事件**就最多 Near；
+            # 但最后一个区间允许提前 <=50ms 抬起，仍算 EXACT
+            if not state.released:
+                return EXACT
+            if getattr(state, "is_last", False) and state.release_lead_ms <= 50.0:
+                return EXACT
+            return NEAR
         if state.outside_ms <= 0.0:
             return EXACT
         if state.outside_ms <= 50.0:
@@ -283,6 +300,10 @@ class Judge:
         out: List[Judged] = []
         delta = max(0.0, min(50.0, now_ms - self._last_ms))
         self._last_ms = now_ms
+        # 本帧是否发生了“抬起”事件（长按判定用）
+        released_now = self._held_prev and not held
+        self._held_prev = bool(held)
+        # 只保留最近 20 秒的采样，避免长曲目内存增长
         for state in self._clicks:
             note = state.note
             if state.done:
@@ -292,22 +313,39 @@ class Judge:
                 state.done = True
                 self._judge_result(note.id, BREAK, getattr(note, "head_beat", 0.0))
         for state in self._intervals:
-            out.extend(self._update_interval(state, now_ms, inside_hold, held, delta))
+            out.extend(
+                self._update_interval(
+                    state, now_ms, inside_hold, held, delta, released_now
+                )
+            )
         return out
 
     def _update_interval(
-        self, state: _IntervalState, now_ms: float, inside_hold, held: bool, delta: float
+        self,
+        state: _IntervalState,
+        now_ms: float,
+        inside_hold,
+        held: bool,
+        delta: float,
+        released_now: bool = False,
     ) -> List[Judged]:
         out: List[Judged] = []
         while state.index < len(state.intervals):
             start_beat = state.intervals[state.index]
             end_beat = start_beat + REGION_INTERVAL_BEATS
+            if state.index == len(state.intervals) - 1:
+                end_beat = min(end_beat, state.end_beat)   # 尾段按物件末尾截断
             start_ms = self.timing.beat_to_song_ms(start_beat)
             end_ms = self.timing.beat_to_song_ms(end_beat)
+            state.is_last = state.index == len(state.intervals) - 1
             if now_ms < start_ms:
                 break
             inside = self._inside(state.note, inside_hold, held)
             state.seen_inside = state.seen_inside or inside
+            if released_now and not state.released:
+                state.released = True
+                state.release_ms = now_ms
+                state.release_lead_ms = max(0.0, end_ms - now_ms)
             if inside:
                 state.inside_ms += delta
             else:
@@ -321,6 +359,7 @@ class Judge:
             state.index += 1
             state.inside_ms = state.outside_ms = 0.0
             state.seen_inside = False
+            state.released = False
         return out
 
     def _inside(self, note: Note, inside_hold, held: bool) -> bool:
