@@ -116,6 +116,18 @@ class PlayerAppSmokeTests(unittest.TestCase):
         app._toggle_pause()
         self.assertFalse(app.paused)
 
+    def test_chart_list_shows_metadata_and_recent(self) -> None:
+        """主界面列出元数据；打开过的谱面进入「最近」并排在前面。"""
+        app = self.app
+        path = app.paths[0]
+        title, artist, difficulty, bpm = app._chart_info(path)
+        self.assertTrue(title)
+        self.assertGreater(bpm, 0.0)
+        app._enter_loading()
+        self.assertEqual(app.settings.recent[0], path)
+        app._draw_menu()          # 列表 + 元数据渲染不抛异常
+        self.assertEqual(app.paths[0], path, "最近打开应排在前面")
+
 
 if __name__ == "__main__":
     unittest.main()

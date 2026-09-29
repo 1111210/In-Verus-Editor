@@ -26,7 +26,9 @@ python run_player.py                       # 主界面列出 charts/ 里的谱�
 python run_player.py charts/demo/demo.json # 直接选中它
 ```
 
-* **主界面**：↑↓ 选谱面 · Enter 开始 · S 设置 · Esc 退出；
+* **主界面**：↑↓ 选谱面（Home/End 跳首尾）· Enter 开始 · S 设置 · Esc 退出；
+  每条显示 **标题 · 艺术家 · 难度 · 初始 BPM** 与相对路径，打开过的谱面带 `*`
+  并自动排到最前（最近 8 条，记录在 `player.json`）；
 * **设置**：玩家名、6K 键位（6 条，回车逐轨输入）、物件厚度、系统音频延迟、
   1x 可视毫秒、鼠标灵敏度（0.1~10x）、侧轨高亮（第 1/6 轨暗紫）、无界鼠标模式；
   存在 `player.json`（全局）；
@@ -43,6 +45,7 @@ python run_player.py charts/demo/demo.json # 直接选中它
 * **连击**：命中 +1、Break 清零；HUD 显示当前与最大连击，连击 ≥5 时判定面上方
   会显示大号连击数；结算页显示「最大连击」。
 * **结算**：左半元数据与玩家、右半分数与各判定数量（不显示准度），
+  另有「最大连击」与每个判定占**总判定数的百分比**（不是准度），
   左下 `R 重试`、右下 `Esc 回主界面`；
 * 截图：`python tools/screenshot_player.py docs/images`
   （`player_menu/settings/play/result.png`）。

@@ -30,6 +30,7 @@ class PlayerSettings:
     unbounded_mouse: bool = False         # 无界鼠标：实际位置即判定位置
     music_volume: float = 1.0
     hit_volume: float = 0.6
+    recent: List[str] = field(default_factory=list)     # 最近打开的谱面（最多 8 条）
 
     def normalize(self) -> None:
         self.keys = [
@@ -45,6 +46,12 @@ class PlayerSettings:
         self.music_volume = min(1.0, max(0.0, float(self.music_volume)))
         self.hit_volume = min(1.0, max(0.0, float(self.hit_volume)))
         self.player_name = (self.player_name or "Player")[:24]
+        unique: List[str] = []
+        for path in self.recent:
+            text = str(path)
+            if text and text not in unique:
+                unique.append(text)
+        self.recent = unique[:8]
 
     def to_dict(self) -> Dict[str, object]:
         self.normalize()
@@ -64,6 +71,7 @@ class PlayerSettings:
             unbounded_mouse=bool(data.get("unbounded_mouse", False)),
             music_volume=float(data.get("music_volume", 1.0)),
             hit_volume=float(data.get("hit_volume", 0.6)),
+            recent=list(data.get("recent", [])),  # type: ignore[arg-type]
         )
         obj.normalize()
         return obj

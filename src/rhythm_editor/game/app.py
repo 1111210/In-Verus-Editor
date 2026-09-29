@@ -102,6 +102,8 @@ class PlayerApp:
         self.audio = AudioPlayer()
         self.root = os.path.dirname(os.path.dirname(os.path.dirname(os.path.abspath(__file__))))
         self.paths = list(paths or []) or chart_files(self.root)
+        self._info_cache: dict = {}
+        self._rebuild_entries()
         self.selected = 0
         self.state = "menu"
         self.paused = False
@@ -172,6 +174,8 @@ class PlayerApp:
         elif event.key in (pygame.K_DOWN, pygame.K_UP) and self.paths:
             step = 1 if event.key == pygame.K_DOWN else -1
             self.selected = (self.selected + step) % len(self.paths)
+        elif event.key in (pygame.K_HOME, pygame.K_END) and self.paths:
+            self.selected = 0 if event.key == pygame.K_HOME else len(self.paths) - 1
         elif event.key in (pygame.K_RETURN, pygame.K_KP_ENTER) and self.paths:
             self._enter_loading()
         elif event.key == pygame.K_s:
@@ -185,9 +189,46 @@ class PlayerApp:
             return
         self.chart = chart
         self.chart_path = self.paths[self.selected]
+        self._remember_recent(self.chart_path)
         self.state = "loading"
         self.timer = 0.0
         self.message = ""
+
+    # ------------------------------------------------------------ 谱面列表
+    def _chart_info(self, path: str):
+        """谱面的 (标题, 艺术家, 难度名+等级, 初始 BPM)；读不出来就退回文件名。"""
+        info = self._info_cache.get(path)
+        if info is not None:
+            return info
+        try:
+            chart, _raw = load_chart(path)
+            meta = chart.metadata
+            info = (
+                meta.title or os.path.basename(path),
+                meta.artist or "未知艺术家",
+                f"{meta.difficulty_name} {meta.difficulty_level}".strip(),
+                chart.timing.bpm_at(0.0),
+            )
+        except Exception:                       # pragma: no cover - 依赖外部文件
+            info = (os.path.basename(path), "（无法读取）", "-", 0.0)
+        self._info_cache[path] = info
+        return info
+
+    def _rebuild_entries(self) -> None:
+        """最近打开的谱面排在前面，其余按路径排序。"""
+        recent = [p for p in self.settings.recent if p in self.paths]
+        rest = [p for p in self.paths if p not in recent]
+        self.paths = recent + rest
+
+    def _remember_recent(self, path: str) -> None:
+        recent = [p for p in self.settings.recent if p != path]
+        recent.insert(0, path)
+        self.settings.recent = recent[:8]
+        psettings.save_settings(self.settings)
+        chosen = self.paths[self.selected] if self.paths else path
+        self._rebuild_entries()
+        if chosen in self.paths:
+            self.selected = self.paths.index(chosen)
 
     # ------------------------------------------------------------ 设置
     SETTING_ROWS = (
@@ -421,15 +462,32 @@ class PlayerApp:
             self._draw_result()
 
     def _draw_menu(self) -> None:
-        self.center_text("In Verus 游玩器", 90, self.f_big, WHITE)
-        self.center_text("↑↓ 选择谱面 · Enter 开始 · S 设置 · Esc 退出", 150, self.f_small, DIM)
+        self.center_text("In Verus 游玩器", 64, self.f_big, WHITE)
+        self.center_text("↑↓ 选择谱面（Home/End 跳首尾） · Enter 开始 · S 设置 · Esc 退出", 122, self.f_small, DIM)
         if not self.paths:
             self.center_text("没有找到谱面（先往 charts/ 放一张 .json）", 260, self.f_mid, DIM)
-        for index, path in enumerate(self.paths[:14]):
-            name = os.path.relpath(path, self.root)
+        # 只显示选中项附近的若干行（谱面很多时翻页显示）
+        window = 9
+        start = max(0, min(self.selected - window // 2, max(0, len(self.paths) - window)))
+        for offset, index in enumerate(range(start, min(len(self.paths), start + window))):
+            path = self.paths[index]
+            title, artist, difficulty, bpm = self._chart_info(path)
             chosen = index == self.selected
-            label = ("[ " + name + " ]") if chosen else ("  " + name + "  ")
-            self.center_text(label, 210 + index * 30, self.f_mid, ACCENT if chosen else DIM)
+            color = ACCENT if chosen else DIM
+            marker = "> " if chosen else "  "
+            star = "* " if path in self.settings.recent else ""
+            self.text(
+                f"{marker}{star}{title} · {artist} · 难度 {difficulty} · {bpm:.0f}BPM",
+                (self.w * 0.12, 176 + offset * 46),
+                self.f_mid,
+                color,
+            )
+            self.text(
+                os.path.relpath(path, self.root),
+                (self.w * 0.12 + 28, 200 + offset * 46),
+                self.f_small,
+                (110, 110, 124) if chosen else (86, 86, 96),
+            )
         if self.message:
             self.center_text(self.message, self.h - 70, self.f_small, (240, 120, 120))
 
@@ -755,10 +813,18 @@ class PlayerApp:
         counts = self.judge.counts
         self.text(f"分数：{self.judge.score}", (half + 46, 140), self.f_big, (255, 226, 120))
         self.text(f"最大连击：{self.judge.max_combo}", (half + 46, 196), self.f_mid, WHITE)
+        total = max(1, self.judge.total_notes)
+        self.text(
+            f"判定数：{self.judge.judged_notes} / {self.judge.total_notes}",
+            (half + 46, 226),
+            self.f_small,
+            DIM,
+        )
         for index, grade in enumerate(GRADES):
+            share = counts[grade] / total * 100.0
             self.text(
-                f"{grade}：{counts[grade]}",
-                (half + 46, 250 + index * 34),
+                f"{grade}：{counts[grade]}（{share:.1f}%）",
+                (half + 46, 258 + index * 34),
                 self.f_mid,
                 GRADE_COLORS[grade],
             )

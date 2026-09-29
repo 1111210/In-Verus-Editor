@@ -53,6 +53,15 @@ class PlayerSettingsTests(unittest.TestCase):
                 handle.write("{ 坏文件")
             self.assertEqual(PS.load_settings(path).player_name, "Player")
 
+    def test_recent_list_is_unique_and_capped(self) -> None:
+        s = PS.PlayerSettings(recent=[f"chart{i}.json" for i in range(12)])
+        s.normalize()
+        self.assertEqual(len(s.recent), 8)
+        self.assertEqual(s.recent[0], "chart0.json")
+        s2 = PS.PlayerSettings(recent=["a.json", "a.json", "", "b.json"])
+        s2.normalize()
+        self.assertEqual(s2.recent, ["a.json", "b.json"])
+
 
 if __name__ == "__main__":
     unittest.main()
