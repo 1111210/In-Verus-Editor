@@ -113,7 +113,7 @@ python tools/check_audio.py
 
 | 项目 | 命令 | 结果 |
 | --- | --- | --- |
-| 单元测试（含 Tk 画布冒烟测试、应用级测试与游玩器测试） | `python -m unittest discover -s tests -t .` | Ran 318 tests — **OK** |
+| 单元测试（含 Tk 画布冒烟测试、应用级测试与游玩器测试） | `python -m unittest discover -s tests -t .` | Ran 319 tests — **OK** |
 | 需求验收清单 | `python tools/acceptance.py` | 18 项全部 `[OK ]`，结论：全部通过（含游玩器 4 项） |
 | 音频后端 | `python tools/check_audio.py` | 9 项全部 `[OK ]`（pygame.mixer 真实播放，延迟补偿正确） |
 | 示例谱面生成 | `python run_editor.py --make-demo` | 生成 `charts/demo/demo.json`（6K 32 / 区域 3 / 滑键 6 / 点击按键 4 / 4 个速度组） |
@@ -215,6 +215,7 @@ python tools/check_audio.py
 | `tests/test_game_app.py`（27 条） | 游玩器 GUI 冒烟（headless）：主界面 → 加载 → 游玩 → 结算、鼠标映射、设置全局保存、轨道高亮与判定飘字、音量与暂停、谱面列表元数据与最近打开、渲染后端切换与回退、倍速（含上限 3x 与分数 ×3^1.5）、charts/ “每个含 json 的文件夹算一张谱面”、没有谱面时也能进设置、打开其他路径的 JSON、判定时刻过去的物件不再绘制、首拍 1.5 秒引导且音乐同步、文本输入走 TEXTINPUT / 键位按键捕获、鼠标可操作主界面 / 设置 / 结算、轨道键优先于界面快捷键（空格 = 第 6 轨）、GL 呈现异常时自动回退软件渲染（坏配置不写回）、`--software` 命令行强制后端、流速行 − ● +（● 自定义输入、夹取到 1~10）、只有数字类选项才有 − + 按钮、四种物件厚度互相独立（长按 / 空域没有厚度）、结算页 1/3 + 2/3 且不显示倍速倍率、窗口尺寸变化不重建显示表面 + F10 / F11 不抛异常、**远于可视范围的物件不绘制（回归：滑键堆在屏幕上方）**、**每帧 poll 音频后端（回归：低倍速卡死 / 断音）**、**短暂无声不立刻结束游戏（>0.5s 才算播完）** |
 
 | 低倍速实测（真实音频，跑真机 20 秒） | 0.5x / 0.1x 下逐帧 `_update` + `audio.poll()` | 0.5x：真实 20s → 歌曲 9.76s、`playing=True` 全程；0.1x：真实 12s → 歌曲 1.15s、`playing=True`；修复前只播完第一段窗口就停 |
+| 慢放接力实测（真实音频） | 0.5x 跑 20 秒并记录 `Channel.get_sound()` 顺序 | 交出 `(0,4000)(4000,8000)(8000,12000)(12000,16000)`，实播 `(0,4000)@0s → (4000,8000)@8.04s → (8000,12000)@16.03s`，**没有被顶掉的窗口** |
 
 | 窗口模式实测（真实窗口） | `_maximize_window()` / `_toggle_fullscreen()` | 1280×744 → 最大化 **1536×793** → 全屏 **1536×864**（桌面分辨率）→ 回窗口 **1456×744**，全程持续渲染 |
 
@@ -228,7 +229,7 @@ python tools/check_audio.py
 | 强制 OpenGL + 自检 | `PlayerApp(..., renderer="opengl")` | 自检通过，`renderer_name == "opengl"`，3.0ms/帧、88fps，无回退 |
 | 游玩中持续刷新 + 音乐 | 真机跑 9 秒并抓 3 帧 | 3 帧互不相同（刷新正常），`now_ms` 从 −473 → 8360 跟随音频，物件按判定时刻逐个结算 |
 | `tests/test_editor_smoke.py::test_scrollbar_drag_round_trip_keeps_thumb_under_cursor` | 回归：滚动条滑块拖动不跳段（把滑块放到 f 后读回仍是 `(f, f+窗口占比)`） |
-| `tests/test_audio_rate.py`（16 条） | 倍速（重采样，**变速变调**）：长度随倍率伸缩、0.5x 时频率减半（过零率）、静音时钟跟随倍速、倍速夹取、**负延迟**的 heard 位置、延迟范围、**立体声也能慢放**、**分窗口首尾相接**、**调度连续不断音**（回归：pygame 只播一个排队块）、**打开谱面后第一次播放用真实后端**（回归）、**播放中改倍速自动暂停**并保持位置 |
+| `tests/test_audio_rate.py`（17 条） | 倍速（重采样，**变速变调**）：长度随倍率伸缩、0.5x 时频率减半（过零率）、静音时钟跟随倍速、倍速夹取、**负延迟**的 heard 位置、延迟范围、**立体声也能慢放**、**分窗口首尾相接**、**调度连续不断音**（回归：pygame 只播一个排队块）、**排队段开始播之前不再排队（回归：低倍速漏片段）**、**打开谱面后第一次播放用真实后端**（回归）、**播放中改倍速自动暂停**并保持位置 |
 | `tests/test_app_flow.py::test_rate_buttons_step_and_clamp` | 倍速按钮 ±0.1x 与 0.1~1.0x 夹取，标签同步 |
 | `tests/test_app_flow.py::test_rate_buttons_are_always_available` | 右侧倍速按钮固定在右侧优先分配空间 |
 | `tests/test_app_flow.py::test_scrollbars_use_white_thumb_black_trough` | 滚动条白滑块 / 黑背景 |

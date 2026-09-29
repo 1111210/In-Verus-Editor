@@ -184,6 +184,88 @@ class AudioPlayerRateTests(unittest.TestCase):
             player.unload()
 
 
+class _FakeChannel:
+    """只记录 play / queue 的最小通道模型（模拟 SDL：排队的块要等当前块放完才播）。"""
+
+    def __init__(self) -> None:
+        self.playing = None
+        self.pending = None
+        self.replaced = []          # 被顶掉的排队块（这些内容就再也听不到了）
+
+    def play(self, sound) -> None:
+        self.playing = sound
+        self.pending = None
+
+    def queue(self, sound) -> None:
+        if self.pending is not None:
+            self.replaced.append(self.pending)
+        self.pending = sound
+
+    def finish(self) -> None:
+        """当前块放完：排队的块开始播。"""
+        self.playing = self.pending
+        self.pending = None
+
+    def stop(self) -> None:
+        self.playing = None
+        self.pending = None
+
+    def get_busy(self) -> bool:
+        return self.playing is not None
+
+    def get_sound(self):
+        return self.playing
+
+
+class SlowBackendWindowTests(unittest.TestCase):
+    def test_poll_never_replaces_a_queued_window(self) -> None:
+        """慢放后端必须等排队段**真的开始播**再排下一段，否则那一段会被顶掉（漏片段）。"""
+        from rhythm_editor import audio as A
+
+        backend = A.StretchedSoundBackend.__new__(A.StretchedSoundBackend)
+        channel = _FakeChannel()
+        clock = [0.0]
+
+        def make_window(start_ms: float):
+            return (object(), start_ms, start_ms + 2000.0)
+
+        backend._samples = object()
+        backend._channel = None
+        backend._anchor = None
+        backend._queued = None
+        backend._handed_end_ms = 0.0
+        backend._playing = False
+        backend._paused_ms = 0.0
+        backend._volume = 1.0
+        backend._length_ms = 60_000.0
+        backend.rate = 0.5
+        backend._anchor_time = 0.0
+        backend._make_window = make_window
+
+        original_perf = A.time.perf_counter
+        original_channel = A._PYGAME.mixer.Channel
+        A.time.perf_counter = lambda: clock[0]
+        A._PYGAME.mixer.Channel = lambda index=0: channel
+        try:
+            backend.play(0.0)
+            self.assertIs(channel.playing, backend._anchor[0])
+            self.assertIs(channel.pending, backend._queued[0])
+            for _ in range(4):
+                clock[0] += 4.0                      # 2 秒源 × 0.5x = 4 秒输出
+                channel.finish()                     # SDL：排队段开始播
+                backend.poll()
+                self.assertEqual(channel.replaced, [], "排队段开始播之前不能再排队")
+                self.assertIsNotNone(backend._queued)
+                self.assertIs(channel.pending, backend._queued[0])
+                self.assertIs(channel.playing, backend._anchor[0])
+            # 源时间线必须连续推进（不重不漏）
+            # play() 交了第 1 段 + 排了第 2 段，之后每轮再排一段 -> 共 6 段
+            self.assertAlmostEqual(backend._handed_end_ms, 2000.0 * 6, places=6)
+        finally:
+            A.time.perf_counter = original_perf
+            A._PYGAME.mixer.Channel = original_channel
+
+
 @unittest.skipUnless(STRETCH_AVAILABLE, "需要 numpy + pygame 才能做时间伸缩")
 class TimeStretchTests(unittest.TestCase):
     def _tone(self, seconds: float = 1.0, freq: float = 440.0, rate: int = 44100):

@@ -433,34 +433,48 @@ class StretchedSoundBackend:  # pragma: no cover - 依赖 pygame + numpy
         self.poll()
 
     def poll(self) -> None:
-        """每帧调用：维护“当前 + 一个排队”的窗口，保证连续、不重不漏。"""
+        """每帧调用：维护“当前 + 一个排队”的窗口，保证连续、不重不漏。
+
+        关键：**必须等排队的那一段真的开始播了**，才把槽位让给下一段。
+        以前用“到点前 50ms 就换锚点”的近似判断，于是下一段还没开始播就又被
+        ``Channel.queue()`` 顶掉 —— 那一段就再也听不到了（表现就是音乐漏片段）。
+        """
         if not self._playing or self._channel is None or self._anchor is None:
             return
         now = time.perf_counter()
-        # 1) 排队的窗口到点开始播了：换锚点、腾出槽位
-        if self._queued is not None:
-            due = self._anchor_time + (
-                (self._queued[1] - self._anchor[1]) / 1000.0 / max(1e-6, self.rate)
-            )
-            if now >= due - 0.05:
-                self._anchor = self._queued
-                self._anchor_time = due
-                self._queued = None
-        # 2) 断流检测：通道空了但还有没播完的音频 -> 立刻补上
+        try:
+            playing = self._channel.get_sound()
+        except Exception:  # pragma: no cover - 依赖驱动
+            playing = None
         try:
             busy = bool(self._channel.get_busy())
         except Exception:  # pragma: no cover
             busy = True
-        if not busy:
+        # 1) 排队的窗口真的开始播了：换锚点、腾出槽位
+        if self._queued is not None:
+            due = self._anchor_time + (
+                (self._queued[1] - self._anchor[1]) / 1000.0 / max(1e-6, self.rate)
+            )
+            if playing is self._queued[0]:
+                self._anchor = self._queued
+                self._anchor_time = due
+                self._queued = None
+            elif not busy and now > due + 0.25:
+                # 通道彻底空了、排队段始终没播出来：从它的位置继续，别停在这里
+                self._anchor = self._queued
+                self._anchor_time = now
+                self._queued = None
+        # 2) 断流检测：通道空了且没有排队段 -> 立刻补上
+        if not busy and self._queued is None:
             nxt = self._make_window(self._handed_end_ms)
             if nxt is not None:
                 self._channel.play(nxt[0])
                 self._anchor = nxt
-                self._anchor_time = time.perf_counter()
+                self._anchor_time = now
                 self._queued = None
                 self._handed_end_ms = nxt[2]
             return
-        # 3) 槽位空着就补一个排队窗口（通道只支持一个排队的块）
+        # 3) 槽位空着就补一个排队窗口（只有上一段已经在播时才会走到这里）
         if self._queued is None:
             nxt = self._make_window(self._handed_end_ms)
             if nxt is not None:
