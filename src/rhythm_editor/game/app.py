@@ -41,6 +41,9 @@ from .scene import (
     PlayerScene,
 )
 
+# 让窗口居中创建（部分机器上偏出屏幕外会看起来像“黑屏”）
+os.environ.setdefault("SDL_VIDEO_CENTERED", "1")
+
 SCREEN_W, SCREEN_H = 1280, 800
 LEAD_MS = 1500.0
 REGION_PAD = 0.01
@@ -129,13 +132,16 @@ def key_code(name: str) -> int:
 class PlayerApp:
     """游玩器主程序（状态机 + 渲染 + 判定）。"""
 
-    def __init__(self, paths: Optional[List[str]] = None) -> None:
+    def __init__(self, paths: Optional[List[str]] = None, renderer: Optional[str] = None) -> None:
         pygame.init()
         pygame.display.set_caption(f"In Verus 游玩器 · {config.VERSION}")
         self.settings = psettings.load_settings()
+        if renderer in ("software", "opengl"):
+            self.settings.renderer = renderer
+            psettings.save_settings(self.settings)
         self.gl_presenter = None
         self.renderer_name = "software"
-        self.screen = self._make_display(SCREEN_W, SCREEN_H)
+        self.screen = self._make_display(*self._fit_to_desktop(SCREEN_W, SCREEN_H))
         self.clock = pygame.time.Clock()
         font = "microsoftyaheiui,arial"
         self.f_big = pygame.font.SysFont(font, 40, bold=True)
@@ -174,29 +180,87 @@ class PlayerApp:
         self._overlay: Optional[pygame.Surface] = None
         self.gl_cost = 0.0                 # OpenGL 呈现耗时（指数平滑，太慢就回退）
         self.gl_frames = 0
+        self._prime_window()
+        try:
+            desktop = pygame.display.get_desktop_sizes()[0]
+        except Exception:                              # pragma: no cover - 依赖驱动
+            desktop = (0, 0)
+        if os.environ.get("SDL_VIDEODRIVER", "").lower() != "dummy":     # 测试环境不用刷屏
+            print(
+                f"[In Verus 游玩器] 渲染后端：{self.renderer_name} · 窗口 {self.w}x{self.h}"
+                f" · 桌面 {desktop[0]}x{desktop[1]} · F2 可切换渲染后端",
+                flush=True,
+            )
 
     # ------------------------------------------------------------ 显示后端
-    def _make_display(self, width: int, height: int):
-        """按设置创建显示：opengl 成功就用 GL 呈现，否则回退软件渲染。"""
+    @staticmethod
+    def _fit_to_desktop(width: int, height: int) -> Tuple[int, int]:
+        """窗口不要比桌面还大（否则可能只露出一部分，或干脆一直黑屏）。"""
+        try:
+            desktop_w, desktop_h = pygame.display.get_desktop_sizes()[0]
+        except Exception:                                  # pragma: no cover - 依赖驱动
+            return width, height
+        if desktop_w <= 0 or desktop_h <= 0:
+            return width, height
+        return min(width, max(960, desktop_w - 80)), min(height, max(600, desktop_h - 120))
+
+    def _gl_self_check(self, surface: pygame.Surface) -> bool:
+        """GL 自检帧：中央画白块后回读像素，全黑或 GL 报错就认为 GL 不能正常显示。"""
+        surface.fill(BG)
+        pygame.draw.rect(
+            surface,
+            WHITE,
+            (surface.get_width() // 2 - 24, surface.get_height() // 2 - 8, 48, 16),
+        )
+        try:
+            return bool(self.gl_presenter.present(surface, verify=True))
+        except Exception:                                  # pragma: no cover - 依赖驱动
+            return False
+
+    def _make_display(self, width: int, height: int, verify: bool = True):
+        """按设置创建显示：opengl 成功**且自检通过**才用 GL，否则回退软件渲染。"""
+        width, height = self._fit_to_desktop(width, height)
         if self.settings.renderer == "opengl" and glview.available():
             try:
-                pygame.display.set_mode((width, height), pygame.OPENGL | pygame.RESIZABLE)
+                pygame.display.set_mode(
+                    (width, height), pygame.OPENGL | pygame.DOUBLEBUF | pygame.RESIZABLE
+                )
                 self.gl_presenter = glview.GLPresenter()
+                size = pygame.display.get_window_size() or (width, height)
+                surface = pygame.Surface(size)             # 离屏绘制目标
+                if verify and not self._gl_self_check(surface):
+                    raise RuntimeError("OpenGL 自检失败（画面全黑 / GL 报错）")
                 self.renderer_name = "opengl"
-                return pygame.Surface((width, height))     # 离屏绘制目标
-            except Exception:                              # pragma: no cover - 依赖驱动
+                return surface
+            except Exception as exc:                       # pragma: no cover - 依赖驱动
+                print(f"[In Verus 游玩器] OpenGL 不可用（{exc}），改用软件渲染", flush=True)
                 self.gl_presenter = None
                 self.renderer_name = "software"
+                self.settings.renderer = "software"
+                psettings.save_settings(self.settings)
         self.gl_presenter = None
         self.renderer_name = "software"
         return pygame.display.set_mode((width, height), pygame.RESIZABLE)
 
-    def _present(self) -> None:
+    def _prime_window(self) -> None:
+        """建好窗口后立刻刷一帧：有些驱动会“一直黑到被 resize”，先自己刷两次。"""
+        self.screen.fill(BG)
+        self.center_text("In Verus 游玩器 · 正在启动…", self.h / 2 - 12, self.f_mid, WHITE)
+        self._present()
+        pygame.event.pump()
+        self._present()
+
+    def _present(self, verify: bool = False) -> None:
         """把这一帧送到屏幕（GL 时上传纹理后交换缓冲）。"""
         if self.gl_presenter is not None:
             started = time.perf_counter()
-            self.gl_presenter.present(self.screen)
-            pygame.display.flip()
+            try:
+                if not self.gl_presenter.present(self.screen, verify=verify):
+                    raise RuntimeError("GL 呈现自检失败")
+                pygame.display.flip()
+            except Exception as exc:                       # pragma: no cover - 依赖驱动
+                self._fallback_to_software(f"OpenGL 呈现失败（{exc}）")
+                return
             cost = time.perf_counter() - started
             self.gl_cost = self.gl_cost * 0.9 + cost * 0.1 if self.gl_cost else cost
             self.gl_frames += 1
@@ -214,6 +278,7 @@ class PlayerApp:
         self.gl_cost = 0.0
         self.screen = self._make_display(self.w, self.h)
         self.message = f"{why}，已自动切回软件渲染"
+        print(f"[In Verus 游玩器] {self.message}", flush=True)
 
     # ------------------------------------------------------------ 通用
     @property
@@ -246,6 +311,11 @@ class PlayerApp:
         for event in pygame.event.get():
             if event.type == pygame.QUIT:
                 self.running = False
+            elif event.type == pygame.VIDEOEXPOSE:
+                self._draw()                     # 窗口重新暴露：立刻重画一帧，别留黑屏
+                self._present()
+            elif event.type == pygame.KEYDOWN and event.key == pygame.K_F2:
+                self._switch_renderer()
             elif event.type == pygame.VIDEORESIZE:
                 self.screen = self._make_display(max(800, event.w), max(500, event.h))
             elif self.state == "menu":
@@ -264,6 +334,21 @@ class PlayerApp:
                 self._event_play(event)
             elif self.state == "result":
                 self._event_result(event)
+
+    def _switch_renderer(self) -> None:
+        """F2 / 设置里切换软件 ↔ OpenGL（存进 player.json，下次仍生效）。"""
+        target = "opengl" if self.settings.renderer == "software" else "software"
+        self.settings.renderer = target
+        psettings.save_settings(self.settings)
+        self.gl_presenter = None
+        self.gl_frames = 0
+        self.gl_cost = 0.0
+        self.screen = self._make_display(self.w, self.h)
+        self.message = (
+            f"渲染后端：{'OpenGL' if self.renderer_name == 'opengl' else '软件渲染'}"
+            "（F2 切换）"
+        )
+        print(f"[In Verus 游玩器] 渲染后端：{self.renderer_name} · 窗口 {self.w}x{self.h}", flush=True)
 
     # ------------------------------------------------------------ 菜单
     def _event_menu(self, event) -> None:
@@ -554,8 +639,9 @@ class PlayerApp:
         elif row == 9:
             s.hit_volume = round(s.hit_volume + 0.05 * step, 2)
         elif row == 10:
-            s.renderer = "opengl" if s.renderer == "software" else "software"
-            self.screen = self._make_display(self.w, self.h)
+            self.settings_row = row
+            self._switch_renderer()
+            return
         elif row == 11:
             s.rate = round(min(1.0, max(0.1, s.rate + 0.1 * step)), 1)
             if self.judge is not None:
@@ -1054,9 +1140,21 @@ class PlayerApp:
         if self._overlay is None or self._overlay.get_size() != (self.w, self.h):
             self._overlay = pygame.Surface((self.w, self.h), pygame.SRCALPHA)
         overlay = self._overlay
-        overlay.fill((0, 0, 0, 0))
-        pygame.draw.polygon(overlay, (color[0], color[1], color[2], max(0, min(255, alpha))), pts)
-        self.screen.blit(overlay, (0, 0))
+        # 只清理 / 回贴多边形自己的包围盒：整屏 fill + blit 太贵（弱机上是主要开销）
+        xs = [x for x, _y in pts]
+        ys = [y for _x, y in pts]
+        left = max(0, int(min(xs)) - 2)
+        top = max(0, int(min(ys)) - 2)
+        right = min(self.w, int(max(xs)) + 3)
+        bottom = min(self.h, int(max(ys)) + 3)
+        if right <= left or bottom <= top:
+            return
+        box = pygame.Rect(left, top, right - left, bottom - top)
+        overlay.fill((0, 0, 0, 0), box)
+        pygame.draw.polygon(
+            overlay, (color[0], color[1], color[2], max(0, min(255, alpha))), pts
+        )
+        self.screen.blit(overlay, (left, top), box)
 
     def _line(self, a, b, color, width=2) -> None:
         pygame.draw.line(self.screen, color, (a[0], a[1]), (b[0], b[1]), width)
@@ -1433,8 +1531,16 @@ class PlayerApp:
 
 def main(argv: Optional[List[str]] = None) -> int:  # pragma: no cover - GUI 入口
     args = list(sys.argv[1:] if argv is None else argv)
+    forced: Optional[str] = None
+    for arg in args:
+        if arg == "--software":
+            forced = "software"
+        elif arg == "--opengl":
+            forced = "opengl"
     paths: List[str] = []
     for arg in args:
+        if arg.startswith("--"):
+            continue
         if os.path.isdir(arg):                      # 直接给谱面文件夹也可以
             names = sorted(
                 name
@@ -1445,7 +1551,7 @@ def main(argv: Optional[List[str]] = None) -> int:  # pragma: no cover - GUI 入
                 paths.append(main_chart_in(arg, names))
         elif os.path.isfile(arg):
             paths.append(arg)
-    return PlayerApp(paths).run()
+    return PlayerApp(paths, renderer=forced).run()
 
 
 if __name__ == "__main__":  # pragma: no cover

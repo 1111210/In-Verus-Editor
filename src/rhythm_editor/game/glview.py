@@ -48,10 +48,14 @@ class GLPresenter:
         GL.glTexParameteri(GL.GL_TEXTURE_2D, GL.GL_TEXTURE_MAG_FILTER, GL.GL_LINEAR)
         GL.glEnable(GL.GL_TEXTURE_2D)
 
-    def present(self, surface: pygame.Surface) -> None:
-        """上传像素并绘制（调用方随后 ``pygame.display.flip()`` 交换缓冲）。"""
+    def present(self, surface: pygame.Surface, verify: bool = False) -> bool:
+        """上传像素并绘制（调用方随后 ``pygame.display.flip()`` 交换缓冲）。
+
+        ``verify=True`` 时回读一小块像素自检：驱动把画面画成全黑 / 报 GL 错误时返回
+        ``False``，调用方据此回退软件渲染（某些机器上 GL 窗口“一直黑屏”就是这个原因）。
+        """
         if GL is None:  # pragma: no cover
-            return
+            return False
         size = surface.get_size()
         data = pygame.image.tostring(surface, "RGB", False)
         GL.glBindTexture(GL.GL_TEXTURE_2D, self._texture)
@@ -86,3 +90,20 @@ class GLPresenter:
         GL.glTexCoord2f(0.0, 1.0)
         GL.glVertex2f(0.0, 0.0)
         GL.glEnd()
+        if not verify:
+            return True
+        try:
+            if GL.glGetError():
+                return False
+            width, height = size
+            box = max(1, min(16, width, height))
+            x = max(0, width // 2 - box // 2)
+            y = max(0, height // 2 - box // 2)
+            data = GL.glReadPixels(
+                x, height - y - box, box, box, GL.GL_RGB, GL.GL_UNSIGNED_BYTE
+            )
+            raw = bytes(data)
+            # 自检帧中央画了白块：回读“不是全黑”才算 GL 呈现可用
+            return bool(raw) and max(raw) > 40
+        except Exception:  # pragma: no cover - 依赖驱动
+            return False

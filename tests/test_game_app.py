@@ -135,16 +135,19 @@ class PlayerAppSmokeTests(unittest.TestCase):
         app._draw_play()          # 暂停遮罩 + 提示都要能画
 
     def test_renderer_switch_falls_back_without_gl(self) -> None:
-        """切到 OpenGL：能建上下文就用 GL，否则自动回退软件渲染（不会崩）。"""
+        """切到 OpenGL：能建上下文**且自检通过**才用 GL，否则回退软件并记住该配置。"""
         app = self.app
         self.assertEqual(app.renderer_name, "software")
         app.settings_row = 10
         app._adjust_setting(1)
-        self.assertEqual(app.settings.renderer, "opengl")
-        self.assertIn(app.renderer_name, ("opengl", "software"))
+        if app.renderer_name == "opengl":
+            self.assertEqual(app.settings.renderer, "opengl")
+        else:
+            # GL 不可用（或画面全黑）时不要把坏配置留着，否则下次启动还是黑屏
+            self.assertEqual(app.settings.renderer, "software")
         app._draw_menu()
         app._present()          # 两种后端都要能呈现一帧
-        app._adjust_setting(1)  # 切回软件
+        app._adjust_setting(1)  # 再切一次
         self.assertEqual(app.settings.renderer, "software")
         self.assertEqual(app.renderer_name, "software")
 
@@ -373,6 +376,39 @@ class PlayerAppSmokeTests(unittest.TestCase):
         self.assertTrue(app.paused)
         app._event_play(pygame.event.Event(pygame.KEYDOWN, key=key_code("space"), unicode=" "))
         self.assertFalse(app.paused, "暂停时空格继续")
+
+    def test_broken_gl_presenter_falls_back_to_software(self) -> None:
+        """GL 呈现抛异常 / 自检不过时自动切回软件渲染，并且不把坏配置留在 player.json。"""
+
+        class Boom:
+            def present(self, surface, verify=False):
+                raise RuntimeError("boom")
+
+        class Black:
+            def present(self, surface, verify=False):
+                return False
+
+        for presenter in (Boom(), Black()):
+            app = self.app
+            app.settings.renderer = "opengl"
+            app.renderer_name = "opengl"
+            app.gl_presenter = presenter
+            app._draw()
+            app._present()                      # 不能抛异常
+            self.assertEqual(app.renderer_name, "software")
+            self.assertEqual(app.settings.renderer, "software")
+            self.assertIn("软件渲染", app.message)
+        self.assertEqual(psettings.load_settings().renderer, "software")
+
+    def test_renderer_can_be_forced_from_cli(self) -> None:
+        """--software / --opengl 强制后端（写进 player.json，不用改设置就能救回黑屏）。"""
+        from rhythm_editor.game.app import PlayerApp
+
+        forced = PlayerApp([], renderer="software")
+        self.addCleanup(forced.audio.unload)
+        self.assertEqual(forced.renderer_name, "software")
+        self.assertEqual(psettings.load_settings().renderer, "software")
+        forced.running = False
 
 
 if __name__ == "__main__":

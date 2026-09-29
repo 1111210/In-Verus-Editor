@@ -4,9 +4,12 @@
     python run_player.py                          # 列出 charts/ 里的谱面
     python run_player.py charts/demo              # 直接选中该谱面文件夹
     python run_player.py charts/demo/demo.json    # 直接选中某个谱面文件
+    python run_player.py --software               # 强制软件渲染（窗口黑屏时用这个）
+    python run_player.py --opengl                 # 强制 OpenGL（自检不过会自动回退）
 
 charts/ 下的**每个含 json 的文件夹**算一张谱面（文件夹里有多个 json 时取主谱面）。
 主界面：↑↓ 选择 · Enter 确认 · O 打开其他路径的 JSON · S 设置 · Esc 退出。
+游戏中 `F2` 可以在软件 / OpenGL 之间切换（会写进 player.json）。
 设置保存在用户目录的 `player.json`（全局，不写进谱面）。
 """
 

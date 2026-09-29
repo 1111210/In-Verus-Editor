@@ -25,6 +25,8 @@
 python run_player.py                       # 主界面列出 charts/ 里的谱面
 python run_player.py charts/demo           # 直接选中该谱面文件夹
 python run_player.py charts/demo/demo.json # 直接选中某个谱面文件
+python run_player.py --software            # 强制软件渲染（窗口黑屏 / OpenGL 有问题时）
+python run_player.py --opengl              # 强制 OpenGL（启动自检不过会自动回退软件）
 ```
 
 * **谱面列表**：``charts/`` 下**每个含 json 的文件夹算一张谱面**（文件夹里有多个 json 时取

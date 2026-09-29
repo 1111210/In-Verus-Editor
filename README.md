@@ -33,6 +33,7 @@ python run_editor.py charts/demo/demo.json --windowed  # 普通窗口（F10 最�
 python run_player.py                       # 主界面：↑↓ 选谱面 · Enter 开始 · O 打开其他 JSON · S 设置
 python run_player.py charts/demo           # 每个含 json 的文件夹算一张谱面
 python run_player.py charts/demo/demo.json # 直接选中示例谱面
+python run_player.py --software            # 强制软件渲染（OpenGL 黑屏 / 花屏时用）
 ```
 
 玩法与判定规则见 [`docs/GAMEPLAY.md`](docs/GAMEPLAY.md)，
