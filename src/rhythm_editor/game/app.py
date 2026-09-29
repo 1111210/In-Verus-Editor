@@ -46,6 +46,7 @@ os.environ.setdefault("SDL_VIDEO_CENTERED", "1")
 
 SCREEN_W, SCREEN_H = 1280, 800
 LEAD_MS = 1500.0
+END_DELAY_S = 3.0                   # 谱面结束后至少等这么久再进结算
 REGION_PAD = 0.01
 MENU_WINDOW = 8                     # 主界面谱面列表一次显示多少行（其余滚动显示）
 ROOT = os.path.dirname(                       # 仓库根目录（src/rhythm_editor/game/app.py → ../..）
@@ -175,13 +176,15 @@ class PlayerApp:
         self.audio_start_ms = 0.0
         self.lead_wait_ms = 0.0
         self.idle_seconds = 0.0            # 音频连续停多久（用来判“真的播完了”）
+        self.ending = False                # 谱面已结束、正在等 END_DELAY_S
+        self.end_timer = 0.0
         # 鼠标 UI 的命中区域（每帧绘制时写入）与半透明叠加层
         self.ui: dict = {}
         self.hover = ""
         self._overlay: Optional[pygame.Surface] = None
         self.gl_cost = 0.0                 # OpenGL 呈现耗时（指数平滑，太慢就回退）
         self.gl_frames = 0
-        self.fullscreen = False            # F11 全屏状态
+        self.display_mode = "windowed"     # windowed / borderless / fullscreen
         self.windowed_size: Optional[Tuple[int, int]] = None
         self.maximized = False             # F10 最大化状态（非 Windows 下的退路用）
         self._prime_window()
@@ -222,17 +225,29 @@ class PlayerApp:
             return False
 
     def _make_display(
-        self, width: int, height: int, verify: bool = True, fullscreen: bool = False
+        self,
+        width: int,
+        height: int,
+        verify: bool = True,
+        mode: str = "windowed",
     ):
-        """按设置创建显示：opengl 成功**且自检通过**才用 GL，否则回退软件渲染。"""
-        if fullscreen:
+        """按设置创建显示：opengl 成功**且自检通过**才用 GL，否则回退软件渲染。
+
+        ``mode``：``windowed`` 可调窗口 / ``borderless`` 无边框全屏 / ``fullscreen`` 独占全屏。
+        """
+        if mode in ("borderless", "fullscreen"):
             try:                                       # 全屏用桌面分辨率
                 width, height = pygame.display.get_desktop_sizes()[0]
             except Exception:                          # pragma: no cover - 依赖驱动
                 pass
         else:
             width, height = self._fit_to_desktop(width, height)
-        window_flags = pygame.FULLSCREEN if fullscreen else pygame.RESIZABLE
+        if mode == "borderless":
+            window_flags = pygame.NOFRAME
+        elif mode == "fullscreen":
+            window_flags = pygame.FULLSCREEN
+        else:
+            window_flags = pygame.RESIZABLE
         if self.settings.renderer == "opengl" and glview.available():
             try:
                 pygame.display.set_mode(
@@ -418,16 +433,26 @@ class PlayerApp:
             self.message = "已还原窗口（F10）"
 
     def _toggle_fullscreen(self) -> None:
-        """F11：全屏 / 窗口互相切换（按**桌面分辨率**全屏，GL 与软件渲染都支持）。"""
-        self.fullscreen = not self.fullscreen
-        if self.fullscreen:
+        """F11：窗口 → 无边框全屏 → 独占全屏 → 窗口 循环切换。"""
+        order = ("windowed", "borderless", "fullscreen")
+        if self.display_mode not in order:
+            self.display_mode = "windowed"
+        if self.display_mode == "windowed":
             self.windowed_size = (self.w, self.h)
-            self.screen = self._make_display(*self.windowed_size, fullscreen=True)
-            self.message = "已全屏（F11 退出全屏）"
-        else:
+        self.display_mode = order[(order.index(self.display_mode) + 1) % len(order)]
+        if self.display_mode == "windowed":
             width, height = self.windowed_size or (SCREEN_W, SCREEN_H)
-            self.screen = self._make_display(width, height, fullscreen=False)
-            self.message = "已回到窗口（F11 全屏）"
+            self.screen = self._make_display(width, height, mode="windowed")
+            self.message = "已回到窗口（F11 无边框全屏）"
+        else:
+            self.screen = self._make_display(
+                self.w, self.h, mode=self.display_mode
+            )
+            self.message = (
+                "已开启无边框全屏（F11 独占全屏）"
+                if self.display_mode == "borderless"
+                else "已开启独占全屏（F11 回到窗口）"
+            )
 
     # ------------------------------------------------------------ 菜单
     def _event_menu(self, event) -> None:
@@ -943,6 +968,9 @@ class PlayerApp:
         self.judge = Judge(self.chart, rate=self.settings.rate)
         self.pressed_lanes.clear()
         self.paused = False
+        self.ending = False
+        self.end_timer = 0.0
+        self.idle_seconds = 0.0
         self.message = ""
         self.audio.latency_ms = self.settings.audio_latency_ms
         self.audio.set_volume(self.settings.music_volume)
@@ -1047,12 +1075,33 @@ class PlayerApp:
             self._register(self.judge.on_press(self._now_ms(), x=self.mouse_norm))
 
     def _register(self, result) -> None:
-        """记录一条判定：命中音效 + 飘字。"""
+        """记录一条判定：命中音效 + 在**被判定的那个物件处**飘字。"""
         if result is None:
             return
         if result.grade != BREAK:
             self.hits.play_hit()
-        self.popups.append((result.grade, result.grade, 0.7))
+        note = None
+        if self.judge is not None:
+            note = self.judge.notes.get(getattr(result, "note_id", ""))
+        x, y = self._popup_anchor(note)
+        self.popups.append((result.grade, result.grade, 0.7, x, y))
+
+    def _popup_anchor(self, note: Optional[Note]) -> Tuple[float, float]:
+        """判定飘字锚点：单键 / 多轨在 6K 线上，鼠标物件在鼠标线上（瞬时物件也要有字符）。"""
+        if isinstance(note, LaneNote):
+            low, high = min(note.lane_start, note.lane_end), max(note.lane_start, note.lane_end)
+            world_x = K6_LEFT + (low + high + 1) / 2.0 * LANE_WIDTH
+            world_y = 0.0
+        else:
+            world_x, world_y = 0.0, MOUSE_PLANE_HEIGHT
+            if note is not None:
+                try:
+                    lo, hi = note.x_range()
+                except Exception:                    # pragma: no cover - 兜底
+                    lo, hi = 0.5, 0.5
+                world_x = MOUSE_LEFT + (min(lo, hi) + max(lo, hi)) / 2.0 * MOUSE_LEGAL_WIDTH
+        anchor = self._proj(world_x, world_y, 0.0)
+        return anchor[0], anchor[1]
 
     def _update(self, dt: float) -> None:
         # 慢放后端（重采样）需要每帧喂下一段窗口；不喂的话低倍速时只会播第一段，
@@ -1079,21 +1128,37 @@ class PlayerApp:
             ):
                 self._register(result)
             self.popups = [
-                (grade, text, left - dt) for grade, text, left in self.popups if left > dt
+                (grade, text, left - dt, x, y)
+                for grade, text, left, x, y in self.popups
+                if left > dt
             ]
-            if self.judge.judged_notes >= self.judge.total_notes and now_ms > 0:
-                self._finish()
+            if self.ending:
+                # 谱面结束后至少再等 END_DELAY_S（让最后的判定 / 音乐收尾）
+                self.end_timer -= dt
+                if self.end_timer <= 0:
+                    self._finish()
+            elif self.judge.judged_notes >= self.judge.total_notes and now_ms > 0:
+                self._begin_ending()
             elif not self.audio.is_playing and now_ms > 0:
                 # 换窗口的瞬间可能短暂“没在播”，多等一会儿再判定结束
                 self.idle_seconds += dt
                 if self.idle_seconds > 0.5:
-                    self._finish()
+                    self._begin_ending()
             else:
                 self.idle_seconds = 0.0
+
+    def _begin_ending(self) -> None:
+        """开始“谱面结束”的等待：至少 END_DELAY_S 秒后才进结算。"""
+        if self.ending:
+            return
+        self.ending = True
+        self.end_timer = END_DELAY_S
 
     def _finish(self) -> None:
         self.audio.pause()
         self.paused = False
+        self.ending = False
+        self.end_timer = 0.0
         self.state = "result"
 
     def _toggle_pause(self) -> None:
@@ -1184,7 +1249,7 @@ class PlayerApp:
     def _draw_menu(self) -> None:
         self.center_text("In Verus 游玩器", 64, self.f_big, WHITE)
         self.center_text(
-            "↑↓ 选择 · Enter 确认 · O 打开其他 JSON · S 设置 · F2 渲染后端 · F10 最大化 · F11 全屏 · Esc 退出",
+            "↑↓ 选择 · Enter 确认 · O 打开其他 JSON · S 设置 · F2 渲染后端 · F10 最大化 · F11 窗口/无边框/全屏 · Esc 退出",
             122,
             self.f_small,
             DIM,
@@ -1373,6 +1438,13 @@ class PlayerApp:
     def _line(self, a, b, color, width=2) -> None:
         pygame.draw.line(self.screen, color, (a[0], a[1]), (b[0], b[1]), width)
 
+    def _line_scaled(self, a, b, color, width, scale: float) -> None:
+        """按透视缩放线宽：远处的线更细（近大远小），免得远看反而更粗。"""
+        ref = self._proj(0.0, 0.0, 0.0)[2]          # 判定线处的缩放
+        if ref > 1e-6 and scale > 0.0:
+            width = max(1, int(round(width * scale / ref)))
+        self._line(a, b, color, max(1, int(width)))
+
     def _note_z(self, judge_ms: float, now_ms: float) -> float:
         span = max(1.0, self.settings.scroll_ms)
         return PlayerScene.note_z(1.0 - (judge_ms - now_ms) / span)
@@ -1387,6 +1459,13 @@ class PlayerApp:
         self._draw_hud(now_ms)
         if now_ms < -LEAD_MS + 400:
             self.center_text("准备…", self.h * 0.66, self.f_big, (255, 226, 120))
+        elif self.ending:
+            self.center_text(
+                f"谱面结束 · {max(0.0, self.end_timer):.1f}s 后进入结算",
+                self.h * 0.66,
+                self.f_mid,
+                (255, 226, 120),
+            )
         if self.paused:
             pygame.draw.rect(self.screen, (0, 0, 0), (0, self.h * 0.32, self.w, 220))
             self.center_text("已暂停", self.h * 0.36, self.f_big, WHITE)
@@ -1541,12 +1620,10 @@ class PlayerApp:
             near, near2 = self._proj(x0, 0.0, max(0.0, head_z)), self._proj(x1, 0.0, max(0.0, head_z))
             far, far2 = self._proj(x0, 0.0, max(0.0, tail_z)), self._proj(x1, 0.0, max(0.0, tail_z))
             self._quad([near, near2, far2, far], (60, 120, 220))
-            self._line(
-                self._proj((x0 + x1) / 2, 0.0, max(0.0, head_z)),
-                self._proj((x0 + x1) / 2, 0.0, max(0.0, tail_z)),
-                WHITE,
-                2,
-            )
+            mid_near = self._proj((x0 + x1) / 2, 0.0, max(0.0, head_z))
+            mid_far = self._proj((x0 + x1) / 2, 0.0, max(0.0, tail_z))
+            # 远处线更细（近大远小）
+            self._line_scaled(mid_near, mid_far, WHITE, 2.4, min(near[2], far[2]))
         else:
             # 单键 / 多轨单键分别用各自的厚度
             thickness = (
@@ -1558,7 +1635,8 @@ class PlayerApp:
             far_z = min(START_Z, max(0.0, head_z) + thickness)
             far, far2 = self._proj(x0, 0.0, far_z), self._proj(x1, 0.0, far_z)
             self._quad([near, near2, far2, far], (70, 140, 240))
-            self._line(near, near2, WHITE, 2)
+            # 白色实线就在“判定时刻与判定线重合”的那条边上，粗细随透视变细
+            self._line_scaled(near, near2, WHITE, 2.4, near[2])
 
     def _draw_region(self, note: MouseRegion, now_ms: float) -> None:
         """空域：画在鼠标物件运动的水平面内（半透明蓝底 + 左右两条边线）。"""
@@ -1594,9 +1672,34 @@ class PlayerApp:
             return
         z = max(0.0, z)
         if isinstance(note, MouseSlide):
-            lo, hi = note.x_range()
             color = (110, 230, 160) if note.direction >= 0 else (235, 210, 110)
             height = self.settings.slide_thickness
+            # 滑动朝向的一侧更厚、不透明度更高：起点侧薄而淡，终点侧厚而实
+            start_x = MOUSE_LEFT + note.x_start * MOUSE_LEGAL_WIDTH
+            end_x = MOUSE_LEFT + note.x_end * MOUSE_LEGAL_WIDTH
+            thin = max(0.004, height * 0.25)
+            self._alpha_quad(
+                [
+                    self._proj(start_x, MOUSE_PLANE_HEIGHT, z),
+                    self._proj(end_x, MOUSE_PLANE_HEIGHT, z),
+                    self._proj(end_x, MOUSE_PLANE_HEIGHT + height, z),
+                    self._proj(start_x, MOUSE_PLANE_HEIGHT + thin, z),
+                ],
+                color,
+                96,
+            )
+            mid_x = (start_x + end_x) / 2
+            self._alpha_quad(
+                [
+                    self._proj(mid_x, MOUSE_PLANE_HEIGHT, z),
+                    self._proj(end_x, MOUSE_PLANE_HEIGHT, z),
+                    self._proj(end_x, MOUSE_PLANE_HEIGHT + height, z),
+                    self._proj(mid_x, MOUSE_PLANE_HEIGHT + (thin + height) / 2, z),
+                ],
+                color,
+                232,
+            )
+            return
         else:
             assert isinstance(note, MouseClick)
             lo, hi = note.x_range()
@@ -1616,11 +1719,13 @@ class PlayerApp:
             color,
             132,
         )
-        self._line(self._proj(x0, middle, z), self._proj(x1, middle, z), WHITE, 2)
+        # 鼠标点击按键：所有线都用红色（横线 + 两侧竖线）
+        line_color = (255, 70, 60)
+        self._line(self._proj(x0, middle, z), self._proj(x1, middle, z), line_color, 2)
         if isinstance(note, MouseClick):
             # 两侧竖线 + 中央菱形，高度都是 0.03 单位
-            self._line(self._proj(x0, MOUSE_PLANE_HEIGHT, z), self._proj(x0, top, z), WHITE, 2)
-            self._line(self._proj(x1, MOUSE_PLANE_HEIGHT, z), self._proj(x1, top, z), WHITE, 2)
+            self._line(self._proj(x0, MOUSE_PLANE_HEIGHT, z), self._proj(x0, top, z), line_color, 2)
+            self._line(self._proj(x1, MOUSE_PLANE_HEIGHT, z), self._proj(x1, top, z), line_color, 2)
             cx = MOUSE_LEFT + note.center * MOUSE_LEGAL_WIDTH
             d = NOTE_HEIGHT_UNIT / 2
             self._quad(
@@ -1634,29 +1739,30 @@ class PlayerApp:
             )
 
     def _draw_mouse_marker(self) -> None:
-        """鼠标判定线后方的三角形标识（只画边线）。"""
+        """鼠标判定线后方的三角形标识：**躺在鼠标平面内**（矮胖、只画边线）。"""
         x = MOUSE_LEFT + self.mouse_norm * MOUSE_LEGAL_WIDTH
-        tip = self._proj(x, MOUSE_PLANE_HEIGHT + 0.18, 0.0)
-        left = self._proj(x - 0.07, MOUSE_PLANE_HEIGHT + 0.02, 0.0)
-        right = self._proj(x + 0.07, MOUSE_PLANE_HEIGHT + 0.02, 0.0)
+        length = 0.26                      # 沿 z 的长度（矮）
+        half_w = 0.07                      # 横向半宽（胖）
+        tip = self._proj(x, MOUSE_PLANE_HEIGHT, length)
+        left = self._proj(x - half_w, MOUSE_PLANE_HEIGHT, 0.0)
+        right = self._proj(x + half_w, MOUSE_PLANE_HEIGHT, 0.0)
         pygame.draw.polygon(
             self.screen, MOUSE_TINT,
             [(tip[0], tip[1]), (left[0], left[1]), (right[0], right[1])], 2,
         )
 
     def _draw_popups(self) -> None:
-        """判定飘字：在判定平面中央向上飘并淡出。"""
+        """判定飘字：在**被判定的物件处**向上飘并淡出。"""
         if not self.popups:
             return
-        base_y = self.scene.judgment_lines(self.w, self.h)["mouse"]
-        for index, (grade, text, left) in enumerate(self.popups[-6:]):
+        for grade, text, left, x, y in self.popups[-8:]:
             surface = self.f_mid.render(text, True, GRADE_COLORS.get(grade, WHITE))
             alpha = max(0.0, min(1.0, left / 0.7))
             surface.set_alpha(int(255 * alpha))
-            offset = (0.7 - left) * 60.0
+            rise = (0.7 - left) * 48.0
             self.screen.blit(
                 surface,
-                (self.w / 2 - surface.get_width() / 2 + index * 6, base_y - 90 - offset),
+                (x - surface.get_width() / 2, y - 38 - rise),
             )
 
     def _draw_hud(self, now_ms: float) -> None:
@@ -1711,11 +1817,23 @@ class PlayerApp:
             self.f_big,
             (255, 226, 120),
         )
-        self.text(f"最大连击：{self.judge.max_combo}", (split + 40, 196), self.f_mid, WHITE)
         total = max(1, self.judge.total_notes)
         self.text(
-            f"判定数：{self.judge.judged_notes} / {self.judge.total_notes}",
+            self._result_combo_line(),
+            (split + 40, 196),
+            self.f_mid,
+            WHITE,
+        )
+        # 得分倍率（倍速^1.5）放在最大连击之后
+        self.text(
+            self._result_multiplier_line(),
             (split + 40, 226),
+            self.f_mid,
+            ACCENT,
+        )
+        self.text(
+            f"判定数：{self.judge.judged_notes} / {self.judge.total_notes}",
+            (split + 40, 258),
             self.f_small,
             DIM,
         )
@@ -1725,7 +1843,7 @@ class PlayerApp:
             share = counts[grade] / total * 100.0
             self.text(
                 f"{grade}：{counts[grade]}（{share:.1f}%）",
-                (split + 40 + index % 2 * (column_w * 2), 262 + index // 2 * 40),
+                (split + 40 + index % 2 * (column_w * 2), 292 + index // 2 * 40),
                 self.f_mid,
                 GRADE_COLORS[grade],
             )
@@ -1753,6 +1871,15 @@ class PlayerApp:
         """结算页分数行（**不显示倍速和倍率**）。"""
         assert self.judge is not None
         return f"分数：{self.judge.score}"
+
+    def _result_combo_line(self) -> str:
+        """最大连击按“最大连击 / 总判定数”显示。"""
+        assert self.judge is not None
+        return f"最大连击：{self.judge.max_combo} / {self.judge.total_notes}"
+
+    def _result_multiplier_line(self) -> str:
+        """得分倍率（倍速^1.5）—— 放在最大连击后面。"""
+        return f"得分倍率：×{self.settings.rate ** 1.5:.2f}"
 
     def _event_result(self, event) -> None:
         if event.type == pygame.MOUSEMOTION:

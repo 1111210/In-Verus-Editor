@@ -569,7 +569,9 @@ class PlayerAppSmokeTests(unittest.TestCase):
         self.assertGreaterEqual(len(calls), 10, "每帧都要喂音频后端")
 
     def test_audio_gap_does_not_end_the_game_immediately(self) -> None:
-        """换窗口时音频可能短暂停下：要等 0.5 秒以上才判定“播完了”。"""
+        """换窗口时音频可能短暂停下：要等 0.5 秒以上才算播完，且结束后还要等 3 秒才结算。"""
+        from rhythm_editor.game.app import END_DELAY_S
+
         app = self.app
         app._enter_loading()
         app._start_play()
@@ -581,6 +583,10 @@ class PlayerAppSmokeTests(unittest.TestCase):
                 app._update(1 / 120)
             self.assertEqual(app.state, "play", "短暂无声不该立刻结束")
             for _ in range(60):                 # 再 0.5 秒
+                app._update(1 / 120)
+            self.assertTrue(app.ending, "静音够久后进入“等待结算”")
+            self.assertEqual(app.state, "play")
+            for _ in range(int(END_DELAY_S * 120) + 5):     # 再等满 3 秒
                 app._update(1 / 120)
             self.assertEqual(app.state, "result")
         finally:
@@ -607,6 +613,131 @@ class PlayerAppSmokeTests(unittest.TestCase):
         just_entered = head - scroll + 1.0
         self.assertTrue(app._note_ahead(first, just_entered))
         self.assertFalse(app._note_ahead(first, just_entered - 2.0))
+
+    def test_white_line_is_thinner_when_far(self) -> None:
+        """白线粗细随透视：远处的线更细（近大远小），不会远看反而更粗。"""
+        from rhythm_editor.game.app import WHITE
+        from rhythm_editor.game.scene import START_Z
+
+        app = self.app
+        widths = []
+        original = app._line
+        app._line = lambda a, b, color, width=2: widths.append(int(width))
+        try:
+            near_a, near_b = app._proj(0.0, 0.0, 0.0), app._proj(1.0, 0.0, 0.0)
+            far_a, far_b = app._proj(0.0, 0.0, START_Z), app._proj(1.0, 0.0, START_Z)
+            app._line_scaled(near_a, near_b, WHITE, 3.0, near_a[2])
+            app._line_scaled(far_a, far_b, WHITE, 3.0, far_a[2])
+        finally:
+            app._line = original
+        self.assertGreater(widths[0], widths[1], "远处的白线应更细")
+        self.assertGreaterEqual(widths[1], 1)
+
+    def test_judgement_text_appears_at_the_note(self) -> None:
+        """瞬时物件（单键 / 鼠标点击）也要在被判定的位置冒出判定字符。"""
+        from rhythm_editor.game.judge import Judged
+        from rhythm_editor.model.notes import LaneNote, MouseClick
+
+        app = self.app
+        app._enter_loading()
+        chart = app.chart
+        tap = next(n for n in chart.all_notes() if isinstance(n, LaneNote) and not n.is_hold)
+        app._start_play()
+        app.popups.clear()
+        app._register(Judged(tap.id, "EXACT", tap.head_beat))
+        self.assertEqual(len(app.popups), 1)
+        grade, text, left, x, y = app.popups[0]
+        self.assertEqual((grade, text), ("EXACT", "EXACT"))
+        expected_x = app._proj(app.scene.lane_center(tap.lane_start), 0.0, 0.0)[0]
+        self.assertAlmostEqual(x, expected_x, delta=2.0, msg="飘字应出现在被判定的那条轨道上")
+        self.assertGreater(y, 0.0)
+        click = next(n for n in chart.all_notes() if isinstance(n, MouseClick))
+        app._register(Judged(click.id, "Near", click.head_beat))
+        self.assertEqual(app.popups[-1][0], "Near")
+        app._draw_popups()                     # 飘字要能画出来
+
+    def test_slide_direction_and_click_colors(self) -> None:
+        """滑键：朝向侧更厚更实、没有白线；鼠标点击按键：所有线都是红色。"""
+        from rhythm_editor.game.app import MOUSE_PLANE_HEIGHT, WHITE, MouseClick, MouseSlide
+
+        app = self.app
+        app._enter_loading()
+        app._start_play()
+        chart = app.chart
+        slide = next(n for n in chart.all_notes() if isinstance(n, MouseSlide))
+        alphas = []
+        lines = []
+        original_alpha, original_line = app._alpha_quad, app._line
+        app._alpha_quad = lambda points, color, alpha: alphas.append(alpha)
+        app._line = lambda a, b, color, width=2: lines.append(color)
+        try:
+            app._draw_pattern(slide, app._head_ms(slide))
+        finally:
+            app._alpha_quad, app._line = original_alpha, original_line
+        self.assertEqual(len(alphas), 2, "滑键画两层：底 + 朝向侧")
+        self.assertGreater(alphas[1], alphas[0], "朝向的一侧不透明度更高")
+        self.assertNotIn(WHITE, lines, "滑键不再画中间的实线")
+
+        click = next(n for n in chart.all_notes() if isinstance(n, MouseClick))
+        lines = []
+        app._line = lambda a, b, color, width=2: lines.append(color)
+        try:
+            app._draw_pattern(click, app._head_ms(click))
+        finally:
+            app._line = original_line
+        self.assertTrue(lines)
+        for color in lines:
+            self.assertGreater(color[0], 200, "鼠标点击按键的线应该是红色")
+            self.assertLess(color[1], 130)
+
+        # 鼠标指针（三角形）躺在物件运动的水平面内
+        points = []
+        original_proj = app._proj
+
+        def spy(x, y, z):
+            points.append((x, y, z))
+            return original_proj(x, y, z)
+
+        app._proj = spy
+        try:
+            app._draw_mouse_marker()
+        finally:
+            app._proj = original_proj
+        self.assertEqual(len(points), 3)
+        for _x, y, _z in points:
+            self.assertAlmostEqual(y, MOUSE_PLANE_HEIGHT, places=6, msg="三角形要在鼠标平面内")
+        # 矮胖：屏幕上看应该更宽而不是更长
+        screen = [original_proj(*point) for point in points]
+        width = max(p[0] for p in screen) - min(p[0] for p in screen)
+        height = max(p[1] for p in screen) - min(p[1] for p in screen)
+        self.assertGreater(width, height, "鼠标指针要矮胖")
+
+    def test_result_page_shows_combo_ratio_and_multiplier(self) -> None:
+        """结算：最大连击写成 x / 总判定数，倍率放在它后面。"""
+        app = self.app
+        app.settings.rate = 2.0
+        app._enter_loading()
+        app._start_play()
+        app.judge._judge_result("X", "EXACT", 0.0)
+        app._finish()
+        combo_line = app._result_combo_line()
+        self.assertIn("/", combo_line)
+        self.assertIn(str(app.judge.total_notes), combo_line)
+        self.assertIn("×", app._result_multiplier_line())
+        self.assertAlmostEqual(app.settings.rate ** 1.5, 2.0 ** 1.5, places=6)
+        app._draw()
+
+    def test_display_mode_cycles_window_borderless_fullscreen(self) -> None:
+        """F11 依次切换 窗口 → 无边框全屏 → 独占全屏 → 窗口。"""
+        app = self.app
+        self.assertEqual(app.display_mode, "windowed")
+        seen = []
+        for _ in range(4):
+            app._toggle_fullscreen()
+            seen.append(app.display_mode)
+            self.assertTrue(app.message)
+            app._draw()                       # 换模式后还能画
+        self.assertEqual(seen, ["borderless", "fullscreen", "windowed", "borderless"])
 
 
 if __name__ == "__main__":
