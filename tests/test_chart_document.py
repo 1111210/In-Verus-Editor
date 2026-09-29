@@ -67,9 +67,11 @@ class ChartTests(unittest.TestCase):
         restored = Chart.from_dict(data)
         self.assertEqual(restored.to_dict(), data)
         self.assertAlmostEqual(restored.timing.offset_ms, 90.0)
-        self.assertEqual(restored.settings.grid_division, 8)
         self.assertEqual(len(restored.lane_notes), 2)
         self.assertEqual(len(restored.mouse_notes), 2)
+        # 编辑器设置（视图 / 音效 / 编辑器设置）不写进谱面：全局配置文件负责
+        self.assertNotIn("editor", data)
+        self.assertEqual(restored.settings.grid_division, config.DEFAULT_GRID_DIVISION)
 
     def test_repair_groups_on_load(self) -> None:
         chart = make_chart()

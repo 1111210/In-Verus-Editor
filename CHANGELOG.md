@@ -2,6 +2,20 @@
 
 ## 0.3.1 — 鼠标点击按键与鼠标平面的摆放规则
 
+### 视图 / 音效 / 编辑器设置改为**全局保存**
+
+* 这些偏好只影响编辑器、与谱面无关，之前跟着谱面文件走（`editor` 段）很别扭：
+  换个谱面就得重设缩放 / 网格 / 延迟 / 音量。现在统一存到用户配置目录的
+  `settings.json`（Windows `%APPDATA%/InVerus/settings.json`，其他
+  `~/.config/inverus/settings.json`，可用 `VERUS_SETTINGS` 覆盖）。
+* **谱面文件不再写 `editor` 段**；读**老谱面**时若全局文件尚未建立，
+  会把老文件里的 `editor` 迁移进全局设置一次。
+* 设置一变（含撤销 / 重做改到设置）就自动写回全局文件，退出前也是最新的。
+* 手动清理：`charts/demo/demo.json` 与 `charts/test/chart.json` 里的 `editor`
+  段已删除；`tools/screenshot_editor.py` 用独立的截图设置文件，不动用户偏好。
+* 新增 `tests/test_global_settings.py`（4 条）覆盖读写、损坏回退、谱面不含
+  `editor`、老谱面迁移。
+
 ### 键型图案 / 侧轨高亮 / 缩放与滚动条
 
 * **单键与长按改为“实心蓝底 + 白线”**：

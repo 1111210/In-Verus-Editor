@@ -113,7 +113,7 @@ python tools/check_audio.py
 
 | 项目 | 命令 | 结果 |
 | --- | --- | --- |
-| 单元测试（含 Tk 画布冒烟测试与应用级测试） | `python -m unittest discover -s tests -t .` | Ran 242 tests — **OK** |
+| 单元测试（含 Tk 画布冒烟测试与应用级测试） | `python -m unittest discover -s tests -t .` | Ran 246 tests — **OK** |
 | 需求验收清单 | `python tools/acceptance.py` | 14 项全部 `[OK ]`，结论：全部通过 |
 | 音频后端 | `python tools/check_audio.py` | 9 项全部 `[OK ]`（pygame.mixer 真实播放，延迟补偿正确） |
 | 示例谱面生成 | `python run_editor.py --make-demo` | 生成 `charts/demo/demo.json`（6K 32 / 区域 3 / 滑键 6 / 点击按键 4 / 4 个速度组） |
@@ -206,6 +206,7 @@ python tools/check_audio.py
 | `tests/test_app_flow.py::test_sound_effects_follow_the_music_clock_not_the_ui` | 延迟 ≠ 0 时：音效按软件位置触发（与音乐同步），判定线仍按听到的位置显示 |
 | `tests/test_audio_rate.py::test_latency_scales_with_playback_rate` | 延迟按真实时间缩放：1.0x / 0.5x / 0.1x 下 200ms 分别只减 200 / 100 / 20ms |
 | `tests/test_editor_smoke.py::test_overlay_demo_is_one_third_and_centered` | 演示模式占窗口宽度 1/3 且居中；轨道、网格、判定线都在窄带内 |
+| `tests/test_global_settings.py`（4 条） | **全局设置**：读写往返、损坏文件回退默认值、谱面文件不再包含 `editor` 段、老谱面的 `editor` 段只迁移一次 |
 | `tests/test_audio_rate.py`（16 条） | 倍速（重采样，**变速变调**）：长度随倍率伸缩、0.5x 时频率减半（过零率）、静音时钟跟随倍速、倍速夹取、**负延迟**的 heard 位置、延迟范围、**立体声也能慢放**、**分窗口首尾相接**、**调度连续不断音**（回归：pygame 只播一个排队块）、**打开谱面后第一次播放用真实后端**（回归）、**播放中改倍速自动暂停**并保持位置 |
 | `tests/test_app_flow.py::test_rate_buttons_step_and_clamp` | 倍速按钮 ±0.1x 与 0.1~1.0x 夹取，标签同步 |
 | `tests/test_app_flow.py::test_rate_buttons_are_always_available` | 右侧倍速按钮固定在右侧优先分配空间 |

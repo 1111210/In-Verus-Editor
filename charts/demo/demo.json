@@ -29,18 +29,6 @@
       }
     ]
   },
-  "editor": {
-    "zoom_seconds": 3.0,
-    "grid_division": 4,
-    "horizontal_divisions": 8,
-    "audio_latency_ms": 45.0,
-    "metronome": "off",
-    "hit_enabled": true,
-    "side_lane_highlight": false,
-    "music_volume": 1.0,
-    "metronome_volume": 0.6,
-    "hit_volume": 0.6
-  },
   "speed_groups": [
     {
       "id": 0,

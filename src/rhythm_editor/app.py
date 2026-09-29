@@ -28,6 +28,11 @@ from .model.document import Document
 from .model.notes import BoundaryCurve, MouseRegion, Note
 from .model.timing import TimingMap
 from .model.validate import format_report, validate_chart
+from .global_settings import (
+    adopt_legacy_settings,
+    load_settings,
+    save_settings,
+)
 from .metronome import LABELS as METRONOME_LABELS
 from .metronome import MODE_BAR, MODE_BEAT, MODE_OFF, Metronome, clicks_between, hits_between
 from .ui.dialogs import (
@@ -89,6 +94,10 @@ class EditorApp:
         apply_theme(self.root, self.theme)
 
         self.document = Document()
+        # 视图 / 音效 / 编辑器设置是**全局**的：不随谱面文件走
+        self.editor_settings = load_settings()
+        self.document.chart.settings = self.editor_settings
+        self._settings_snapshot = self.editor_settings.to_dict()
         self.view = ViewState(self.document.chart)
         self.render_state = RenderState()
         self.audio = AudioPlayer()
@@ -253,7 +262,18 @@ class EditorApp:
         state.pending = self.controller.state.pending
         self.renderer.draw(self.document.chart, self.view, state)
         self._sync_ui()
+        self._maybe_save_settings()
         self._schedule_next_tick()
+
+    def _maybe_save_settings(self) -> None:
+        """设置一变就把全局配置写回磁盘（视图 / 音效 / 编辑器设置都是全局的）。
+
+        用快照比较，避免每帧都写文件；撤销 / 重做改了设置也会被写到。
+        """
+        data = self.editor_settings.to_dict()
+        if data != self._settings_snapshot:
+            self._settings_snapshot = data
+            save_settings(self.editor_settings)
 
     def _schedule_next_tick(self) -> None:
         """重新安排下一帧（保证同一时刻只有一个待执行回调，退出时不会残留）。"""
@@ -629,7 +649,9 @@ class EditorApp:
     def new_chart(self) -> None:
         if not self._confirm_discard():
             return
-        self.document.set_chart(Chart())
+        chart = Chart()
+        chart.settings = self.editor_settings      # 编辑器设置是全局的
+        self.document.set_chart(chart)
         self.view.set_chart(self.document.chart)
         self.view.set_beat(0.0)
         self.audio.load(None)
@@ -652,10 +674,16 @@ class EditorApp:
 
     def load_chart_file(self, path: str) -> None:
         try:
-            chart, _ = load_chart(path)
+            chart, raw = load_chart(path)
         except Exception as exc:  # pragma: no cover - 依赖外部文件
             messagebox.showerror("打开失败", f"无法读取谱面：\n{exc}", parent=self.root)
             return
+        # 老谱面里可能还留着 editor 段：全局文件还没建立时迁移一次
+        legacy = raw.get("editor") if isinstance(raw, dict) else None
+        if adopt_legacy_settings(self.editor_settings, legacy):
+            save_settings(self.editor_settings)
+            self._apply_volumes()
+        chart.settings = self.editor_settings
         self.document.set_chart(chart, path)
         self.view.set_chart(chart)
         self.view.set_beat(0.0)

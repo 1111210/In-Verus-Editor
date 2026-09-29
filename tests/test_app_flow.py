@@ -14,6 +14,10 @@ import unittest
 sys.path.insert(0, os.path.join(os.path.dirname(os.path.dirname(os.path.abspath(__file__))), "src"))
 
 import tkinter as tk
+
+# 全局设置会写到用户配置目录：测试里改到临时文件，别碰真实配置
+_SETTINGS_TMP = tempfile.TemporaryDirectory()
+os.environ["VERUS_SETTINGS"] = os.path.join(_SETTINGS_TMP.name, "settings.json")
 from tkinter import ttk
 
 from rhythm_editor import config

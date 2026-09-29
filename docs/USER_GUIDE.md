@@ -89,6 +89,10 @@ python run_editor.py charts/demo/demo.json --fullscreen  # 无边框全屏
    （两个子菜单末尾都有「自定义…」）。
 4. `Ctrl+S` 保存为普通的 `.json` 文件（编辑器只支持 JSON 格式）。
 
+> **视图 / 音效 / 编辑器设置是全局的**：它们不跟着谱面文件走，而是存在
+> `%APPDATA%\InVerus\settings.json`（Windows；其他系统 `~/.config/inverus/settings.json`），
+> 换谱面 / 新建谱面都会沿用。老谱面里的 `editor` 段会在第一次打开时迁移进来一次。
+
 ### 3.2 打谱
 
 1. 滚轮找到时间（判定线永远吸附网格），必要时 `Ctrl+滚轮` 缩放。

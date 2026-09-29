@@ -14,6 +14,7 @@ ROOT = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
 sys.path.insert(0, os.path.join(ROOT, "src"))
 
 from rhythm_editor import config  # noqa: E402
+from rhythm_editor import global_settings  # noqa: E402
 from rhythm_editor.audio import audio_backend_available, audio_backend_name  # noqa: E402
 from rhythm_editor.demo import build_demo_chart, selftest, write_demo_chart  # noqa: E402
 from rhythm_editor.io.chart_io import load_chart  # noqa: E402
@@ -74,13 +75,16 @@ def report() -> int:
         and any(seg.multiplier < 0 for g in chart.speed_groups for seg in g.segments),
         "、".join(f"{g.name}({len(g.note_ids)}件)" for g in chart.speed_groups),
     )
+    settings = global_settings.load_settings()
     item(
-        "全局设置（缩放 / 网格 / 横向辅助 / 音频延迟）",
-        chart.settings.grid_division >= 1
-        and chart.settings.horizontal_divisions >= 0
-        and chart.settings.audio_latency_ms >= 0,
+        "全局设置（缩放 / 网格 / 横向辅助 / 音频延迟；不写进谱面）",
+        settings.grid_division >= 1
+        and settings.horizontal_divisions >= 0
+        and settings.audio_latency_ms >= 0
+        and "editor" not in chart.to_dict(),
         f"zoom={chart.settings.zoom_seconds:g}s grid=1/{chart.settings.grid_division} "
-        f"hgrid={chart.settings.horizontal_divisions} latency={chart.settings.audio_latency_ms:g}ms",
+        f"hgrid={chart.settings.horizontal_divisions} latency={chart.settings.audio_latency_ms:g}ms "
+        f"· 全局文件 {global_settings.settings_path()}",
     )
 
     path = write_demo_chart()

@@ -101,7 +101,15 @@ class UndoRecordTests(unittest.TestCase):
 
             document.apply("改设置", _apply)
 
-        self.assert_roundtrip(document, change_settings)
+        # 设置不进谱面文件，所以这里比较 settings 本身（撤销 / 重做照样要还原）
+        before = document.chart.settings.to_dict()
+        change_settings()
+        after = document.chart.settings.to_dict()
+        self.assertNotEqual(before, after, "编辑应当有可检测的改变")
+        document.undo()
+        self.assertEqual(document.chart.settings.to_dict(), before)
+        document.redo()
+        self.assertEqual(document.chart.settings.to_dict(), after)
 
     def test_records_only_touch_changed_notes(self) -> None:
         """1000 物件里改一个物件：记录规模只与改动量有关（不是整谱）。"""

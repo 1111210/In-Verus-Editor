@@ -54,20 +54,19 @@
 * BPM 决定**时间轴格子的大小**（纵向按秒线性：高 BPM 段落每拍更短），
   也决定“拍 ↔ 秒 / 歌曲位置”的换算；流速（速度组）则是在此之上的倍率。
 
-## 1.3 editor（全局编辑器设置）
+## 1.3 editor（**已废弃**：视图 / 音效 / 编辑器设置改为全局保存）
 
-| 字段 | 类型 | 默认 | 说明 |
-| --- | --- | --- | --- |
-| `zoom_seconds` | number | 4.0 | 屏幕上同时显示多长时间内的物件 |
-| `grid_division` | int | 4 | 一拍细分为多少个音（1..64） |
-| `horizontal_divisions` | int | 0 | 0..1 合法区域几等分（0 = 不启用横向辅助网格） |
-| `audio_latency_ms` | number | 0 | 系统音频延迟（毫秒） |
-| `metronome` | string | `"off"` | 节拍音：`off` / `bar`（每小节）/ `beat`（每拍）；缺字段或非法值按 `off` |
-| `music_volume` | number | 1.0 | 歌曲音量（0 ~ 1） |
-| `metronome_volume` | number | 0.6 | 节拍音音量（0 ~ 1） |
-| `hit_volume` | number | 0.6 | 打击音效音量（0 ~ 1） |
-| `hit_enabled` | bool | true | 打击音效开关 |
-| `side_lane_highlight` | bool | false | 侧轨高亮：6K 第 1 / 第 6 轨背景暗紫 |
+`zoom_seconds` / `grid_division` / `horizontal_divisions` / `audio_latency_ms` /
+`metronome` / `hit_enabled` / `side_lane_highlight` / `music_volume` /
+`metronome_volume` / `hit_volume` 这些**只影响编辑器**的偏好不再写进谱面，
+而是存在用户配置目录的 `settings.json` 里（Windows 为
+`%APPDATA%/InVerus/settings.json`，其他系统为 `~/.config/inverus/settings.json`；
+可用环境变量 `VERUS_SETTINGS` 指定别的路径）。
+
+* 换谱面 / 新建谱面都沿用同一份全局设置；
+* 读**老谱面**时，如果里面还有 `editor` 段、而全局文件尚未建立，
+  会把它**迁移**进全局设置一次（之后就以全局文件为准）；
+* 写谱面时不再输出 `editor` 段（`tools/acceptance.py` 会断言这一点）。
 
 ## 1.4 speed_groups
 

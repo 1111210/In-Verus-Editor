@@ -17,6 +17,7 @@ from __future__ import annotations
 
 import os
 import sys
+import tempfile
 import time
 
 ROOT = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
@@ -24,6 +25,7 @@ sys.path.insert(0, os.path.join(ROOT, "src"))
 sys.path.insert(0, os.path.dirname(os.path.abspath(__file__)))
 
 from rhythm_editor import config  # noqa: E402
+from rhythm_editor import global_settings  # noqa: E402
 from rhythm_editor.app import EditorApp  # noqa: E402
 from rhythm_editor.demo import write_demo_chart  # noqa: E402
 from winshot import capture_to_png_smart  # noqa: E402
@@ -32,6 +34,13 @@ from winshot import capture_to_png_smart  # noqa: E402
 def main() -> int:
     out_dir = sys.argv[1] if len(sys.argv) > 1 else os.path.join(ROOT, "docs", "images")
     os.makedirs(out_dir, exist_ok=True)
+    # 截图用独立的全局设置文件（放在临时目录），别动用户自己的偏好
+    os.environ["VERUS_SETTINGS"] = os.path.join(
+        tempfile.gettempdir(), "inverus_screenshot_settings.json"
+    )
+    settings = global_settings.load_settings()
+    settings.zoom_seconds = 6.0
+    global_settings.save_settings(settings)
     chart_path = write_demo_chart()
 
     # 截图用窗口模式，尺寸固定，方便对比；最大化 / 全屏状态在后面单独截图

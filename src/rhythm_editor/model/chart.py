@@ -339,7 +339,8 @@ class Chart:
             "version": config.CHART_FORMAT_VERSION,
             "metadata": self.metadata.to_dict(),
             "timing": self.timing.to_dict(),
-            "editor": self.settings.to_dict(),
+            # 注意：编辑器设置（视图 / 音效 / 编辑器设置）**不写进谱面**，
+            # 它们保存在全局配置文件里（见 global_settings.py）。
             "speed_groups": [g.to_dict() for g in self.speed_groups],
             "lanes": [n.to_dict() for n in self.sorted_notes() if isinstance(n, LaneNote)],
             "mouse": [n.to_dict() for n in self.sorted_notes() if isinstance(n, MouseNote)],
@@ -351,7 +352,8 @@ class Chart:
         chart = cls(
             metadata=Metadata.from_dict(data.get("metadata")),  # type: ignore[arg-type]
             timing=TimingMap.from_dict(data.get("timing")),  # type: ignore[arg-type]
-            settings=EditorSettings.from_dict(data.get("editor")),  # type: ignore[arg-type]
+            # 谱面文件里的 editor 段已废弃：只在读老文件时留作迁移参考
+            settings=EditorSettings(),
         )
         groups_data = data.get("speed_groups") or [SpeedGroup.default().to_dict()]
         chart.speed_groups = [SpeedGroup.from_dict(g) for g in groups_data]  # type: ignore[arg-type]
