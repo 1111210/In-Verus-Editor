@@ -884,10 +884,10 @@ class PlayerAppSmokeTests(unittest.TestCase):
         )
         self.assertEqual(app.judge.judged_notes, 0, "滚轮不该判定")
 
-    def test_mouse_plane_has_only_legal_area_side_lines(self) -> None:
-        """鼠标平面不画背景，只画合法区域（±0.5）的左右边线。"""
-        from rhythm_editor.game.app import MOUSE_LEFT, MOUSE_PLANE_HEIGHT
-        from rhythm_editor.game.scene import K6_LEFT, MOUSE_LEGAL_WIDTH, START_Z
+    def test_mouse_plane_has_blue_gradient_and_no_side_lines(self) -> None:
+        """鼠标平面：不画边线；靠近判定线略蓝，向轨道尽头渐变为完全透明。"""
+        from rhythm_editor.game.app import MOUSE_PLANE_HEIGHT
+        from rhythm_editor.game.scene import START_Z
 
         app = self.app
         app._enter_loading()
@@ -895,26 +895,51 @@ class PlayerAppSmokeTests(unittest.TestCase):
         app.settings.rate = 1.0
         quads = []
         lines = []
+        fills = []
         original_quad, original_line = app._quad, app._line
+        original_alpha = app._alpha_quad
         app._quad = lambda points, color: quads.append(points)
-        app._line = lambda a, b, color, width=2: lines.append((a, b))
+        app._line = lambda a, b, color, width=2: lines.append((a, b, color))
+        app._alpha_quad = lambda points, color, alpha: fills.append((list(points), alpha))
         try:
             app._draw_planes(0.0)
         finally:
             app._quad, app._line = original_quad, original_line
-        # 合法区域两侧各有一条边线（从起点一直到判定平面）
-        for edge in (MOUSE_LEFT, MOUSE_LEFT + MOUSE_LEGAL_WIDTH):
-            far = app._proj(edge, MOUSE_PLANE_HEIGHT, START_Z)
-            near = app._proj(edge, MOUSE_PLANE_HEIGHT, 0.0)
-            self.assertTrue(
-                any(
-                    abs(a[0] - far[0]) < 2 and abs(b[0] - near[0]) < 2 for a, b in lines
-                ),
-                "合法区域边界要有边线",
-            )
-        # 鼠标平面不该有底色四边形：默认（侧轨高亮关闭）只剩 6K 平面那一个
-        self.assertEqual(len(quads), 1, "鼠标平面不再画背景")
-        self.assertAlmostEqual(K6_LEFT, -0.75, places=6)
+            app._alpha_quad = original_alpha
+        mouse_lines = [entry for entry in lines if entry[2] == (90, 220, 255)]
+        # 原来的 6K 平面边线也算同色，这里只要求鼠标平面“从起点到判定线”的那两条消失
+        self.assertTrue(fills, "鼠标平面要有一层渐变蓝底")
+        self.assertGreater(len(fills), 8, "渐变要足够细腻")
+        alphas = [alpha for _points, alpha in fills]
+        self.assertGreater(alphas[0], alphas[-1], "靠近判定线更实、远处更透")
+        self.assertLessEqual(alphas[0], 100, "只是『略微不透明』")
+        self.assertGreaterEqual(alphas[-1], 0)
+        self.assertLess(alphas[-1], 12, "轨道尽头接近完全透明")
+        # 第一条紧贴判定线（屏幕 y 就在鼠标判定线处），最后一条已经靠近轨道尽头
+        mouse_line_y = app._proj(0.0, MOUSE_PLANE_HEIGHT, 0.0)[1]
+        first_points = fills[0][0]
+        self.assertAlmostEqual(
+            max(p[1] for p in first_points), mouse_line_y, delta=3.0, msg="最蓝的一条贴着判定线"
+        )
+        self.assertLess(
+            min(p[1] for p in first_points), mouse_line_y - 5, "这条要从判定线往上铺开"
+        )
+        last_points = fills[-1][0]
+        self.assertLess(
+            min(p[1] for p in last_points),
+            min(p[1] for p in first_points) - 100,
+            "渐变一路铺到远处（屏幕更靠上）",
+        )
+        self.assertAlmostEqual(START_Z, 12.0, places=6)
+        # 6K 平面底色仍然只有一个四边形
+        self.assertEqual(len(quads), 1)
+        self.assertFalse(
+            any(
+                abs(a[1] - app._proj(0.0, MOUSE_PLANE_HEIGHT, START_Z)[1]) < 30
+                for a, _b, _c in mouse_lines
+            ),
+            "鼠标平面不再画边线",
+        )
 
     def test_slide_judgement_shows_text_and_sound(self) -> None:
         """滑键判定要出判定文字（回归：以前 on_move 的返回值被丢掉，滑键没有飘字）。"""

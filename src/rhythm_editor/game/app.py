@@ -183,6 +183,8 @@ class PlayerApp:
         self.ui: dict = {}
         self.hover = ""
         self._overlay: Optional[pygame.Surface] = None
+        self._plane_strips_key: Optional[Tuple[int, int, int]] = None
+        self._plane_strips: List[float] = []
         self.gl_cost = 0.0                 # OpenGL 呈现耗时（指数平滑，太慢就回退）
         self.gl_frames = 0
         self.display_mode = "windowed"     # windowed / borderless / fullscreen
@@ -1450,6 +1452,28 @@ class PlayerApp:
             width = max(1, int(round(width * scale / ref)))
         self._line(a, b, color, max(1, int(width)))
 
+    def _mouse_plane_strip_z(self, strips: int) -> List[float]:
+        """鼠标平面渐变用的 z 分界：按**屏幕高度**均匀切，渐变色带才均匀。
+
+        直接按 z 均匀切的话，靠近判定线的一条会覆盖半屏（透视压缩），
+        远处又挤成一条；结果就是“下面一大片同色、上面突然变透明”。
+        """
+        key = (self.w, self.h, strips)
+        if self._plane_strips_key == key:
+            return self._plane_strips
+        samples = 240
+        zs = [START_Z * index / samples for index in range(samples + 1)]
+        ys = [self._proj(K6_LEFT, MOUSE_PLANE_HEIGHT, z)[1] for z in zs]
+        y_near, y_far = ys[0], ys[-1]
+        boundaries: List[float] = []
+        for index in range(strips + 1):
+            target = y_near + (y_far - y_near) * index / strips
+            best = min(range(len(zs)), key=lambda i: abs(ys[i] - target))
+            boundaries.append(zs[best])
+        self._plane_strips_key = key
+        self._plane_strips = boundaries
+        return boundaries
+
     def _visible_span_ms(self) -> float:
         """可视毫秒（物件从起点走到判定线所需的**歌曲毫秒**）。
 
@@ -1516,14 +1540,8 @@ class PlayerApp:
         self._quad([far_left, far_right, near_right, near_left], (24, 26, 36))
         self._line(far_left, near_left, K6_TINT, 1)
         self._line(far_right, near_right, K6_TINT, 1)
-        # 鼠标平面：**不画背景**，只保留合法区域左右边线（x = ±0.5）
-        for x in (MOUSE_LEFT, MOUSE_LEFT + MOUSE_LEGAL_WIDTH):
-            self._line(
-                self._proj(x, MOUSE_PLANE_HEIGHT, START_Z),
-                self._proj(x, MOUSE_PLANE_HEIGHT, 0.0),
-                MOUSE_TINT,
-                2,
-            )
+        # 鼠标平面：靠近判定线处略微不透明的蓝色，向轨道尽头渐变为完全透明（不画边线）
+        self._draw_mouse_plane_gradient()
         for lane in range(LANE_COUNT + 1):
             x = K6_LEFT + lane * LANE_WIDTH
             self._line(self._proj(x, 0.0, START_Z), self._proj(x, 0.0, 0.0), (46, 48, 58), 1)
@@ -1573,6 +1591,27 @@ class PlayerApp:
         self._line(m_left, m_right, MOUSE_TINT, 3)
         self._line(k6_left, m_left, (60, 62, 74), 1)
         self._line(k6_right, m_right, (60, 62, 74), 1)
+
+    def _draw_mouse_plane_gradient(self) -> None:
+        """鼠标平面的蓝底渐变（靠近判定线略蓝 → 轨道尽头完全透明）。"""
+        width = LANE_COUNT * LANE_WIDTH
+        boundaries = self._mouse_plane_strip_z(48)
+        steps = len(boundaries) - 1
+        for index in range(steps):
+            z_near, z_far = boundaries[index], boundaries[index + 1]
+            alpha = int(round(96 * (1.0 - (index + 0.5) / steps)))
+            if alpha <= 0:
+                continue
+            self._alpha_quad(
+                [
+                    self._proj(K6_LEFT, MOUSE_PLANE_HEIGHT, z_far),
+                    self._proj(K6_LEFT + width, MOUSE_PLANE_HEIGHT, z_far),
+                    self._proj(K6_LEFT + width, MOUSE_PLANE_HEIGHT, z_near),
+                    self._proj(K6_LEFT, MOUSE_PLANE_HEIGHT, z_near),
+                ],
+                (58, 108, 200),
+                alpha,
+            )
 
     @staticmethod
     def _layer_of(note: Note) -> int:
