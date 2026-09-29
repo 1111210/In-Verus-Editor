@@ -46,6 +46,7 @@ python run_player.py charts/demo/demo.json # 直接选中它
   会显示大号连击数；结算页显示「最大连击」。
 * **结算**：左半元数据与玩家、右半分数与各判定数量（不显示准度），
   另有「最大连击」与每个判定占**总判定数的百分比**（不是准度），
+  **刷新最高分时显示「★ 新纪录！」**，并显示该谱面的历史最佳分与游玩次数；
   左下 `R 重试`、右下 `Esc 回主界面`；
 * 截图：`python tools/screenshot_player.py docs/images`
   （`player_menu/settings/play/result.png`）。

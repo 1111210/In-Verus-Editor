@@ -118,6 +118,7 @@ class PlayerApp:
         self.mouse_norm = 0.5
         self.message = ""
         self.settings_row = 0
+        self.new_record = False
 
     # ------------------------------------------------------------ 通用
     @property
@@ -408,6 +409,11 @@ class PlayerApp:
     def _finish(self) -> None:
         self.audio.pause()
         self.paused = False
+        if self.judge is not None and self.chart is not None and self.chart_path:
+            self.new_record = self.settings.update_record(
+                self.chart_path, self.judge.score, self.judge.max_combo, self.judge.accuracy
+            )
+            psettings.save_settings(self.settings)
         self.state = "result"
 
     def _toggle_pause(self) -> None:
@@ -488,6 +494,14 @@ class PlayerApp:
                 self.f_small,
                 (110, 110, 124) if chosen else (86, 86, 96),
             )
+            best = self.settings.record_for(path)
+            if best["plays"]:
+                self.text(
+                    f"最佳 {int(best['score'])} · 最大连击 {int(best['max_combo'])} · {int(best['plays'])} 次",
+                    (self.w * 0.62, 200 + offset * 46),
+                    self.f_small,
+                    (120, 160, 120) if chosen else (96, 116, 96),
+                )
         if self.message:
             self.center_text(self.message, self.h - 70, self.f_small, (240, 120, 120))
 
@@ -812,11 +826,20 @@ class PlayerApp:
             self.text(line, (46, 140 + index * 34), self.f_mid, WHITE if index == 0 else DIM)
         counts = self.judge.counts
         self.text(f"分数：{self.judge.score}", (half + 46, 140), self.f_big, (255, 226, 120))
-        self.text(f"最大连击：{self.judge.max_combo}", (half + 46, 196), self.f_mid, WHITE)
+        if self.new_record:
+            self.text("★ 新纪录！", (half + 300, 152), self.f_mid, (140, 235, 160))
+        best = self.settings.record_for(self.chart_path)
+        self.text(
+            f"最佳 {int(best['score'])}（第 {int(best['plays'])} 次游玩）",
+            (half + 46, 190),
+            self.f_small,
+            DIM,
+        )
+        self.text(f"最大连击：{self.judge.max_combo}", (half + 46, 214), self.f_mid, WHITE)
         total = max(1, self.judge.total_notes)
         self.text(
             f"判定数：{self.judge.judged_notes} / {self.judge.total_notes}",
-            (half + 46, 226),
+            (half + 46, 244),
             self.f_small,
             DIM,
         )
@@ -824,7 +847,7 @@ class PlayerApp:
             share = counts[grade] / total * 100.0
             self.text(
                 f"{grade}：{counts[grade]}（{share:.1f}%）",
-                (half + 46, 258 + index * 34),
+                (half + 46, 276 + index * 34),
                 self.f_mid,
                 GRADE_COLORS[grade],
             )
