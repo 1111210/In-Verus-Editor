@@ -614,6 +614,39 @@ class PlayerAppSmokeTests(unittest.TestCase):
         self.assertTrue(app._note_ahead(first, just_entered))
         self.assertFalse(app._note_ahead(first, just_entered - 2.0))
 
+    def test_culling_matches_the_visible_span_at_any_rate(self) -> None:
+        """剔除阈值必须和 z 映射用同一个跨度：低倍速不堆积、高倍速从轨道尽头出现。"""
+        from rhythm_editor.game.scene import START_Z
+
+        app = self.app
+        app._enter_loading()
+        notes = app.chart.all_notes()
+        now = 1000.0
+        for rate in (0.5, 1.0, 2.0, 3.0):
+            app.settings.rate = rate
+            span = app._visible_span_ms()
+            self.assertAlmostEqual(span, app.settings.scroll_ms * rate, places=6)
+            for note in notes:
+                head = app._head_ms(note)
+                delta = head - now
+                z = app._note_z(head, now)
+                if delta > span + 1e-6:                     # 远于可视范围
+                    self.assertFalse(
+                        app._note_ahead(note, now),
+                        f"rate={rate}：远于可视范围的物件必须剔除（否则会贴在起点堆积）",
+                    )
+                else:                                       # 可视范围内
+                    self.assertTrue(app._note_ahead(note, now))
+                    self.assertLessEqual(z, START_Z + 1e-9, "不能画到轨道尽头之外")
+                    if delta >= 0.0:
+                        self.assertAlmostEqual(
+                            z, START_Z * (delta / span), places=6,
+                            msg="可视范围内必须按实际进度摆放（高倍速也要从尽头开始）",
+                        )
+                    else:
+                        self.assertAlmostEqual(z, 0.0, places=6, msg="过去的物件贴在判定线上")
+        app.settings.rate = 1.0
+
     def test_white_line_is_thinner_when_far(self) -> None:
         """白线粗细随透视：远处的线更细（近大远小），不会远看反而更粗。"""
         from rhythm_editor.game.app import WHITE

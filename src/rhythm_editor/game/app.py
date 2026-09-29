@@ -1605,8 +1605,12 @@ class PlayerApp:
 
         比 ``scroll_ms`` 更远的物件必须**不画**：``note_z`` 会把进度夹在 0~1，
         否则它们会全部贴在起点（屏幕最上方）堆成一排。
+
+        阈值必须和 :meth:`_note_z` 用**同一个**跨度（``可视毫秒 × 倍速``）：
+        用未缩放的 ``scroll_ms`` 时，低倍速下 750~1500ms 的物件会被画出来并贴在起点，
+        高倍速下物件则要等到半程才出现（不是从轨道尽头出现）。
         """
-        return self._head_ms(note) - now_ms <= self.settings.scroll_ms
+        return self._head_ms(note) - now_ms <= self._visible_span_ms()
 
     def _draw_notes(self, now_ms: float) -> None:
         assert self.chart is not None
