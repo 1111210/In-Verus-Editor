@@ -21,6 +21,8 @@ from tkinter import ttk
 from typing import Callable, Dict, List, Optional, Tuple
 
 from .. import config
+from ..metronome import LABELS as METRONOME_LABELS
+from ..metronome import MODE_BAR, MODE_BEAT, MODE_OFF
 from .theme import Theme
 
 
@@ -165,6 +167,17 @@ class Toolbar(ttk.Frame):
             Entry(separator=True),
             Entry("时间网格细分", options=grid_options),
             Entry("横向辅助网格", options=hgrid_options),
+            Entry(
+                "节拍音",
+                options=[
+                    Entry(
+                        METRONOME_LABELS[mode],
+                        (lambda m=mode: app.set_metronome(m)),
+                        checked=(lambda m=mode: app.document.chart.settings.metronome == m),
+                    )
+                    for mode in (MODE_OFF, MODE_BAR, MODE_BEAT)
+                ],
+            ),
             Entry(separator=True),
             Entry("跳到开头", lambda: app.jump(0.0), "Home"),
             Entry("跳到结尾", lambda: app.jump(app.document.chart.beat_bounds()[1]), "End"),

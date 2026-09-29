@@ -33,7 +33,8 @@
     "zoom_seconds": 3.0,
     "grid_division": 4,
     "horizontal_divisions": 8,
-    "audio_latency_ms": 45.0
+    "audio_latency_ms": 45.0,
+    "metronome": "off"
   },
   "speed_groups": [
     {

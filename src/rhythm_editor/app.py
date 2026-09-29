@@ -28,6 +28,8 @@ from .model.document import Document
 from .model.notes import BoundaryCurve, MouseRegion, Note
 from .model.timing import TimingMap
 from .model.validate import format_report, validate_chart
+from .metronome import LABELS as METRONOME_LABELS
+from .metronome import MODE_BAR, MODE_BEAT, MODE_OFF, Metronome, clicks_between
 from .ui.dialogs import (
     BpmDialog,
     HelpDialog,
@@ -101,6 +103,9 @@ class EditorApp:
         # 拖动分界线：正在拖动 + 当前光标样式
         self._divider_drag = False
         self._divider_cursor = ""
+        # 节拍音：上一帧判定线所在拍（None = 未在播放）
+        self._metronome_last_beat: Optional[float] = None
+        self.metronome = Metronome()
 
         # 画布区容器（右侧放竖向滚动条），画布是它的子控件
         self.body = ttk.Frame(self.root)
@@ -269,11 +274,13 @@ class EditorApp:
 
     def _advance_playback(self) -> None:
         if not self.audio.is_playing:
+            self._metronome_last_beat = None
             return
         timing = self.document.chart.timing
         song_ms = self.audio.heard_position_ms()
         beat = timing.song_ms_to_beat(song_ms)
         self.view.current_beat = beat
+        self._tick_metronome(timing, beat)
         backend = getattr(self.audio, "backend", None)
         if backend is not None and not getattr(backend, "is_playing", True):
             # 音乐刚播完：记下此刻的播放位置（秒），之后还要再走 margin 秒才考虑停止
@@ -288,6 +295,35 @@ class EditorApp:
             self.status(
                 f"播放结束（音乐与谱面都已播完 {config.PLAY_END_MARGIN_SECONDS:g} 秒）"
             )
+
+    def _tick_metronome(self, timing, beat: float) -> None:
+        """播放中按设置发出“滴”声（一次 tick 最多一声）。"""
+        previous = self._metronome_last_beat
+        self._metronome_last_beat = beat
+        mode = self.document.chart.settings.metronome
+        if previous is None or mode == MODE_OFF:
+            return
+        hits = clicks_between(timing, mode, previous, beat)
+        if hits:
+            self.metronome.play(mode)
+
+    def set_metronome(self, mode: str) -> None:
+        """视图菜单：关闭 / 小节音 / 节拍音。"""
+        if mode not in METRONOME_LABELS:
+            return
+        self.document.apply(
+            "切换节拍音",
+            lambda: setattr(self.document.chart.settings, "metronome", mode),
+        )
+        self._metronome_last_beat = None
+        if mode == MODE_OFF:
+            self.status("节拍音已关闭")
+            return
+        detail = "每小节响一声" if mode == MODE_BAR else "每拍响一声"
+        if not self.metronome.available:
+            self.status(f"节拍音已开启（{detail}），但当前音频设备不可用，暂时听不到声音")
+        else:
+            self.status(f"节拍音已开启：{detail}（小节音比节拍音高一点）")
 
     def _sync_ui(self) -> None:
         self.toolbar.sync()

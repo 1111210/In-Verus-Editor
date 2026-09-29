@@ -6,6 +6,7 @@ from dataclasses import dataclass, field
 from typing import Any, Dict, Iterable, List, Optional, Sequence, Set
 
 from .. import config
+from ..metronome import METRONOME_MODES, MODE_OFF
 from .notes import (
     LaneNote,
     MouseClick,
@@ -64,12 +65,14 @@ class EditorSettings:
     * ``grid_division``        —— 时间网格：一拍细分为多少个音（正整数）。
     * ``horizontal_divisions`` —— 鼠标平面横向辅助网格：0..1 合法区域几等分，0 表示关闭。
     * ``audio_latency_ms``     —— 系统音频延迟：从执行播放到硬件出声的毫秒数。
+    * ``metronome``            —— 节拍音：``off``（默认）/ ``bar``（小节）/ ``beat``（节拍）。
     """
 
     zoom_seconds: float = config.DEFAULT_ZOOM_SECONDS
     grid_division: int = config.DEFAULT_GRID_DIVISION
     horizontal_divisions: int = config.DEFAULT_HORIZONTAL_DIVISIONS
     audio_latency_ms: float = config.DEFAULT_AUDIO_LATENCY_MS
+    metronome: str = "off"
 
     def normalize(self) -> None:
         self.zoom_seconds = min(
@@ -87,6 +90,8 @@ class EditorSettings:
             config.AUDIO_LATENCY_MAX_MS,
             max(config.AUDIO_LATENCY_MIN_MS, float(self.audio_latency_ms)),
         )
+        if self.metronome not in METRONOME_MODES:
+            self.metronome = MODE_OFF
 
     @property
     def horizontal_grid_enabled(self) -> bool:
@@ -98,6 +103,7 @@ class EditorSettings:
             "grid_division": self.grid_division,
             "horizontal_divisions": self.horizontal_divisions,
             "audio_latency_ms": self.audio_latency_ms,
+            "metronome": self.metronome,
         }
 
     @classmethod
@@ -110,6 +116,7 @@ class EditorSettings:
                 data.get("horizontal_divisions", config.DEFAULT_HORIZONTAL_DIVISIONS)
             ),
             audio_latency_ms=float(data.get("audio_latency_ms", config.DEFAULT_AUDIO_LATENCY_MS)),
+            metronome=str(data.get("metronome", "off")),
         )
         obj.normalize()
         return obj
