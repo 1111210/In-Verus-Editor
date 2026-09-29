@@ -33,3 +33,6 @@ charts/**/*.m4a
 # Local scratch
 scratch/
 _diag/
+
+# 测试/验收跑出来的临时谱面
+charts/test/
