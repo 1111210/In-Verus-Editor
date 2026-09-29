@@ -159,6 +159,80 @@ class PlayerAppSmokeTests(unittest.TestCase):
         app._draw_menu()          # 列表 + 元数据渲染不抛异常
         self.assertEqual(app.paths[0], path, "最近打开应排在前面")
 
+    def test_charts_folder_lists_one_entry_per_folder(self) -> None:
+        """charts/ 下每个含 json 的文件夹算一张谱面；多个 json 取主谱面。"""
+        from rhythm_editor.game.app import chart_files
+
+        with tempfile.TemporaryDirectory() as tmp:
+            alpha = os.path.join(tmp, "charts", "alpha")
+            beta = os.path.join(tmp, "charts", "beta", "audio")
+            empty = os.path.join(tmp, "charts", "empty")
+            os.makedirs(alpha)
+            os.makedirs(beta)
+            os.makedirs(empty)
+            for folder in (alpha, beta):
+                for name in ("chart.json", "b_alt.json", "_autosave.json"):
+                    with open(os.path.join(folder, name), "w", encoding="utf-8") as handle:
+                        handle.write("{}")
+            entries = chart_files(tmp)
+            self.assertEqual(
+                [os.path.basename(p) for p in entries],
+                ["chart.json", "chart.json"],
+                "一个文件夹只出一条（多个 json 时取主谱面）",
+            )
+            self.assertEqual([os.path.dirname(p) for p in entries], [alpha, beta])
+
+            # 只有下划线开头的临时 json 的文件夹、以及没有 json 的文件夹都不算谱面
+            solo = os.path.join(tmp, "charts", "solo")
+            os.makedirs(solo)
+            with open(os.path.join(solo, "_tmp.json"), "w", encoding="utf-8") as handle:
+                handle.write("{}")
+            self.assertEqual(len(chart_files(tmp)), 2)
+
+    def test_menu_actions_are_reachable_without_any_chart(self) -> None:
+        """没有谱面时主界面仍有「打开其他路径」与「设置」两行，Enter 能进设置。"""
+        app = self.app
+        app.paths = []
+        app._rebuild_entries()
+        self.assertEqual(app._menu_rows(), 2)
+        app._draw_menu()                       # 空列表也要能画（不抛异常）
+        app.selected = 1                       # 固定行：0 = 打开其他路径，1 = 设置
+        app._activate_selected()
+        self.assertEqual(app.state, "settings")
+        app.state = "menu"
+        app.selected = 99                      # 越界也要夹回设置那一行
+        app._rebuild_entries()
+        self.assertEqual(app.selected, 1)
+        # ↑↓ / Home / End 只在两行之间循环
+        app._event_menu(self.pygame.event.Event(self.pygame.KEYDOWN, key=self.pygame.K_DOWN))
+        self.assertEqual(app.selected, 0)
+        app._event_menu(self.pygame.event.Event(self.pygame.KEYDOWN, key=self.pygame.K_UP))
+        self.assertEqual(app.selected, 1)
+
+    def test_open_external_chart_by_path(self) -> None:
+        """「打开其他路径」：直接给路径时能读入并加入列表（不弹对话框）。"""
+        app = self.app
+        source = os.path.join(ROOT, "charts", "demo", "demo.json")
+        with tempfile.TemporaryDirectory() as tmp:
+            outside = os.path.join(tmp, "somewhere", "my_chart.json")
+            os.makedirs(os.path.dirname(outside))
+            with open(source, "r", encoding="utf-8") as src, open(
+                outside, "w", encoding="utf-8"
+            ) as dst:
+                dst.write(src.read())
+            app.paths = []
+            app.selected = 0
+            self.assertTrue(app.open_external_chart(f'"{outside}"'), "带引号的路径也要认")
+            self.assertEqual(app.state, "loading")
+            self.assertIn(outside, app.paths, "外部谱面要留在列表里")
+            self.assertEqual(app.selected, 0, "外部谱面打开后应被选中（最近打开排最前）")
+            self.assertTrue(os.path.isabs(app._display_path(outside)), "仓库外显示绝对路径")
+            app.state = "menu"
+            self.assertFalse(app.open_external_chart(os.path.join(tmp, "none.json")))
+            self.assertIn("找不到文件", app.message)
+            self.assertIsNone(app._native_open_dialog(), "无显示 / 测试环境不弹系统对话框")
+            app._draw_menu()
+
 
 if __name__ == "__main__":
     unittest.main()

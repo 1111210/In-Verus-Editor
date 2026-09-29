@@ -11,8 +11,8 @@
 
 from __future__ import annotations
 
-import glob
 import os
+import subprocess
 import sys
 from typing import List, Optional, Tuple
 
@@ -43,6 +43,10 @@ from .scene import (
 SCREEN_W, SCREEN_H = 1280, 800
 LEAD_MS = 1500.0
 REGION_PAD = 0.01
+MENU_WINDOW = 8                     # 主界面谱面列表一次显示多少行（其余滚动显示）
+ROOT = os.path.dirname(                       # 仓库根目录（src/rhythm_editor/game/app.py → ../..）
+    os.path.dirname(os.path.dirname(os.path.dirname(os.path.abspath(__file__))))
+)
 
 BG = (10, 10, 14)
 PANEL = (22, 22, 30)
@@ -61,10 +65,37 @@ GRADE_COLORS = {
 }
 
 
-def chart_files(root: str) -> List[str]:
-    """默认列出的谱面：``charts/**/*.json``（跳过下划线开头的临时文件）。"""
-    found = sorted(glob.glob(os.path.join(root, "charts", "**", "*.json"), recursive=True))
-    return [p for p in found if not os.path.basename(p).startswith("_")]
+def main_chart_in(directory: str, names: List[str]) -> str:
+    """谱面文件夹里的“主谱面”：优先 ``chart.json``，其次与文件夹同名，最后按名字排序。"""
+    lowered = {name.lower(): name for name in names}
+    if "chart.json" in lowered:
+        return os.path.join(directory, lowered["chart.json"])
+    folder = os.path.basename(os.path.normpath(directory)).lower()
+    for name in names:
+        if os.path.splitext(name)[0].lower() == folder:
+            return os.path.join(directory, name)
+    return os.path.join(directory, names[0])
+
+
+def chart_files(root: str, folder: str = "charts") -> List[str]:
+    """``charts/`` 下**每个含 json 的文件夹**算一张谱面（不再是一个 json 一行）。
+
+    一个文件夹里有多个 json 时取其中的“主谱面”（见 :func:`main_chart_in`）；
+    ``_`` 开头的文件（临时 / 自动保存）忽略；不含 json 的文件夹不算谱面。
+    """
+    base = os.path.join(root, folder)
+    if not os.path.isdir(base):
+        return []
+    found: List[str] = []
+    for directory, _dirs, names in os.walk(base):
+        jsons = sorted(
+            name
+            for name in names
+            if name.lower().endswith(".json") and not name.startswith("_")
+        )
+        if jsons:
+            found.append(main_chart_in(directory, jsons))
+    return sorted(found)
 
 
 def key_code(name: str) -> int:
@@ -103,7 +134,7 @@ class PlayerApp:
         self.f_small = pygame.font.SysFont(font, 18)
         self.scene = PlayerScene(Camera())
         self.audio = AudioPlayer()
-        self.root = os.path.dirname(os.path.dirname(os.path.dirname(os.path.abspath(__file__))))
+        self.root = ROOT
         self.paths = list(paths or []) or chart_files(self.root)
         self._info_cache: dict = {}
         self._rebuild_entries()
@@ -194,30 +225,108 @@ class PlayerApp:
     def _event_menu(self, event) -> None:
         if event.type != pygame.KEYDOWN:
             return
+        rows = self._menu_rows()
         if event.key == pygame.K_ESCAPE:
             self.running = False
-        elif event.key in (pygame.K_DOWN, pygame.K_UP) and self.paths:
+        elif event.key in (pygame.K_DOWN, pygame.K_UP):
             step = 1 if event.key == pygame.K_DOWN else -1
-            self.selected = (self.selected + step) % len(self.paths)
-        elif event.key in (pygame.K_HOME, pygame.K_END) and self.paths:
-            self.selected = 0 if event.key == pygame.K_HOME else len(self.paths) - 1
-        elif event.key in (pygame.K_RETURN, pygame.K_KP_ENTER) and self.paths:
-            self._enter_loading()
+            self.selected = (self.selected + step) % rows
+        elif event.key in (pygame.K_HOME, pygame.K_END):
+            self.selected = 0 if event.key == pygame.K_HOME else rows - 1
+        elif event.key in (pygame.K_RETURN, pygame.K_KP_ENTER):
+            self._activate_selected()
+        elif event.key == pygame.K_o:
+            self.open_external_chart()
         elif event.key == pygame.K_s:
             self.state = "settings"
 
+    def _menu_rows(self) -> int:
+        """主界面的可选项数：谱面列表 + 「打开其他路径」 + 「设置」。"""
+        return len(self.paths) + 2
+
+    def _activate_selected(self) -> None:
+        """Enter：谱面开始 / 打开其他路径 / 进入设置。"""
+        if self.selected < len(self.paths):
+            self._enter_loading()
+        elif self.selected == len(self.paths):
+            self.open_external_chart()
+        else:
+            self.state = "settings"
+
     def _enter_loading(self) -> None:
+        self._begin_chart(self.paths[self.selected])
+
+    def _begin_chart(self, path: str) -> bool:
+        """读取谱面并进加载页；读不出来就留在主界面并给出提示。"""
         try:
-            chart, _ = load_chart(self.paths[self.selected])
+            chart, _ = load_chart(path)
         except Exception as exc:                     # pragma: no cover - 依赖外部文件
             self.message = f"读取失败：{exc}"
-            return
+            return False
         self.chart = chart
-        self.chart_path = self.paths[self.selected]
+        self.chart_path = path
         self._remember_recent(self.chart_path)
         self.state = "loading"
         self.timer = 0.0
         self.message = ""
+        return True
+
+    # ------------------------------------------------------ 打开其他路径
+    def open_external_chart(self, path: Optional[str] = None) -> bool:
+        """打开 ``charts/`` 之外的谱面：先弹系统文件对话框，不可用时窗口内输入路径。"""
+        if path is None:
+            path = self._ask_chart_path()
+        if not path:
+            return False
+        path = os.path.abspath(os.path.expanduser(str(path).strip().strip('"')))
+        if not os.path.isfile(path):
+            self.message = f"找不到文件：{path}"
+            return False
+        if path not in self.paths:
+            self.paths.append(path)
+        self.selected = self.paths.index(path)
+        return self._begin_chart(path)
+
+    def _ask_chart_path(self) -> Optional[str]:
+        """要一个谱面 JSON 路径：优先系统对话框，退化到窗口内输入（Esc 取消）。"""
+        picked = self._native_open_dialog()
+        if picked:
+            return picked
+        return self._prompt("谱面 JSON 路径", "")
+
+    def _native_open_dialog(self) -> Optional[str]:
+        """子进程里用 tkinter 弹“打开文件”对话框（无 tkinter / 无显示时返回 None）。"""
+        if os.environ.get("VERUS_NO_DIALOG"):
+            return None
+        if os.environ.get("SDL_VIDEODRIVER", "").lower() == "dummy":
+            return None
+        initial = os.path.join(self.root, "charts")
+        if not os.path.isdir(initial):
+            initial = self.root
+        script = "\n".join(
+            (
+                "import tkinter as tk",
+                "from tkinter import filedialog",
+                "root = tk.Tk()",
+                "root.withdraw()",
+                "root.attributes('-topmost', True)",
+                "print(filedialog.askopenfilename(",
+                f"    initialdir={initial!r}, title='选择谱面 JSON',",
+                "    filetypes=[('谱面 JSON', '*.json'), ('所有文件', '*.*')]) or '')",
+            )
+        )
+        try:
+            done = subprocess.run(
+                [sys.executable, "-c", script],
+                capture_output=True,
+                text=True,
+                timeout=1800,
+            )
+        except Exception:
+            return None
+        if done.returncode != 0:
+            return None
+        return (done.stdout or "").strip() or None
 
     # ------------------------------------------------------------ 谱面列表
     def _chart_info(self, path: str):
@@ -244,16 +353,25 @@ class PlayerApp:
         recent = [p for p in self.settings.recent if p in self.paths]
         rest = [p for p in self.paths if p not in recent]
         self.paths = recent + rest
+        self.selected = max(0, min(int(getattr(self, "selected", 0)), self._menu_rows() - 1))
 
     def _remember_recent(self, path: str) -> None:
         recent = [p for p in self.settings.recent if p != path]
         recent.insert(0, path)
         self.settings.recent = recent[:8]
         psettings.save_settings(self.settings)
-        chosen = self.paths[self.selected] if self.paths else path
+        chosen = self.paths[self.selected] if self.selected < len(self.paths) else None
         self._rebuild_entries()
-        if chosen in self.paths:
+        if chosen is not None and chosen in self.paths:
             self.selected = self.paths.index(chosen)
+
+    def _display_path(self, path: str) -> str:
+        """谱面显示用路径：仓库内的用相对路径，仓库外的（打开其他路径）用绝对路径。"""
+        try:
+            rel = os.path.relpath(path, self.root)
+        except ValueError:                          # pragma: no cover - 跨盘符
+            return path
+        return path if rel.startswith("..") else rel
 
     # ------------------------------------------------------------ 设置
     SETTING_ROWS = (
@@ -521,33 +639,69 @@ class PlayerApp:
 
     def _draw_menu(self) -> None:
         self.center_text("In Verus 游玩器", 64, self.f_big, WHITE)
-        self.center_text("↑↓ 选择谱面（Home/End 跳首尾） · Enter 开始 · S 设置 · Esc 退出", 122, self.f_small, DIM)
+        self.center_text(
+            "↑↓ 选择（Home/End 跳首尾） · Enter 确认 · O 打开其他 JSON · S 设置 · Esc 退出",
+            122,
+            self.f_small,
+            DIM,
+        )
         if not self.paths:
-            self.center_text("没有找到谱面（先往 charts/ 放一张 .json）", 260, self.f_mid, DIM)
+            self.center_text(
+                "没有找到谱面：charts/ 下每个含 .json 的文件夹算一张谱面",
+                166,
+                self.f_small,
+                (214, 176, 120),
+            )
         # 只显示选中项附近的若干行（谱面很多时翻页显示）
-        window = 9
-        start = max(0, min(self.selected - window // 2, max(0, len(self.paths) - window)))
-        for offset, index in enumerate(range(start, min(len(self.paths), start + window))):
+        charts = len(self.paths)
+        window = max(1, min(MENU_WINDOW, (self.h - 330) // 50))
+        focus = min(self.selected, max(0, charts - 1))
+        start = max(0, min(focus - window // 2, max(0, charts - window)))
+        for offset, index in enumerate(range(start, min(charts, start + window))):
             path = self.paths[index]
             title, artist, difficulty, bpm = self._chart_info(path)
             chosen = index == self.selected
             color = ACCENT if chosen else DIM
             marker = "> " if chosen else "  "
             star = "* " if path in self.settings.recent else ""
+            y = 192 + offset * 50
             self.text(
                 f"{marker}{star}{title} · {artist} · 难度 {difficulty} · {bpm:.0f}BPM",
-                (self.w * 0.12, 176 + offset * 46),
+                (self.w * 0.12, y),
                 self.f_mid,
                 color,
             )
             self.text(
-                os.path.relpath(path, self.root),
-                (self.w * 0.12 + 28, 200 + offset * 46),
+                self._display_path(path),
+                (self.w * 0.12 + 28, y + 26),
                 self.f_small,
                 (110, 110, 124) if chosen else (86, 86, 96),
             )
+        # 固定在窗口底部的两行：打开其他路径 / 设置（没有谱面时也能进设置）
+        actions = (
+            ("＋ 打开其他路径的 JSON…", "在任何位置选一张谱面（Esc 取消）"),
+            ("设置", "玩家名 / 键位 / 延迟 / 倍速 / 音量 …"),
+        )
+        row_h = 56
+        action_top = self.h - 40 - row_h * len(actions)
+        for offset, (label, hint) in enumerate(actions):
+            index = charts + offset
+            chosen = index == self.selected
+            y = action_top + offset * row_h
+            pygame.draw.rect(
+                self.screen, PANEL, (self.w * 0.10, y - 6, self.w * 0.8, row_h - 6), border_radius=6
+            )
+            self.text(
+                f"{'> ' if chosen else '  '}{label}",
+                (self.w * 0.12, y),
+                self.f_mid,
+                ACCENT if chosen else WHITE,
+            )
+            self.text(hint, (self.w * 0.12 + 28, y + 26), self.f_small, (120, 120, 134))
         if self.message:
-            self.center_text(self.message, self.h - 70, self.f_small, (240, 120, 120))
+            self.center_text(
+                self.message, action_top - 34, self.f_small, (240, 120, 120)
+            )
 
     def _draw_settings(self, extra: str = "") -> None:
         self.text("设置（↑↓ 选择 · ←→ 调整 · 回车输入/切换 · Esc 保存并返回）", (40, 26), self.f_mid, WHITE)
@@ -909,7 +1063,18 @@ class PlayerApp:
 
 def main(argv: Optional[List[str]] = None) -> int:  # pragma: no cover - GUI 入口
     args = list(sys.argv[1:] if argv is None else argv)
-    paths = [p for p in args if os.path.isfile(p)]
+    paths: List[str] = []
+    for arg in args:
+        if os.path.isdir(arg):                      # 直接给谱面文件夹也可以
+            names = sorted(
+                name
+                for name in os.listdir(arg)
+                if name.lower().endswith(".json") and not name.startswith("_")
+            )
+            if names:
+                paths.append(main_chart_in(arg, names))
+        elif os.path.isfile(arg):
+            paths.append(arg)
     return PlayerApp(paths).run()
 
 

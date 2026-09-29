@@ -23,10 +23,18 @@
 
 ```bash
 python run_player.py                       # 主界面列出 charts/ 里的谱面
-python run_player.py charts/demo/demo.json # 直接选中它
+python run_player.py charts/demo           # 直接选中该谱面文件夹
+python run_player.py charts/demo/demo.json # 直接选中某个谱面文件
 ```
 
-* **主界面**：↑↓ 选谱面（Home/End 跳首尾）· Enter 开始 · S 设置 · Esc 退出；
+* **谱面列表**：``charts/`` 下**每个含 json 的文件夹算一张谱面**（文件夹里有多个 json 时取
+  “主谱面”：优先 ``chart.json``，其次与文件夹同名，再按名字排序；``_`` 开头的临时文件忽略，
+  不含 json 的文件夹不算谱面）。
+* **打开其他路径**：主界面底部固定有「＋ 打开其他路径的 JSON…」一行（快捷键 `O`），
+  弹系统文件对话框选任意位置的谱面；打不开对话框的环境（无 tkinter / 无显示）会退回
+  窗口内直接输入路径；打开过的外部谱面留在本次列表里。
+* **主界面**：↑↓ 选择（Home/End 跳首尾）· Enter 确认 · O 打开其他 JSON · S 设置 · Esc 退出；
+  底部两行「打开其他路径」「设置」**常驻**，所以**没有谱面时也能进设置**；
   每条显示 **标题 · 艺术家 · 难度 · 初始 BPM** 与相对路径，打开过的谱面带 `*`
   并自动排到最前（最近 8 条，记录在 `player.json`）；
 * **设置**：玩家名、6K 键位（6 条，回车逐轨输入）、物件厚度、系统音频延迟、
