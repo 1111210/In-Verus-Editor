@@ -1,7 +1,11 @@
 # In Verus —— 双平面音游 **谱面编辑器**
 
-> 当前版本 **只包含编辑器**（含演示 / 预览用途的播放与演示模式），**不含**游玩器（判定、计分、结算）。
 > 玩法为两个叠加平面：**6 轨下落式** + **鼠标平面（类接水果玩法）**。
+> 仓库现在包含两部分：**编辑器**（tkinter，
+un_editor.py）与
+> **游玩器**（3D 视角，pygame，
+un_player.py —— 判定 / 计分 / 结算）。
+> 游玩器怎么玩见 [docs/PLAYER.md](docs/PLAYER.md)。
 
 ---
 
@@ -22,6 +26,16 @@ python run_editor.py charts/demo/demo.json --windowed  # 普通窗口（F10 最�
 
 # 或者双击 run_editor.bat（会自动优先使用 .venv）
 ```
+
+游玩器（3D 视角，判定 / 计分 / 结算）：
+
+```bash
+python run_player.py                       # 主界面：↑↓ 选谱面 · Enter 开始 · S 设置
+python run_player.py charts/demo/demo.json # 直接选中示例谱面
+```
+
+玩法与判定规则见 [`docs/GAMEPLAY.md`](docs/GAMEPLAY.md)，
+游玩器实现与操作见 [`docs/PLAYER.md`](docs/PLAYER.md)。
 
 演示模式（两个平面叠加、只读、可滚动/缩放/播放）：
 

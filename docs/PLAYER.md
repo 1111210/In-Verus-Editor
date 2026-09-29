@@ -19,7 +19,29 @@
 | `game/settings.py` | 玩家设置（全局文件 `player.json`，与编辑器设置分开）：玩家名、6K 键位（默认 shift/a/s/d/f/space）、物件厚度、音频延迟、1x 可视毫秒、侧轨高亮、鼠标灵敏度 0.1~10x、无界鼠标、音量 |
 | `tests/test_game_judge.py`、`tests/test_game_scene.py`、`tests/test_game_settings.py` | 31 条测试覆盖上面的规则 |
 
-## 待接入（下一步）
+## 已完成：可运行的 GUI（`game/app.py` + `run_player.py`）
+
+```bash
+python run_player.py                       # 主界面列出 charts/ 里的谱面
+python run_player.py charts/demo/demo.json # 直接选中它
+```
+
+* **主界面**：↑↓ 选谱面 · Enter 开始 · S 设置 · Esc 退出；
+* **设置**：玩家名、6K 键位（6 条，回车逐轨输入）、物件厚度、系统音频延迟、
+  1x 可视毫秒、鼠标灵敏度（0.1~10x）、侧轨高亮（第 1/6 轨暗紫）、无界鼠标模式；
+  存在 `player.json`（全局）；
+* **加载页**：元数据 + 初始 BPM + 玩家名，1.2 秒后进入游玩；
+* **游玩**：软件透视 3D（两个水平平面 + 判定平面上的两条判定线；鼠标平面更近更宽；
+  6K 只画小节线；空域画在鼠标水平面内；滑键 / 点击按键图案平行判定平面、高 0.03 单位；
+  点击按键两侧竖线 + 中央菱形；层序与编辑器一致；鼠标判定线后方三角形标识；
+  屏幕外物件不绘制）；HUD 左上元数据/BPM/玩家，右上准度/分数/四种判定数量；
+  第 0 拍在进入游玩 **1.5 秒**后到判定平面；
+* **结算**：左半元数据与玩家、右半分数与各判定数量（不显示准度），
+  左下 `R 重试`、右下 `Esc 回主界面`；
+* 截图：`python tools/screenshot_player.py docs/images`
+  （`player_menu/settings/play/result.png`）。
+
+## 后续可做（非阻塞）
 
 > **本轮已按你的确认调整**：① 已安装 `PyOpenGL 3.1.10` 并写进 `requirements.txt`
 > （真实窗口下可创建 GL 上下文；无 GL 时游玩器会回退软件渲染）。

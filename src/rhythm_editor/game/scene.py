@@ -41,9 +41,9 @@ class Camera:
     """针孔相机：位于判定平面后方、鼠标平面上方。"""
 
     x: float = 0.0
-    y: float = 2.0
-    z: float = -4.0
-    pitch_deg: float = 18.0     # 略微向下俯视
+    y: float = 1.15             # 在鼠标平面（0.4）上方
+    z: float = -1.7             # 判定平面后方
+    pitch_deg: float = 20.0     # 略微向下俯视
     fov_deg: float = 55.0
 
     def project(self, point: Tuple[float, float, float], width: int, height: int) -> Tuple[float, float, float]:
