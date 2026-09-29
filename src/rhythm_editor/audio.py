@@ -561,10 +561,12 @@ class AudioPlayer:
                 return backend
         return SilentBackend()
 
-    def _select_backend(self):
-        if self.path is None:
-            # 没有载入歌曲：一律用静音时钟（改倍速后也要保持，
-            # 否则会切到需要样本的重采样后端，一点播放就不动了）
+    def _select_backend(self, path: Optional[str] = None):
+        # ``path`` 传入“即将载入的歌曲”：load() 会先把 self.path 清空，
+        # 只按 self.path 判断会把刚载入的歌曲误判成“没有歌曲”而退回静音时钟
+        # （表现就是打开谱面后第一次播放没有声音，随便改一次倍速又正常了）。
+        target = self.path if path is None else path
+        if not target:
             return self._silent_clock
         want_stretch = self.rate < config.RATE_MAX - 1e-9
         if want_stretch and STRETCH_AVAILABLE:
@@ -613,7 +615,7 @@ class AudioPlayer:
     def load(self, path: Optional[str]) -> bool:
         self.stop()
         self.path = None
-        self.backend = self._select_backend()
+        self.backend = self._select_backend(path)
         if not path or not os.path.isfile(path):
             # 未载入歌曲：用静音时钟，播放时判定线照常前进（不会一点播放就立刻“结束”）
             self.backend = self._silent_clock

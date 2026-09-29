@@ -117,6 +117,43 @@ class AudioPlayerRateTests(unittest.TestCase):
         self.assertGreater(player.position_ms(), 0.0)
         player.pause()
 
+    def test_first_play_after_opening_uses_real_backend(self) -> None:
+        """回归：刚打开谱面（还没动过倍速）时第一次播放必须有声音。
+
+        曾经 load() 会先清空 self.path 再选后端，于是刚载入的歌曲被误判成
+        “没有歌曲”，第一次播放走静音时钟 —— 随便改一次倍速后才恢复。
+        """
+        import tempfile
+        import wave
+
+        import numpy as np
+
+        from rhythm_editor.audio import audio_backend_state
+
+        if audio_backend_state() != "ok":
+            self.skipTest("本机音频设备不可用，跳过")
+        freq = 44100
+        t = np.arange(freq * 2) / freq
+        tone = (np.sin(2 * np.pi * 440 * t) * 4000).astype(np.int16)
+        with tempfile.TemporaryDirectory() as tmp:
+            path = os.path.join(tmp, "tone.wav")
+            with wave.open(path, "wb") as handle:
+                handle.setnchannels(2)
+                handle.setsampwidth(2)
+                handle.setframerate(freq)
+                handle.writeframes(np.repeat(tone.reshape(-1, 1), 2, axis=1).tobytes())
+            player = AudioPlayer()
+            self.assertTrue(player.load(path))
+            self.assertTrue(player.usable_audio, "载入歌曲后不能退化为静音时钟")
+            self.assertNotEqual(player.backend.name, "silent")
+            player.play(0.0)
+            time.sleep(0.2)
+            player.poll()
+            self.assertTrue(player.is_playing)
+            self.assertGreater(player.position_ms(), 50.0)
+            player.pause()
+            player.unload()
+
 
 @unittest.skipUnless(STRETCH_AVAILABLE, "需要 numpy + pygame 才能做时间伸缩")
 class TimeStretchTests(unittest.TestCase):
