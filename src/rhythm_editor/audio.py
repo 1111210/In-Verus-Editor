@@ -804,5 +804,7 @@ class AudioPlayer:
         """耳朵实际听到的位置（考虑系统音频延迟）。"""
         position = self.position_ms()
         if self.usable_audio:
-            position -= self.latency_ms
+            # 延迟是**真实时间**：慢放时真实 1ms 只推进 rate ms 的歌曲时间，
+            # 所以要按倍速缩放，否则延迟补偿会被倍速放大/缩小。
+            position -= self.latency_ms * self.rate
         return max(0.0, position)

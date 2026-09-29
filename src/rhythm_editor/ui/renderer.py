@@ -195,10 +195,29 @@ class Renderer:
         layout = view.layout
         theme = self.theme
         self.scene.set_layer(1)
+        # 演示区（1/3 宽、居中）底色 + 边框，其余保持纯黑
+        self.scene.rect(
+            "overlay:bg",
+            layout.overlay_span[0],
+            layout.play_top,
+            layout.overlay_span[1],
+            layout.play_bottom,
+            fill=theme.lane_alt,
+            outline=theme.lane_border,
+            width=1,
+        )
         self._draw_lanes(view, theme, "lane")
         self.scene.set_layer(2)
         self._draw_time_grid(
-            chart, view, beat_low, beat_high, layout.play_left, layout.play_right, "grid", True, True
+            chart,
+            view,
+            beat_low,
+            beat_high,
+            layout.overlay_span[0],
+            layout.overlay_span[1],
+            "grid",
+            True,
+            True,
         )
         self.scene.set_layer(3)
         self._draw_legal_area(view, "mouse", label="鼠标平面合法区域 (0 .. 1)", label_anchor="ne")
@@ -207,7 +226,13 @@ class Renderer:
         self._draw_notes(chart, view, state)
         self.scene.set_layer(10)
         self._draw_judgment_line(
-            view, state, layout.play_left, layout.play_right, "judge", accent=False, label="判定线"
+            view,
+            state,
+            layout.overlay_span[0],
+            layout.overlay_span[1],
+            "judge",
+            accent=False,
+            label="判定线",
         )
         self._draw_judgment_line(
             view, state, layout.mouse_left, layout.mouse_right, "judge-mouse", accent=True

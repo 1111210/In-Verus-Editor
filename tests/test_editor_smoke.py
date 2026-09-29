@@ -164,6 +164,27 @@ class EditorSmokeTest(unittest.TestCase):
         self.assertLessEqual(judge[2], layout.pane_6k[1] + 1)
         self.assertGreaterEqual(judge_mouse[0], layout.pane_mouse[0] - 1)
 
+    def test_overlay_demo_is_one_third_and_centered(self) -> None:
+        """演示模式只占窗口宽度的 1/3，并且水平居中。"""
+        self.view.set_layout_mode(config.LAYOUT_OVERLAY)
+        layout = self.view.layout
+        low, high = layout.overlay_span
+        self.assertAlmostEqual(
+            high - low, layout.play_width * config.OVERLAY_WIDTH_RATIO, delta=1.0
+        )
+        self.assertAlmostEqual(low - layout.play_left, layout.play_right - high, delta=1.0)
+        # 轨道都落在这条 1/3 的区域里
+        self.assertAlmostEqual(layout.lane_rects[0][0], low, delta=1.0)
+        self.assertAlmostEqual(layout.lane_rects[-1][1], high, delta=1.0)
+        self.draw()
+        self.assertIn("overlay:bg", self.scene._items)
+        box = self.scene._items["overlay:bg"][2][0]
+        self.assertAlmostEqual(box[0], low, delta=0.01)
+        self.assertAlmostEqual(box[2], high, delta=0.01)
+        judge = self.scene._items["judge"][2][0]
+        self.assertAlmostEqual(judge[0], low, delta=1.0)
+        self.assertAlmostEqual(judge[2], high, delta=1.0)
+
     def test_divider_drag_resizes_both_panes(self) -> None:
         """拖动分界线：两栏宽度实时变化，并夹在最小宽度内。"""
         layout = self.view.layout

@@ -60,9 +60,15 @@ class Layout:
         self.play_width = self.play_right - self.play_left
 
         if self.mode == config.LAYOUT_OVERLAY:
-            rects = _column_rects((self.play_left, self.play_right), config.LANE_COUNT)
+            # 演示模式：只占窗口宽度的 1/3，水平居中
+            width = self.play_width * float(config.OVERLAY_WIDTH_RATIO)
+            center = (self.play_left + self.play_right) / 2.0
+            left = max(self.play_left, center - width / 2.0)
+            right = min(self.play_right, center + width / 2.0)
+            self.overlay_span = (float(left), float(right))
+            rects = _column_rects(self.overlay_span, config.LANE_COUNT)
             self.lane_rects = rects
-            self.pane_6k = (float(self.play_left), float(self.play_right))
+            self.pane_6k = (float(left), float(right))
             mouse_left = rects[config.MOUSE_LANE_FIRST][0]
             mouse_right = rects[config.MOUSE_LANE_LAST][1]
             self.pane_mouse = (mouse_left, mouse_right)
@@ -89,6 +95,8 @@ class Layout:
         # 1 个归一化单位对应多少像素（鼠标平面的显示范围内插用）
         self.norm_scale = self.mouse_width / max(1e-6, self.norm_max - self.norm_min)
         self.divider_x = (self.pane_6k[1] + self.pane_mouse[0]) / 2.0
+        if self.mode != config.LAYOUT_OVERLAY:
+            self.overlay_span = (float(self.play_left), float(self.play_right))
 
     # -------------------------------------------------------------- 区域判断
     def in_6k_pane(self, x: float) -> bool:

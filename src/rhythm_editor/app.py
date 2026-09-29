@@ -736,8 +736,8 @@ class EditorApp:
 
     def pause(self) -> None:
         timing = self.document.chart.timing
-        position = self.audio.position_ms()
-        heard = position - self.audio.latency_ms if self.audio.usable_audio else position
+        # 用听到的位置（已按倍速缩放延迟），保证暂停时的判定线与刚刚听到的一致
+        heard = self.audio.heard_position_ms()
         beat = self.view.snap_beat(timing.song_ms_to_beat(heard))
         self.audio.pause()
         self.view.set_beat(beat)

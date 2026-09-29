@@ -95,6 +95,31 @@ class AudioPlayerRateTests(unittest.TestCase):
         player.latency_ms = -60.0
         self.assertAlmostEqual(player.heard_position_ms(), 1060.0)
 
+    def test_latency_scales_with_playback_rate(self) -> None:
+        """延迟是真实时间：慢放时只推进 rate 倍的歌曲时间，补偿要按倍速缩放。"""
+        player = AudioPlayer()
+
+        class Stub:
+            name = "pygame.mixer"
+            supports_seek = True
+            is_playing = True
+
+            def position_ms(self) -> float:
+                return 1000.0
+
+            def poll(self) -> None:  # pragma: no cover
+                return
+
+        player.backend = Stub()
+        player._playing = True
+        player.latency_ms = 200.0
+        player.rate = 1.0
+        self.assertAlmostEqual(player.heard_position_ms(), 800.0)
+        player.rate = 0.5           # 慢放：真实 200ms 只相当于歌曲 100ms
+        self.assertAlmostEqual(player.heard_position_ms(), 900.0)
+        player.rate = 0.1
+        self.assertAlmostEqual(player.heard_position_ms(), 980.0)
+
     def test_stretch_available_flag_matches_dependencies(self) -> None:
         # 当前环境装了 pygame-ce 与 numpy，因此变速不变调可用
         self.assertTrue(STRETCH_AVAILABLE)
