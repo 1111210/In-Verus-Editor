@@ -1676,31 +1676,35 @@ class PlayerApp:
         if isinstance(note, MouseSlide):
             color = (110, 230, 160) if note.direction >= 0 else (235, 210, 110)
             height = self.settings.slide_thickness
-            # 滑动朝向的一侧更厚、不透明度更高：起点侧薄而淡，终点侧厚而实
+            # 滑动朝向的一侧更厚、不透明度更高：起点 -> 终点 **厚度与透明度都渐变**
             start_x = MOUSE_LEFT + note.x_start * MOUSE_LEGAL_WIDTH
             end_x = MOUSE_LEFT + note.x_end * MOUSE_LEGAL_WIDTH
             thin = max(0.004, height * 0.25)
-            self._alpha_quad(
-                [
-                    self._proj(start_x, MOUSE_PLANE_HEIGHT, z),
-                    self._proj(end_x, MOUSE_PLANE_HEIGHT, z),
-                    self._proj(end_x, MOUSE_PLANE_HEIGHT + height, z),
-                    self._proj(start_x, MOUSE_PLANE_HEIGHT + thin, z),
-                ],
-                color,
-                96,
+            # 切成细条逐条插值出真正的渐变；条数按屏幕宽度取，宽的时候不会看到色带
+            span_px = abs(
+                self._proj(end_x, MOUSE_PLANE_HEIGHT, z)[0]
+                - self._proj(start_x, MOUSE_PLANE_HEIGHT, z)[0]
             )
-            mid_x = (start_x + end_x) / 2
-            self._alpha_quad(
-                [
-                    self._proj(mid_x, MOUSE_PLANE_HEIGHT, z),
-                    self._proj(end_x, MOUSE_PLANE_HEIGHT, z),
-                    self._proj(end_x, MOUSE_PLANE_HEIGHT + height, z),
-                    self._proj(mid_x, MOUSE_PLANE_HEIGHT + (thin + height) / 2, z),
-                ],
-                color,
-                232,
-            )
+            steps = max(12, min(64, int(span_px / 3.0) + 1))
+            alpha_near, alpha_far = 70, 236
+            for index in range(steps):
+                t0 = index / steps
+                t1 = (index + 1) / steps
+                xa = start_x + (end_x - start_x) * t0
+                xb = start_x + (end_x - start_x) * t1
+                ha = thin + (height - thin) * t0
+                hb = thin + (height - thin) * t1
+                alpha = int(round(alpha_near + (alpha_far - alpha_near) * (t0 + t1) / 2.0))
+                self._alpha_quad(
+                    [
+                        self._proj(xa, MOUSE_PLANE_HEIGHT, z),
+                        self._proj(xb, MOUSE_PLANE_HEIGHT, z),
+                        self._proj(xb, MOUSE_PLANE_HEIGHT + hb, z),
+                        self._proj(xa, MOUSE_PLANE_HEIGHT + ha, z),
+                    ],
+                    color,
+                    alpha,
+                )
             return
         else:
             assert isinstance(note, MouseClick)
@@ -1849,7 +1853,7 @@ class PlayerApp:
         )
         # 得分倍率（倍速^1.5）放在最大连击之后
         self.text(
-            self._result_multiplier_line(),
+            self._result_rate_line(),
             (split + 40, 226),
             self.f_mid,
             ACCENT,
@@ -1900,9 +1904,9 @@ class PlayerApp:
         assert self.judge is not None
         return f"最大连击：{self.judge.max_combo} / {self.judge.total_notes}"
 
-    def _result_multiplier_line(self) -> str:
-        """得分倍率（倍速^1.5）—— 放在最大连击后面。"""
-        return f"得分倍率：×{self.settings.rate ** 1.5:.2f}"
+    def _result_rate_line(self) -> str:
+        """倍速 —— 放在最大连击后面。"""
+        return f"倍速：{self.settings.rate:.1f}x"
 
     def _event_result(self, event) -> None:
         if event.type == pygame.MOUSEMOTION:

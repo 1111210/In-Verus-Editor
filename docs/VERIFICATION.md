@@ -113,7 +113,7 @@ python tools/check_audio.py
 
 | 项目 | 命令 | 结果 |
 | --- | --- | --- |
-| 单元测试（含 Tk 画布冒烟测试、应用级测试与游玩器测试） | `python -m unittest discover -s tests -t .` | Ran 325 tests — **OK** |
+| 单元测试（含 Tk 画布冒烟测试、应用级测试与游玩器测试） | `python -m unittest discover -s tests -t .` | Ran 325 tests — **OK**（含滑键渐变 / 结算显示倍速） |
 | 需求验收清单 | `python tools/acceptance.py` | 18 项全部 `[OK ]`，结论：全部通过（含游玩器 4 项） |
 | 音频后端 | `python tools/check_audio.py` | 9 项全部 `[OK ]`（pygame.mixer 真实播放，延迟补偿正确） |
 | 示例谱面生成 | `python run_editor.py --make-demo` | 生成 `charts/demo/demo.json`（6K 32 / 区域 3 / 滑键 6 / 点击按键 4 / 4 个速度组） |

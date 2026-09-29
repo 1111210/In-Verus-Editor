@@ -674,8 +674,12 @@ class PlayerAppSmokeTests(unittest.TestCase):
             app._draw_pattern(slide, app._head_ms(slide))
         finally:
             app._alpha_quad, app._line = original_alpha, original_line
-        self.assertEqual(len(alphas), 2, "滑键画两层：底 + 朝向侧")
-        self.assertGreater(alphas[1], alphas[0], "朝向的一侧不透明度更高")
+        self.assertGreater(len(alphas), 8, "滑键切成细条做渐变")
+        self.assertLess(alphas[0], alphas[-1], "朝向的一侧不透明度更高")
+        self.assertTrue(
+            all(a <= b for a, b in zip(alphas, alphas[1:])), "透明度必须单调渐变"
+        )
+        self.assertGreater(alphas[-1] - alphas[0], 100, "渐变幅度要明显")
         self.assertNotIn(WHITE, lines, "滑键不再画中间的实线")
 
         click = next(n for n in chart.all_notes() if isinstance(n, MouseClick))
@@ -713,7 +717,7 @@ class PlayerAppSmokeTests(unittest.TestCase):
         self.assertGreater(width, height, "鼠标指针要矮胖")
 
     def test_result_page_shows_combo_ratio_and_multiplier(self) -> None:
-        """结算：最大连击写成 x / 总判定数，倍率放在它后面。"""
+        """结算：最大连击写成 x / 总判定数，倍速放在它后面。"""
         app = self.app
         app.settings.rate = 2.0
         app._enter_loading()
@@ -723,8 +727,10 @@ class PlayerAppSmokeTests(unittest.TestCase):
         combo_line = app._result_combo_line()
         self.assertIn("/", combo_line)
         self.assertIn(str(app.judge.total_notes), combo_line)
-        self.assertIn("×", app._result_multiplier_line())
-        self.assertAlmostEqual(app.settings.rate ** 1.5, 2.0 ** 1.5, places=6)
+        rate_line = app._result_rate_line()
+        self.assertIn("倍速", rate_line)
+        self.assertIn("2.0x", rate_line)
+        self.assertNotIn("×", rate_line)
         app._draw()
 
     def test_display_mode_cycles_window_borderless_fullscreen(self) -> None:
