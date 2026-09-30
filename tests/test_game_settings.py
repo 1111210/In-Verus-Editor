@@ -85,12 +85,19 @@ class PlayerSettingsTests(unittest.TestCase):
     def test_renderer_setting_roundtrip_and_repair(self) -> None:
         """渲染后端：默认软件渲染，可切 OpenGL，非法值回退软件。"""
         s = PS.PlayerSettings()
-        self.assertEqual(s.renderer, "software")
+        self.assertEqual(s.renderer, "panda3d")          # 默认后端是 Panda3D
+        # 老存档里的旧默认值 software 会被迁移到 panda3d，显式选择保留
+        self.assertEqual(PS.PlayerSettings.from_dict({"renderer": "software"}).renderer, "panda3d")
+        self.assertEqual(PS.PlayerSettings.from_dict({"renderer": "opengl"}).renderer, "opengl")
+        self.assertEqual(
+            PS.PlayerSettings.from_dict({"renderer": "software", "renderer2": True}).renderer,
+            "software",
+        )
         s.renderer = "opengl"
         s.normalize()
         self.assertEqual(s.renderer, "opengl")
         broken = PS.PlayerSettings.from_dict({"renderer": "vulkan"})
-        self.assertEqual(broken.renderer, "software")
+        self.assertEqual(broken.renderer, "panda3d")
         with tempfile.TemporaryDirectory() as tmp:
             path = os.path.join(tmp, "player.json")
             PS.save_settings(s, path)

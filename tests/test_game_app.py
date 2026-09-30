@@ -138,22 +138,26 @@ class PlayerAppSmokeTests(unittest.TestCase):
         self.assertIn("0.8", app.status_hint)
         app._draw_play()          # 暂停遮罩 + 提示都要能画
 
-    def test_renderer_switch_falls_back_without_gl(self) -> None:
-        """切到 OpenGL：能建上下文**且自检通过**才用 GL，否则回退软件并记住该配置。"""
+    def test_renderer_switch_cycles_panda_opengl_software(self) -> None:
+        """渲染后端三选一：Panda3D → OpenGL → 软件（不可用时自动回退）。"""
+        from rhythm_editor.game import glview
+
         app = self.app
-        self.assertEqual(app.renderer_name, "software")
-        app.settings_row = app._row_index("renderer")
-        app._adjust_setting(1)
-        if app.renderer_name == "opengl":
-            self.assertEqual(app.settings.renderer, "opengl")
-        else:
-            # GL 不可用（或画面全黑）时不要把坏配置留着，否则下次启动还是黑屏
-            self.assertEqual(app.settings.renderer, "software")
+        original_available, original_make = glview.available, app._make_display
+        glview.available = lambda: True                    # 假装 GL 可用，避免 dummy 回退干扰
+        app._make_display = lambda width, height, **kwargs: app.screen
+        try:
+            app.settings.renderer = "panda3d"
+            seen = []
+            for _ in range(3):
+                app._switch_renderer()
+                seen.append(app.settings.renderer)
+        finally:
+            glview.available, app._make_display = original_available, original_make
+        self.assertEqual(seen, ["opengl", "software", "panda3d"], "轮换顺序 Panda → OpenGL → 软件")
+        app.settings.renderer = "software"
         app._draw_menu()
-        app._present()          # 两种后端都要能呈现一帧
-        app._adjust_setting(1)  # 再切一次
-        self.assertEqual(app.settings.renderer, "software")
-        self.assertEqual(app.renderer_name, "software")
+        app._present()          # 三种后端都要能呈现一帧
 
     def test_chart_list_shows_metadata_and_recent(self) -> None:
         """主界面列出元数据；打开过的谱面进入「最近」并排在前面。"""

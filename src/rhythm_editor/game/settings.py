@@ -39,7 +39,7 @@ class PlayerSettings:
     side_lane_highlight: bool = False     # 6K 第 1 / 第 6 轨高亮
     mouse_sensitivity: float = 1.0        # 0.1 ~ 10
     unbounded_mouse: bool = False         # 无界鼠标：实际位置即判定位置
-    renderer: str = "software"            # software / opengl
+    renderer: str = "panda3d"            # panda3d / opengl / software
     rate: float = 1.0                     # 游玩倍速 0.1 ~ 1.5x（+/- 号 0.1 一档）
     autoplay: bool = False                # 自动播放（判定全 EXACT，分数倍率 -1x）
     music_volume: float = 1.0
@@ -64,8 +64,8 @@ class PlayerSettings:
         self.music_volume = min(1.0, max(0.0, float(self.music_volume)))
         self.hit_volume = min(1.0, max(0.0, float(self.hit_volume)))
         self.player_name = (self.player_name or "Player")[:24]
-        if self.renderer not in ("software", "opengl"):
-            self.renderer = "software"
+        if self.renderer not in ("panda3d", "opengl", "software"):
+            self.renderer = "panda3d"
         self.autoplay = bool(self.autoplay)
         unique: List[str] = []
         for path in self.recent:
@@ -76,7 +76,9 @@ class PlayerSettings:
 
     def to_dict(self) -> Dict[str, object]:
         self.normalize()
-        return asdict(self)
+        result = asdict(self)
+        result["renderer2"] = True          # 记录“已按新规则迁移过”
+        return result
 
     @property
     def scroll_ms(self) -> float:
@@ -99,7 +101,7 @@ class PlayerSettings:
             side_lane_highlight=bool(data.get("side_lane_highlight", False)),
             mouse_sensitivity=float(data.get("mouse_sensitivity", 1.0)),
             unbounded_mouse=bool(data.get("unbounded_mouse", False)),
-            renderer=str(data.get("renderer", "software")),
+            renderer=_renderer_from_dict(data),
             rate=float(data.get("rate", 1.0)),
             autoplay=bool(data.get("autoplay", False)),
             music_volume=float(data.get("music_volume", 1.0)),
@@ -119,6 +121,15 @@ def _speed_from_legacy(scroll_ms: object) -> float:
     if value <= 0.0:
         return 1.0
     return min(SPEED_MAX, max(SPEED_MIN, BASE_SCROLL_MS / value))
+
+
+def _renderer_from_dict(data: Dict[str, object]) -> str:
+    """渲染后端：默认 Panda3D；老存档里没记录的 "software" 视为旧默认值，一次性迁移。"""
+    value = str(data.get("renderer", "panda3d"))
+    if not data.get("renderer2"):          # 老存档标记
+        if value == "software":
+            value = "panda3d"              # 旧默认值 -> 换成 Panda3D（用户可在设置里改回）
+    return value
 
 
 def settings_path() -> str:

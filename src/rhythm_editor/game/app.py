@@ -389,18 +389,24 @@ class PlayerApp:
                 self._event_result(event)
 
     def _switch_renderer(self) -> None:
-        """F2 / 设置里切换软件 ↔ OpenGL（存进 player.json，下次仍生效）。"""
-        target = "opengl" if self.settings.renderer == "software" else "software"
+        """F2 / 设置里轮换：Panda3D → OpenGL → 软件（存进 player.json）。"""
+        order = ("panda3d", "opengl", "software")
+        current = self.settings.renderer if self.settings.renderer in order else "panda3d"
+        target = order[(order.index(current) + 1) % len(order)]
         self.settings.renderer = target
         psettings.save_settings(self.settings)
         self.gl_presenter = None
         self.gl_frames = 0
         self.gl_cost = 0.0
+        self.scene3d = None
         self.screen = self._make_display(self.w, self.h)
-        self.message = (
-            f"渲染后端：{'OpenGL' if self.renderer_name == 'opengl' else '软件渲染'}"
-            "（F2 切换）"
+        if target == "panda3d":
+            self._ensure_scene3d()
+        self.renderer_name = (
+            "panda3d" if self.scene3d is not None
+            else ("opengl" if self.gl_presenter is not None else "software")
         )
+        self.message = f"渲染后端：{self.renderer_name}（F2 轮换）"
         print(f"[In Verus 游玩器] 渲染后端：{self.renderer_name} · 窗口 {self.w}x{self.h}", flush=True)
 
     # ------------------------------------------------------ 窗口尺寸 / 全屏
@@ -567,18 +573,33 @@ class PlayerApp:
             return False
         if os.environ.get("SDL_VIDEODRIVER", "").lower() == "dummy":
             return False                          # 测试环境不建 GL 上下文
-        if not os.environ.get("VERUS_PANDA"):
-            # Panda 层的取景/投影已按构图拟合标定（8 角点平均误差 31px），
-            # 但卡片渲染出来的实际形态与预期不符（判定线卡片成了一大块白带），
-            # 说明卡片放置/缩放还有 bug；先保持显式开关，默认仍用软件 3D。
+        if self.settings.renderer != "panda3d":
+            return False
+        if not render3d.available():
+            self._fallback_renderer(f"缺少 Panda3D：{render3d.import_error()}")
+            return False
+        if os.environ.get("VERUS_SOFTWARE_3D"):
             return False
         try:
             self.scene3d = render3d.Scene3D(self.w, self.h, self.texture_dir)
         except Exception as exc:                  # pragma: no cover - 依赖驱动
-            self.message = f"Panda3D 初始化失败：{exc}"
-            self.scene3d = None
+            self._fallback_renderer(f"Panda3D 初始化失败：{exc}")
             return False
+        self.renderer_name = "panda3d"
         return True
+
+    def _fallback_renderer(self, why: str) -> None:
+        """Panda3D 不可用 -> OpenGL；OpenGL 也不可用 -> 软件（用户要求的回退链）。"""
+        target = "opengl" if glview.available() else "software"
+        self.settings.renderer = target
+        psettings.save_settings(self.settings)
+        self.scene3d = None
+        self.screen = self._make_display(self.w, self.h)
+        self.renderer_name = "opengl" if self.gl_presenter is not None else "software"
+        self.message = (
+            f"{why}，已回退到{'OpenGL' if self.renderer_name == 'opengl' else '软件'}渲染"
+        )
+        print(f"[In Verus 游玩器] {self.message}", flush=True)
         self.texture_avg = {}
         surface = self.textures.get("region_area")
         if surface is not None:
@@ -816,7 +837,7 @@ class PlayerApp:
         ("unbounded_mouse", "无界鼠标模式"),
         ("music_volume", "音乐音量"),
         ("hit_volume", "打击音效音量"),
-        ("renderer", "渲染后端（软件 / OpenGL）"),
+        ("renderer", "渲染后端（Panda3D / OpenGL / 软件）"),
         ("rate", "倍速（0.1~1.5x）"),
         ("autoplay", "自动播放（Autoplay）"),
     )
@@ -877,7 +898,8 @@ class PlayerApp:
         if key == "hit_volume":
             return f"{s.hit_volume * 100:.0f}%"
         if key == "renderer":
-            return "OpenGL（切换即生效）" if s.renderer == "opengl" else "软件"
+            return {"panda3d": "Panda3D（3D 场景）", "opengl": "OpenGL（软件画面经 GL 呈现）",
+                    "software": "软件"}[s.renderer]
         if key == "autoplay":
             return "开（判定全 EXACT · 分数倍率 ×-倍速^1.5）" if s.autoplay else "关"
         return f"{_fmt_num(s.rate)}x（得分 ×{s.rate ** 1.5:.2f}）"

@@ -1,5 +1,22 @@
 # 更新日志
 
+## 0.3.26 — 游玩器默认用 Panda3D 渲染
+
+* **渲染后端默认改为 Panda3D**：3D 场景（轨道 / 判定线 / 单键 / 长按 / 空域 / 滑键 / 鼠标点击 / 场景内指针）
+  由 Panda3D 离屏渲染，HUD 仍由 pygame 叠加。
+* **保留 OpenGL 与软件渲染**：设置里「渲染后端」改为三选一（Panda3D / OpenGL / 软件），
+  F2 按 **Panda3D → OpenGL → 软件** 轮换，选择写入 player.json。
+* **回退链**：Panda3D 不可用 / 初始化失败 → 自动回退 OpenGL；
+  OpenGL 也不可用 → 回退**软件渲染**（并把回退结果写回配置，避免每次启动重试）。
+* 老存档里没有 
+enderer2 标记、且 
+enderer 是旧默认值 software 的，会**一次性迁移**到 panda3d；
+  显式选过 OpenGL / 软件的配置保留不动。
+* 顺带修正：Scene3D 创建成功后 
+enderer_name 同步为 panda3d（界面显示的后端名称不再误报）。
+* 待办：场景内指针三角形的朝向仍需微调（目前尖端未指向远处）。
+
+
 ## 0.3.25 — 3D 渲染层换成 Panda3D（第一阶段）
 
 * 依赖：安装 **Panda3D 1.10.16**（有 Python 3.14 的 Windows wheel），写进 `requirements.txt`；
