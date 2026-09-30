@@ -568,9 +568,9 @@ class PlayerApp:
         if os.environ.get("SDL_VIDEODRIVER", "").lower() == "dummy":
             return False                          # 测试环境不建 GL 上下文
         if not os.environ.get("VERUS_PANDA"):
-            # Panda 层的“判定线定位/HUD 锚点/指针”已标定通过，但画面构图与软件版风格差异较大
-            # （鼠标平面在低俯角下被强烈压缩、渐变卡片占屏较多），默认仍走软件 3D；
-            # 想对比时设置 VERUS_PANDA=1。
+            # Panda 层的取景/投影已按构图拟合标定（8 角点平均误差 31px），
+            # 但卡片渲染出来的实际形态与预期不符（判定线卡片成了一大块白带），
+            # 说明卡片放置/缩放还有 bug；先保持显式开关，默认仍用软件 3D。
             return False
         try:
             self.scene3d = render3d.Scene3D(self.w, self.h, self.texture_dir)

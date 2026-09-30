@@ -89,8 +89,8 @@ class Scene3D:
         self.height = height
         self.decorations = decorations
         # 投影公式按渲染实测校准的线性系数（见 project() 的说明）
-        self.row_scale = 1.07
-        self.row_offset = -331.0
+        self.row_scale = 0.604
+        self.row_offset = 140.9
         self._textures: Dict[str, "Texture"] = {}
         self._pool: List["NodePath"] = []
         self._used = 0
@@ -102,9 +102,9 @@ class Scene3D:
         self.static_root = self.root.attachNewNode("static")
         self.dynamic_root = self.root.attachNewNode("dynamic")
         self.build_static()
-        # 取景按“渲染出来的判定线行号”实测标定（目标 = 软件版：6K 行 734 / 鼠标行 506）：
-        # fov=38 pitch=8 back=1.8 height=1.4 -> 实测 731 / 512（总误差 10px）
-        self.set_camera(pitch=8.0, fov=38.0, back=1.8, height=1.4)
+        # 取景标定：以**构图贴近软件版**为目标（两个平面的 8 个角点平均误差 31px），
+        # 由 tools/fit_panda_composition.py 搜索得到。
+        self.set_camera(pitch=19.0, fov=32.0, back=1.7, height=1.5)
 
     # ------------------------------------------------------------------ 设置
     def _make_buffer(self, width: int, height: int) -> None:
