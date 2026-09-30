@@ -300,13 +300,15 @@ class Scene3D:
         length = 0.26
         width = MOUSE_LEGAL_WIDTH * 0.14
         x = MOUSE_LEFT + norm_x * MOUSE_LEGAL_WIDTH
-        lifted = plane_y + 0.012                     # 抬一点点，避免和鼠标平面共面闪烁
+        # 贴图“上”= 顶点；卡片铺在水平面里、绕法线转 180° 让顶点指向远处（屏幕上方）。
+        # 只抬 0.004 单位：既仍算“在物件运动的水平面内”，又避免和平面共面闪烁。
+        lifted = plane_y + 0.004
         self.quad("mouse_marker_solid", x, length * 0.5, width, length, lifted,
-                  (1, 1, 1, 1))
+                  (1, 1, 1, 1), angle=180.0)
         if outline_x is not None:
             ox = MOUSE_LEFT + outline_x * MOUSE_LEGAL_WIDTH
             self.quad("mouse_marker_outline", ox, length * 0.5, width, length, lifted,
-                      (1, 1, 1, 1))
+                      (1, 1, 1, 1), angle=180.0)
 
     def render(self):
         """渲染一帧并返回 ``pygame.Surface``（RGB）。"""
