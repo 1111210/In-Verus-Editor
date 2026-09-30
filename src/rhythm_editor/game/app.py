@@ -260,6 +260,8 @@ class PlayerApp:
         self._window_user_change = False
         self._window_fix_logged = 0
         self._last_input_at = 0.0                  # 最近一次鼠标/键盘输入的时刻
+        self._refresh_cache: Optional[Tuple[int, float]] = None   # (刷新率, 取的时刻)
+        self.fps_smooth = 0.0                      # 实时帧率（指数平滑）
         self._prime_window()
         try:
             desktop = pygame.display.get_desktop_sizes()[0]
@@ -339,6 +341,112 @@ class PlayerApp:
         except Exception:                                  # pragma: no cover - 老系统
             pass
         return 1.0
+
+    # ------------------------------------------------ 屏幕刷新率 / 期望帧率
+    def _display_refresh(self) -> int:
+        """**窗口所在那块屏幕**的刷新率（Hz）；识别不了返回 0。
+
+        多屏刷新率可能不同：SDL 的 ``get_current_refresh_rate()`` 返回的就是窗口当前
+        所在显示器的模式；拿不到时退回 Win32（``MonitorFromWindow`` + ``EnumDisplaySettings``）。
+        """
+        now = time.perf_counter()
+        if self._refresh_cache and now - self._refresh_cache[1] < 1.0:
+            return self._refresh_cache[0]
+        rate = 0
+        try:
+            rate = int(pygame.display.get_current_refresh_rate())
+        except Exception:                                  # pragma: no cover - 老 pygame
+            rate = 0
+        if rate <= 0 and os.name == "nt":
+            rate = self._refresh_from_window_monitor()
+        self._refresh_cache = (rate, now)
+        return rate
+
+    @staticmethod
+    def _refresh_from_window_monitor() -> int:
+        """Win32 兜底：取窗口所在监视器的当前显示模式刷新率。"""
+        try:
+            import ctypes
+            import ctypes.wintypes
+
+            class DEVMODEW(ctypes.Structure):
+                _fields_ = [
+                    ("dmDeviceName", ctypes.wintypes.WCHAR * 32),
+                    ("dmSpecVersion", ctypes.wintypes.WORD),
+                    ("dmDriverVersion", ctypes.wintypes.WORD),
+                    ("dmSize", ctypes.wintypes.WORD),
+                    ("dmDriverExtra", ctypes.wintypes.WORD),
+                    ("dmFields", ctypes.wintypes.DWORD),
+                    ("dmPositionX", ctypes.c_long), ("dmPositionY", ctypes.c_long),
+                    ("dmDisplayOrientation", ctypes.wintypes.DWORD),
+                    ("dmDisplayFixedOutput", ctypes.wintypes.DWORD),
+                    ("dmColor", ctypes.c_short), ("dmDuplex", ctypes.c_short),
+                    ("dmYResolution", ctypes.c_short), ("dmTTOption", ctypes.c_short),
+                    ("dmCollate", ctypes.c_short),
+                    ("dmFormName", ctypes.wintypes.WCHAR * 32),
+                    ("dmLogPixels", ctypes.wintypes.WORD),
+                    ("dmBitsPerPel", ctypes.wintypes.DWORD),
+                    ("dmPelsWidth", ctypes.wintypes.DWORD),
+                    ("dmPelsHeight", ctypes.wintypes.DWORD),
+                    ("dmDisplayFlags", ctypes.wintypes.DWORD),
+                    ("dmDisplayFrequency", ctypes.wintypes.DWORD),
+                    ("dmICMMethod", ctypes.wintypes.DWORD),
+                    ("dmICMIntent", ctypes.wintypes.DWORD),
+                    ("dmMediaType", ctypes.wintypes.DWORD),
+                    ("dmDitherType", ctypes.wintypes.DWORD),
+                    ("dmReserved1", ctypes.wintypes.DWORD),
+                    ("dmReserved2", ctypes.wintypes.DWORD),
+                    ("dmPanningWidth", ctypes.wintypes.DWORD),
+                    ("dmPanningHeight", ctypes.wintypes.DWORD),
+                ]
+
+            class MONITORINFOEXW(ctypes.Structure):
+                _fields_ = [
+                    ("cbSize", ctypes.wintypes.DWORD),
+                    ("rcMonitor", ctypes.wintypes.RECT),
+                    ("rcWork", ctypes.wintypes.RECT),
+                    ("dwFlags", ctypes.wintypes.DWORD),
+                    ("szDevice", ctypes.wintypes.WCHAR * 32),
+                ]
+
+            user32 = ctypes.windll.user32
+            hwnd = int(pygame.display.get_wm_info().get("window") or 0)
+            if not hwnd:
+                return 0
+            monitor = user32.MonitorFromWindow(ctypes.c_void_p(hwnd), 2)   # NEAREST
+            info = MONITORINFOEXW()
+            info.cbSize = ctypes.sizeof(info)
+            if not monitor or not user32.GetMonitorInfoW(monitor, ctypes.byref(info)):
+                return 0
+            mode = DEVMODEW()
+            mode.dmSize = ctypes.sizeof(DEVMODEW)
+            if not user32.EnumDisplaySettingsW(info.szDevice, -1, ctypes.byref(mode)):
+                return 0
+            return int(mode.dmDisplayFrequency)
+        except Exception:                                  # pragma: no cover - 依赖系统
+            return 0
+
+    def _fps_choices(self) -> Tuple[int, ...]:
+        """期望帧率档位（高 → 低）：屏幕刷新率本身，以及不超过它的 30 / 60 / 120 / 240。"""
+        refresh = self._display_refresh()
+        values = [rate for rate in (240, 120, 60, 30) if refresh <= 0 or rate <= refresh]
+        if refresh > 0 and refresh not in values:
+            values.append(refresh)
+        if not values:
+            values = [30]
+        return tuple(sorted(set(values), reverse=True))
+
+    def _target_fps(self) -> int:
+        """实际帧率上限（Hz）。档位不在当前屏幕的可选范围内时取不超过它的最大档。"""
+        choices = self._fps_choices()
+        refresh = self._display_refresh()
+        stored = int(getattr(self.settings, "target_fps", 0) or 0)
+        if stored <= 0:                                    # 未设置 = 跟随屏幕刷新率
+            return refresh if refresh > 0 else choices[0]
+        if stored in choices:
+            return stored
+        lower = [value for value in choices if value <= stored]
+        return lower[0] if lower else choices[-1]
 
     def _gl_self_check(self, surface: pygame.Surface) -> bool:
         """GL 自检帧：中央画白块后回读像素，全黑或 GL 报错就认为 GL 不能正常显示。"""
@@ -457,7 +565,8 @@ class PlayerApp:
 
     def run(self) -> int:
         while self.running:
-            dt = self.clock.tick(120) / 1000.0
+            target = self._target_fps()
+            dt = self.clock.tick(target if target > 0 else 240) / 1000.0
             self._events()
             self._update(dt)
             self._draw()
@@ -1117,6 +1226,7 @@ class PlayerApp:
         ("music_volume", "音乐音量"),
         ("hit_volume", "打击音效音量"),
         ("renderer", "渲染后端（Panda3D / OpenGL / 软件）"),
+        ("target_fps", "期望帧率（屏幕刷新率 / 30 / 60 / 120 / 240）"),
         ("rate", "倍速（0.1~1.5x）"),
         ("autoplay", "自动播放（Autoplay）"),
     )
@@ -1179,6 +1289,11 @@ class PlayerApp:
         if key == "renderer":
             return {"panda3d": "Panda3D（3D 场景）", "opengl": "OpenGL（软件画面经 GL 呈现）",
                     "software": "软件"}[s.renderer]
+        if key == "target_fps":
+            refresh = self._display_refresh()
+            value = self._target_fps()
+            hint = "（屏幕刷新率）" if refresh > 0 and value == refresh else ""
+            return f"{value} FPS{hint}"
         if key == "autoplay":
             return "开（判定全 EXACT · 分数倍率 ×-倍速^0.6）" if s.autoplay else "关"
         return f"{_fmt_num(s.rate)}x（得分 ×{s.rate ** 0.6:.2f}）"
@@ -1250,6 +1365,8 @@ class PlayerApp:
             self._prompt_number(key)
         elif key in self.TOGGLE_ROWS:
             setattr(s, key, not getattr(s, key))
+        elif key == "target_fps":
+            self._adjust_setting(1)                   # 回车 = 往后一档
         elif key == "renderer":
             self._switch_renderer()
         s.normalize()
@@ -1298,7 +1415,13 @@ class PlayerApp:
 
     def _adjust_setting(self, step: int) -> None:
         key = self._row_key()
-        if key in self.NUMERIC_ROWS:
+        if key == "target_fps":
+            # 档位（高 → 低）：屏幕刷新率 / 不超过它的 30·60·120·240
+            choices = self._fps_choices()
+            current = self._target_fps()
+            index = choices.index(current) if current in choices else 0
+            self.settings.target_fps = choices[(index + step) % len(choices)]
+        elif key in self.NUMERIC_ROWS:
             low, high, delta = self.NUMERIC_ROWS[key]
             value = min(high, max(low, self._setting_number(key) + delta * step))
             self._set_setting_number(key, round(value, 3))
@@ -1603,6 +1726,10 @@ class PlayerApp:
 
     def _update(self, dt: float) -> None:
         self._watch_window()
+        if dt > 0:
+            instant = 1.0 / dt                      # 实时帧率（指数平滑，HUD 左下角显示）
+            self.fps_smooth = (instant if self.fps_smooth <= 0.0
+                               else self.fps_smooth * 0.9 + instant * 0.1)
         # 慢放后端（重采样）需要每帧喂下一段窗口；不喂的话低倍速时只会播第一段，
         # 谱面时钟会跟着卡住、音乐随后消失
         self.audio.poll()
@@ -2823,6 +2950,11 @@ class PlayerApp:
         if self.judge.combo >= 5:
             base_y = self._judge_line_screen_y(MOUSE_PLANE_HEIGHT)
             self.center_text(f"{self.judge.combo}", base_y - 170, self.f_big, (255, 226, 120))
+        # 左下角：实时帧率（含当前档位，方便对照是不是被上限卡住）
+        target = self._target_fps()
+        fps = self.fps_smooth if self.fps_smooth > 0 else self.clock.get_fps()
+        self.text(f"FPS {fps:.0f} · 上限 {target}",
+                  (24, self.h - int(30 * self.ui_scale)), self.f_small, DIM)
 
     def _hud_right_lines(self) -> Tuple[str, ...]:
         """HUD 右上角四行：准度/倍速、分数、连击、各判定数量。

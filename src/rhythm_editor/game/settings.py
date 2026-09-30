@@ -40,6 +40,7 @@ class PlayerSettings:
     mouse_sensitivity: float = 1.0        # 0.1 ~ 10
     unbounded_mouse: bool = False         # 无界鼠标：实际位置即判定位置
     renderer: str = "panda3d"            # panda3d / opengl / software
+    target_fps: int = 0                   # 期望帧率（Hz）；0 = 跟随窗口所在屏幕的刷新率
     rate: float = 1.0                     # 游玩倍速 0.1 ~ 1.5x（+/- 号 0.1 一档）
     autoplay: bool = False                # 自动播放（判定全 EXACT，分数倍率 -1x）
     music_volume: float = 1.0
@@ -60,6 +61,7 @@ class PlayerSettings:
         self.audio_latency_ms = min(5000.0, max(-5000.0, float(self.audio_latency_ms)))
         self.speed = round(min(SPEED_MAX, max(SPEED_MIN, float(self.speed))), 1)
         self.mouse_sensitivity = min(10.0, max(0.1, float(self.mouse_sensitivity)))
+        self.target_fps = int(min(1000, max(0, int(self.target_fps or 0))))
         self.rate = round(min(RATE_MAX, max(RATE_MIN, float(self.rate))), 3)
         self.music_volume = min(1.0, max(0.0, float(self.music_volume)))
         self.hit_volume = min(1.0, max(0.0, float(self.hit_volume)))
@@ -102,6 +104,7 @@ class PlayerSettings:
             mouse_sensitivity=float(data.get("mouse_sensitivity", 1.0)),
             unbounded_mouse=bool(data.get("unbounded_mouse", False)),
             renderer=_renderer_from_dict(data),
+            target_fps=int(data.get("target_fps", 0) or 0),
             rate=float(data.get("rate", 1.0)),
             autoplay=bool(data.get("autoplay", False)),
             music_volume=float(data.get("music_volume", 1.0)),

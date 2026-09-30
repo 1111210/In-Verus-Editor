@@ -1201,5 +1201,39 @@ class PlayerAppSmokeTests(unittest.TestCase):
         self.assertEqual(len(plays), 1, "滑键命中也应该响打击音")
 
 
+    def test_target_fps_choices_follow_window_monitor(self) -> None:
+        """期望帧率：档位跟随**窗口所在屏幕**的刷新率（多屏刷新率不同也要对）。"""
+        app = self.app
+        app._display_refresh = lambda: 144          # 假装窗口在一块 144Hz 屏上
+        self.assertEqual(app._fps_choices(), (144, 120, 60, 30))
+        app.settings.target_fps = 0                 # 未设置 = 跟随屏幕刷新率
+        self.assertEqual(app._target_fps(), 144)
+        self.assertIn("144", app._setting_value_text("target_fps"))
+        app.settings_row = app._row_index("target_fps")
+        app._adjust_setting(1)                      # 144 -> 120
+        self.assertEqual(app.settings.target_fps, 120)
+        self.assertEqual(app._target_fps(), 120)
+        app.settings.target_fps = 200               # 换屏后旧档位不合法：取不超过它的最大档
+        self.assertEqual(app._target_fps(), 144)
+        app.settings.target_fps = 20
+        self.assertEqual(app._target_fps(), 30, "低于最低档时取最低档")
+        app._display_refresh = lambda: 60           # 换到 60Hz 屏：240/120 档位消失
+        self.assertEqual(app._fps_choices(), (60, 30))
+        app.settings.target_fps = 120
+        self.assertEqual(app._target_fps(), 60)
+
+    def test_play_hud_shows_live_fps(self) -> None:
+        app = self.app
+        app._enter_loading()
+        app._start_play()
+        app.fps_smooth = 123.0
+        seen = []
+        original = app.text
+        app.text = lambda content, pos, font=None, color=None: seen.append(content)
+        try:
+            app._draw_hud(0.0)
+        finally:
+            app.text = original
+        self.assertTrue(any("FPS" in text for text in seen), "游玩界面要显示实时帧率")
 if __name__ == "__main__":
     unittest.main()
