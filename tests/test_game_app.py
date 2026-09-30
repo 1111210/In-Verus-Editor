@@ -864,53 +864,46 @@ class PlayerAppSmokeTests(unittest.TestCase):
         app._draw_popups()                     # 飘字要能画出来
 
     def test_slide_direction_and_click_colors(self) -> None:
-        """滑键：朝向侧更厚更实、没有白线；鼠标点击按键：所有线都是红色。"""
-        from rhythm_editor.game.app import MOUSE_PLANE_HEIGHT, WHITE, MouseClick, MouseSlide
+        """滑键 / 鼠标点击按键改用预设贴图：主体、箭头、范围、菱形、边界各就各位。"""
+        from rhythm_editor.game.app import MOUSE_PLANE_HEIGHT, MouseClick, MouseSlide
 
         app = self.app
         app._enter_loading()
         app._start_play()
+        self.assertTrue(app.textures, "加载阶段要读入预设贴图")
         chart = app.chart
         slide = next(n for n in chart.all_notes() if isinstance(n, MouseSlide))
-        alphas = []
-        lines = []
-        original_alpha, original_line = app._alpha_quad, app._line
-        app._alpha_quad = lambda points, color, alpha: alphas.append(alpha)
-        app._line = lambda a, b, color, width=2: lines.append(color)
+        used = []
+        original_blit = app._blit_tex
+        app._blit_tex = lambda name, rect, flip_x=False, alpha=255: (
+            used.append((name, flip_x)),
+            original_blit(name, rect, flip_x, alpha),
+        )[1]
         try:
             app._draw_pattern(slide, app._head_ms(slide))
         finally:
-            app._alpha_quad, app._line = original_alpha, original_line
-        self.assertGreater(len(alphas), 8, "滑键切成细条做渐变")
-        self.assertLess(alphas[0], alphas[-1], "朝向的一侧不透明度更高")
-        self.assertTrue(
-            all(a <= b for a, b in zip(alphas, alphas[1:])), "透明度必须单调渐变"
-        )
-        self.assertGreater(alphas[-1] - alphas[0], 100, "渐变幅度要明显")
-        self.assertNotIn(WHITE, lines, "滑键不再画中间的实线")
+            app._blit_tex = original_blit
+        names = [item[0] for item in used]
+        expected_body = "slide_body_right" if slide.direction >= 0 else "slide_body_left"
+        self.assertIn(expected_body, names, "滑键主体用贴图")
+        other = "slide_body_left" if slide.direction >= 0 else "slide_body_right"
+        self.assertNotIn(other, names, "方向不同用不同的主体贴图")
 
         click = next(n for n in chart.all_notes() if isinstance(n, MouseClick))
-        lines = []
-        fills = []
-        original_alpha2 = app._alpha_quad
-        app._line = lambda a, b, color, width=2: lines.append(color)
-        app._alpha_quad = lambda points, color, alpha: fills.append(alpha)
+        used = []
+        app._blit_tex = lambda name, rect, flip_x=False, alpha=255: (
+            used.append((name, flip_x)),
+            original_blit(name, rect, flip_x, alpha),
+        )[1]
         try:
             app._draw_pattern(click, app._head_ms(click))
         finally:
-            app._line = original_line
-            app._alpha_quad = original_alpha2
-        self.assertTrue(lines)
-        for color in lines:
-            self.assertGreater(color[0], 200, "鼠标点击按键的线应该是红色")
-            self.assertLess(color[1], 130)
-        # 中间厚、两边薄的菱形 + 透明度渐变
-        self.assertGreater(len(fills), 8, "点击按键切成细条做渐变")
-        middle = fills[len(fills) // 2]
-        self.assertGreater(middle, fills[0], "中间更实、两端更淡")
-        self.assertGreater(middle, fills[-1])
-        self.assertGreaterEqual(middle, 220)
-        self.assertLessEqual(max(fills[0], fills[-1]), 60)
+            app._blit_tex = original_blit
+        names = [item[0] for item in used]
+        self.assertIn("click_range", names, "范围标识用贴图")
+        self.assertIn("click_diamond", names, "位置标识用贴图")
+        self.assertEqual(names.count("click_edge"), 2, "左右边界各一张（右侧镜像）")
+        self.assertTrue(any(flip for name, flip in used if name == "click_edge"), "右边界用镜像")
 
         # 鼠标指针（三角形）躺在物件运动的水平面内
         points = []
@@ -1074,7 +1067,7 @@ class PlayerAppSmokeTests(unittest.TestCase):
         original_alpha = app._alpha_quad
         app._quad = lambda points, color: quads.append(points)
         app._line = lambda a, b, color, width=2: lines.append((a, b, color))
-        app._alpha_quad = lambda points, color, alpha: fills.append((list(points), alpha))
+        app._alpha_quad = lambda points, color, alpha: fills.append((list(points), alpha, color))
         try:
             app._draw_planes(0.0)
         finally:
@@ -1084,7 +1077,9 @@ class PlayerAppSmokeTests(unittest.TestCase):
         # 原来的 6K 平面边线也算同色，这里只要求鼠标平面“从起点到判定线”的那两条消失
         self.assertTrue(fills, "鼠标平面要有一层渐变蓝底")
         self.assertGreater(len(fills), 8, "渐变要足够细腻")
-        alphas = [alpha for _points, alpha in fills]
+        # 只统计鼠标平面蓝底渐变（边界窄条也是 _alpha_quad，颜色不同）
+        fills = [entry for entry in fills if entry[2] == (58, 108, 200)]
+        alphas = [alpha for _points, alpha, _color in fills]
         self.assertGreater(alphas[0], alphas[-1], "靠近判定线更实、远处更透")
         self.assertLessEqual(alphas[0], 100, "只是『略微不透明』")
         self.assertGreaterEqual(alphas[-1], 0)
@@ -1106,7 +1101,8 @@ class PlayerAppSmokeTests(unittest.TestCase):
         )
         self.assertAlmostEqual(START_Z, 12.0, places=6)
         # 6K 平面底色仍然只有一个四边形
-        self.assertEqual(len(quads), 1)
+        # 贴图版轨道不再画底色四边形（缺贴图时才会退回程序绘制）
+        self.assertLessEqual(len(quads), 1)
         self.assertFalse(
             any(
                 abs(a[1] - app._proj(0.0, MOUSE_PLANE_HEIGHT, START_Z)[1]) < 30

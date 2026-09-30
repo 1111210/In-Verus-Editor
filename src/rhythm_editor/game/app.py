@@ -27,6 +27,7 @@ from ..model.notes import LaneNote, MouseClick, MouseRegion, MouseSlide, Note
 from ..metronome import Metronome
 from . import settings as psettings
 from . import glview
+from . import textures
 from .judge import BREAK, EXACT, EXACT_MIXED, GRADES, NEAR, Judge
 from .scene import (
     K6_LEFT,
@@ -192,6 +193,11 @@ class PlayerApp:
         self._overlay: Optional[pygame.Surface] = None
         self._plane_strips_key: Optional[Tuple[int, int, int]] = None
         self._plane_strips: List[float] = []
+        # 预设贴图（在“加载中”阶段一次性读入 + 规格化，游戏内只做缩放缓存）
+        self.texture_dir = os.path.join(self.root, "assets", "textures", "player")
+        self.textures: dict = {}
+        self.texture_avg: dict = {}          # 边界等窄条用平均色画正梯形
+        self._tex_cache: dict = {}
         self.gl_cost = 0.0                 # OpenGL 呈现耗时（指数平滑，太慢就回退）
         self.gl_frames = 0
         self.display_mode = "windowed"     # windowed / borderless / fullscreen
@@ -535,7 +541,72 @@ class PlayerApp:
             self.state = "settings"
 
     def _enter_loading(self) -> None:
+        self._load_textures()
         self._begin_chart(self.paths[self.selected])
+
+    def _load_textures(self) -> None:
+        """读入并规格化预设贴图（在加载页完成，避免游戏内卡顿）。"""
+        try:
+            self.textures = textures.load_textures(self.texture_dir)
+        except Exception as exc:                      # pragma: no cover - 缺文件
+            print(f"[In Verus 游玩器] 贴图加载失败（{exc}），使用占位图", flush=True)
+            self.textures = {}
+        self._tex_cache.clear()
+        self.texture_avg = {}
+        for name in (
+            "lane_edge_left_highlight",
+            "lane_edge_left_highlight_pressed",
+            "lane_edge_right_highlight",
+            "lane_edge_right_highlight_pressed",
+        ):
+            surface = self.textures.get(name)
+            if surface is not None:
+                self.texture_avg[name] = textures.average_color(surface)
+
+    def _tex(self, name: str):
+        """取一张贴图（没加载过就先加载一次）。"""
+        if not self.textures:
+            self._load_textures()
+        return self.textures.get(name)
+
+    def _tex_scaled(self, name: str, width: int, height: int):
+        """按目标尺寸缩放贴图，带缓存（游戏内不再重复缩放）。"""
+        width = max(1, int(width))
+        height = max(1, int(height))
+        key = (name, width, height)
+        cached = self._tex_cache.get(key)
+        if cached is not None:
+            return cached
+        surface = self._tex(name)
+        if surface is None:
+            return None
+        if surface.get_size() != (width, height):
+            surface = pygame.transform.smoothscale(surface, (width, height))
+        if len(self._tex_cache) > 512:                # 防止尺寸组合过多
+            self._tex_cache.clear()
+        self._tex_cache[key] = surface
+        return surface
+
+    def _blit_tex(self, name: str, rect, flip_x: bool = False, alpha: int = 255) -> bool:
+        """把贴图铺到屏幕上的矩形区域（返回是否真的画了）。"""
+        surface = self._tex_scaled(name, rect[2], rect[3])
+        if surface is None:
+            return False
+        if flip_x:
+            surface = pygame.transform.flip(surface, True, False)
+        if alpha < 255:
+            surface = surface.copy()
+            surface.set_alpha(alpha)
+        self.screen.blit(surface, (rect[0], rect[1]))
+        return True
+
+    @staticmethod
+    def _bbox(points):
+        """一组屏幕点 -> 外接矩形 (x, y, w, h)。"""
+        xs = [p[0] for p in points]
+        ys = [p[1] for p in points]
+        left, top = min(xs), min(ys)
+        return (left, top, max(1.0, max(xs) - left), max(1.0, max(ys) - top))
 
     def _begin_chart(self, path: str) -> bool:
         """读取谱面并进加载页；读不出来就留在主界面并给出提示。"""
@@ -1483,17 +1554,21 @@ class PlayerApp:
         self._line(a, b, color, max(1, int(width)))
 
     def _mouse_plane_strip_z(self, strips: int) -> List[float]:
-        """鼠标平面渐变用的 z 分界：按**屏幕高度**均匀切，渐变色带才均匀。
+        """鼠标平面渐变用的 z 分界（按屏幕高度均匀切，等价于 ``world_y=0.4``）。"""
+        return self._plane_strip_z(strips, MOUSE_PLANE_HEIGHT)
+
+    def _plane_strip_z(self, strips: int, world_y: float = 0.0) -> List[float]:
+        """某个水平面上按**屏幕高度**均匀切出来的 z 分界。
 
         直接按 z 均匀切的话，靠近判定线的一条会覆盖半屏（透视压缩），
-        远处又挤成一条；结果就是“下面一大片同色、上面突然变透明”。
+        远处又挤成一条；贴图会被拉得又宽又斜。按屏幕高度切就均匀了。
         """
-        key = (self.w, self.h, strips)
+        key = (self.w, self.h, strips, round(world_y, 3))
         if self._plane_strips_key == key:
             return self._plane_strips
         samples = 240
         zs = [START_Z * index / samples for index in range(samples + 1)]
-        ys = [self._proj(K6_LEFT, MOUSE_PLANE_HEIGHT, z)[1] for z in zs]
+        ys = [self._proj(K6_LEFT, world_y, z)[1] for z in zs]
         y_near, y_far = ys[0], ys[-1]
         boundaries: List[float] = []
         for index in range(strips + 1):
@@ -1567,14 +1642,35 @@ class PlayerApp:
         far_right = self._proj(K6_LEFT + width, 0.0, START_Z)
         near_left = self._proj(K6_LEFT, 0.0, 0.0)
         near_right = self._proj(K6_LEFT + width, 0.0, 0.0)
-        self._quad([far_left, far_right, near_right, near_left], (24, 26, 36))
-        self._line(far_left, near_left, K6_TINT, 1)
-        self._line(far_right, near_right, K6_TINT, 1)
+        # 每条轨道一段贴图（默认 / 按下），整条轨道按 z 切片铺开
+        lane_textured = all(
+            self._tex(f"lane_{index}_default") is not None for index in range(1, LANE_COUNT + 1)
+        )
+        if lane_textured:
+            for lane in range(LANE_COUNT):
+                name = (
+                    f"lane_{lane + 1}_pressed"
+                    if lane in self.pressed_lanes
+                    else f"lane_{lane + 1}_default"
+                )
+                self._blit_strip(
+                    name,
+                    K6_LEFT + lane * LANE_WIDTH,
+                    K6_LEFT + (lane + 1) * LANE_WIDTH,
+                    0.0,
+                    START_Z,
+                    slices=10,
+                )
+        else:
+            self._quad([far_left, far_right, near_right, near_left], (24, 26, 36))
+            self._line(far_left, near_left, K6_TINT, 1)
+            self._line(far_right, near_right, K6_TINT, 1)
         # 先画完 6K 平面自己的内容（车道线 / 侧轨高亮 / 按下高亮 / 小节线），
         # 它们都在**鼠标平面下方**，最后再让鼠标平面的蓝底渐变盖上去
-        for lane in range(LANE_COUNT + 1):
-            x = K6_LEFT + lane * LANE_WIDTH
-            self._line(self._proj(x, 0.0, START_Z), self._proj(x, 0.0, 0.0), (46, 48, 58), 1)
+        if not lane_textured:
+            for lane in range(LANE_COUNT + 1):
+                x = K6_LEFT + lane * LANE_WIDTH
+                self._line(self._proj(x, 0.0, START_Z), self._proj(x, 0.0, 0.0), (46, 48, 58), 1)
         if self.settings.side_lane_highlight:
             # 侧轨高亮：第 1 / 第 6 轨背景铺暗紫
             for lane in (0, LANE_COUNT - 1):
@@ -1589,21 +1685,48 @@ class PlayerApp:
                     ],
                     SIDE_TINT,
                 )
-        # 按下轨道时对应轨道高亮（按住期间一直亮）
-        for lane in sorted(self.pressed_lanes):
-            if not 0 <= lane < LANE_COUNT:
+        if not lane_textured:
+            # 按下轨道时对应轨道高亮（按住期间一直亮）——贴图版已用 lane_x_pressed
+            for lane in sorted(self.pressed_lanes):
+                if not 0 <= lane < LANE_COUNT:
+                    continue
+                x0 = K6_LEFT + lane * LANE_WIDTH
+                x1 = x0 + LANE_WIDTH
+                self._quad(
+                    [
+                        self._proj(x0, 0.0, START_Z),
+                        self._proj(x1, 0.0, START_Z),
+                        self._proj(x1, 0.0, 0.0),
+                        self._proj(x0, 0.0, 0.0),
+                    ],
+                    LANE_PRESS_TINT,
+                )
+        # 边界：高亮 / 高亮按下（左右各一条贴图）
+        edge_names = {}
+        for side in ("left", "right"):
+            pressed = any(0 <= lane < LANE_COUNT for lane in self.pressed_lanes)
+            key = f"lane_edge_{side}_highlight" + ("_pressed" if pressed else "")
+            if self._tex(key) is None:
+                key = f"lane_edge_{side}_highlight"
+            edge_names[side] = key
+        for side, x in (("left", K6_LEFT), ("right", K6_LEFT + width)):
+            name = edge_names[side]
+            color = self.texture_avg.get(name)
+            if color is None:
                 continue
-            x0 = K6_LEFT + lane * LANE_WIDTH
-            x1 = x0 + LANE_WIDTH
-            self._quad(
-                [
-                    self._proj(x0, 0.0, START_Z),
-                    self._proj(x1, 0.0, START_Z),
-                    self._proj(x1, 0.0, 0.0),
-                    self._proj(x0, 0.0, 0.0),
-                ],
-                LANE_PRESS_TINT,
-            )
+            # 边界是斜的窄条：用贴图的平均色按屏幕高度切片画正梯形（贴图窄条直接拉伸会糊成块）
+            boundaries = self._plane_strip_z(10, 0.0)
+            for za, zb in zip(boundaries, boundaries[1:]):
+                quad = [
+                    self._proj(x - 0.008, 0.0, za),
+                    self._proj(x + 0.008, 0.0, za),
+                    self._proj(x + 0.008, 0.0, zb),
+                    self._proj(x - 0.008, 0.0, zb),
+                ]
+                if color[3] >= 250:
+                    self._quad(quad, color[:3])
+                else:
+                    self._alpha_quad(quad, color[:3], color[3])
         # 6K 平面只画小节线（不画更细的节拍线）
         timing = self.chart.timing
         beat = timing.song_ms_to_beat(max(0.0, now_ms))
@@ -1703,21 +1826,43 @@ class PlayerApp:
                 self._draw_pattern(note, now_ms)
 
     def _draw_lane_note(self, note: LaneNote, now_ms: float) -> None:
+        """6K 单键 / 长按：用预设贴图绘制（贴图**底端**在判定边，到达判定线即判定）。"""
         assert self.chart is not None
         head_z = self._note_z(self._head_ms(note), now_ms)
         if head_z < -0.4:
             return
-        x0 = K6_LEFT + min(note.lane_start, note.lane_end) * LANE_WIDTH + LANE_WIDTH * 0.18
-        x1 = K6_LEFT + (max(note.lane_start, note.lane_end) + 1) * LANE_WIDTH - LANE_WIDTH * 0.18
+        low, high = min(note.lane_start, note.lane_end), max(note.lane_start, note.lane_end)
+        tex_index = min(LANE_COUNT, max(1, low + 1))
+        x0 = K6_LEFT + low * LANE_WIDTH + LANE_WIDTH * 0.18
+        x1 = K6_LEFT + (high + 1) * LANE_WIDTH - LANE_WIDTH * 0.18
         if note.is_hold:
             tail_z = self._note_z(self.chart.timing.beat_to_song_ms(note.tail_beat), now_ms)
-            near, near2 = self._proj(x0, 0.0, max(0.0, head_z)), self._proj(x1, 0.0, max(0.0, head_z))
-            far, far2 = self._proj(x0, 0.0, max(0.0, tail_z)), self._proj(x1, 0.0, max(0.0, tail_z))
-            self._quad([near, near2, far2, far], (60, 120, 220))
-            mid_near = self._proj((x0 + x1) / 2, 0.0, max(0.0, head_z))
-            mid_far = self._proj((x0 + x1) / 2, 0.0, max(0.0, tail_z))
-            # 远处线更细（近大远小）
-            self._line_scaled(mid_near, mid_far, WHITE, 2.4, min(near[2], far[2]))
+            body = f"hold_body_{tex_index}"
+            if not self._blit_strip(body, x0, x1, max(0.0, head_z), max(0.0, tail_z)):
+                near, near2 = self._proj(x0, 0.0, max(0.0, head_z)), self._proj(x1, 0.0, max(0.0, head_z))
+                far, far2 = self._proj(x0, 0.0, max(0.0, tail_z)), self._proj(x1, 0.0, max(0.0, tail_z))
+                self._quad([near, near2, far2, far], (60, 120, 220))
+                mid_near = self._proj((x0 + x1) / 2, 0.0, max(0.0, head_z))
+                mid_far = self._proj((x0 + x1) / 2, 0.0, max(0.0, tail_z))
+                self._line_scaled(mid_near, mid_far, WHITE, 2.4, min(near[2], far[2]))
+            # 开头盖在主体上面（有意让一部分主体被开头覆盖）
+            head_top = max(0.0, head_z) + max(0.4, self.settings.note_thickness)
+            head_bbox = self._bbox(
+                [
+                    self._proj(x0, 0.0, max(0.0, head_z)),
+                    self._proj(x1, 0.0, min(START_Z, head_top)),
+                ]
+            )
+            if not self._blit_tex(f"hold_head_{tex_index}", head_bbox):
+                self._quad(
+                    [
+                        self._proj(x0, 0.0, max(0.0, head_z)),
+                        self._proj(x1, 0.0, max(0.0, head_z)),
+                        self._proj(x1, 0.0, min(START_Z, head_top)),
+                        self._proj(x0, 0.0, min(START_Z, head_top)),
+                    ],
+                    (70, 140, 240),
+                )
         else:
             # 单键 / 多轨单键分别用各自的厚度
             thickness = (
@@ -1725,12 +1870,41 @@ class PlayerApp:
                 if note.is_multi
                 else self.settings.note_thickness
             )
-            near, near2 = self._proj(x0, 0.0, max(0.0, head_z)), self._proj(x1, 0.0, max(0.0, head_z))
             far_z = min(START_Z, max(0.0, head_z) + thickness)
+            bbox = self._bbox(
+                [
+                    self._proj(x0, 0.0, max(0.0, head_z)),
+                    self._proj(x1, 0.0, far_z),
+                ]
+            )
+            if self._blit_tex(f"tap_{tex_index}", bbox):
+                return
+            near, near2 = self._proj(x0, 0.0, max(0.0, head_z)), self._proj(x1, 0.0, max(0.0, head_z))
             far, far2 = self._proj(x0, 0.0, far_z), self._proj(x1, 0.0, far_z)
             self._quad([near, near2, far2, far], (70, 140, 240))
             # 白色实线就在“判定时刻与判定线重合”的那条边上，粗细随透视变细
             self._line_scaled(near, near2, WHITE, 2.4, near[2])
+
+    def _blit_strip(self, name: str, x0: float, x1: float, z0: float, z1: float, slices: int = 14) -> bool:
+        """铺一条贴图（6K 平面内）：**按屏幕高度切片**，保证每片都是窄条、透视正确。"""
+        if self._tex(name) is None or z1 <= z0:
+            return False
+        boundaries = [z for z in self._plane_strip_z(max(4, slices), 0.0) if z0 - 1e-9 <= z <= z1 + 1e-9]
+        if len(boundaries) < 2:
+            boundaries = [z0, z1]
+        for za, zb in zip(boundaries, boundaries[1:]):
+            if zb - za < 1e-6:
+                continue
+            bbox = self._bbox(
+                [
+                    self._proj(x0, 0.0, za),
+                    self._proj(x1, 0.0, za),
+                    self._proj(x0, 0.0, zb),
+                    self._proj(x1, 0.0, zb),
+                ]
+            )
+            self._blit_tex(name, bbox)
+        return True
 
     def _draw_region(self, note: MouseRegion, now_ms: float) -> None:
         """空域：画在鼠标物件运动的水平面内（半透明蓝底 + 左右两条边线）。"""
@@ -1753,18 +1927,122 @@ class PlayerApp:
             right_points.append(self._proj(right_x, MOUSE_PLANE_HEIGHT, z))
         if len(left_points) < 2:
             return
-        # 半透明：空域在鼠标平面上，挡住下面的 6K 物件就没法看谱了
-        self._alpha_quad(left_points + list(reversed(right_points)), (60, 110, 200), 104)
+        # 底图：一整张带横向条纹的淡蓝图（底边贴着判定线，越往上越透明）
+        area_bbox = self._bbox(left_points + right_points)
+        if not self._blit_tex("region_area", area_bbox):
+            # 半透明：空域在鼠标平面上，挡住下面的 6K 物件就没法看谱了
+            self._alpha_quad(left_points + list(reversed(right_points)), (60, 110, 200), 104)
+        # 左右边界：单像素边界图（多像素时由加载阶段取平均）
+        edge_ready = self._tex("region_edge") is not None
         for index in range(len(left_points) - 1):
-            self._line(left_points[index], left_points[index + 1], MOUSE_TINT, 2)
-            self._line(right_points[index], right_points[index + 1], MOUSE_TINT, 2)
+            for points in (left_points, right_points):
+                if edge_ready:
+                    bbox = self._bbox([points[index], points[index + 1]])
+                    bbox = (bbox[0] - 1.0, bbox[1], max(2.0, bbox[2]), max(2.0, bbox[3]))
+                    self._blit_tex("region_edge", bbox)
+                else:
+                    self._line(points[index], points[index + 1], MOUSE_TINT, 2)
+        # 空域判定线：单像素图铺在判定线处
+        line_bbox = self._bbox(
+            [
+                self._proj(
+                    MOUSE_LEFT, MOUSE_PLANE_HEIGHT, 0.0
+                ),
+                self._proj(MOUSE_LEFT + MOUSE_LEGAL_WIDTH, MOUSE_PLANE_HEIGHT, 0.0),
+            ]
+        )
+        line_bbox = (line_bbox[0], line_bbox[1] - 1.0, line_bbox[2], 3.0)
+        if not self._blit_tex("region_line", line_bbox):
+            self._line(
+                self._proj(MOUSE_LEFT, MOUSE_PLANE_HEIGHT, 0.0),
+                self._proj(MOUSE_LEFT + MOUSE_LEGAL_WIDTH, MOUSE_PLANE_HEIGHT, 0.0),
+                MOUSE_TINT,
+                3,
+            )
 
     def _draw_pattern(self, note: Note, now_ms: float) -> None:
-        """滑键 / 点击按键：图案平行于判定平面，高度 0.03 单位。"""
+        """滑键 / 鼠标点击按键：图案平行于判定平面，改用预设贴图。"""
         z = self._note_z(self._head_ms(note), now_ms)
         if z < -0.4 or z > START_Z:
             return
         z = max(0.0, z)
+        if self.textures or self._tex("click_diamond") is not None:
+            if self._draw_pattern_textured(note, z):
+                return
+        self._draw_pattern_legacy(note, z)
+
+    def _draw_pattern_textured(self, note: Note, z: float) -> bool:
+        """贴图版滑键 / 点击按键（缺贴图时返回 False，走旧的程序绘制）。"""
+        if isinstance(note, MouseSlide):
+            direction = 1 if note.direction >= 0 else -1
+            name = "right" if direction > 0 else "left"
+            height = max(0.006, self.settings.slide_thickness)
+            body_bbox = self._bbox(
+                [
+                    self._proj(MOUSE_LEFT + note.x_start * MOUSE_LEGAL_WIDTH, MOUSE_PLANE_HEIGHT, z),
+                    self._proj(MOUSE_LEFT + note.x_end * MOUSE_LEGAL_WIDTH, MOUSE_PLANE_HEIGHT, z),
+                    self._proj(
+                        MOUSE_LEFT + note.x_start * MOUSE_LEGAL_WIDTH,
+                        MOUSE_PLANE_HEIGHT + height,
+                        z,
+                    ),
+                    self._proj(
+                        MOUSE_LEFT + note.x_end * MOUSE_LEGAL_WIDTH,
+                        MOUSE_PLANE_HEIGHT + height,
+                        z,
+                    ),
+                ]
+            )
+            if not self._blit_tex(f"slide_body_{name}", body_bbox):
+                return False
+            # 箭头：宽度不拉伸（用贴图原宽），高度按用户设置拉伸；贴在朝向侧顶点
+            arrow = self._tex(f"slide_arrow_{name}")
+            if arrow is not None and arrow.get_width() > 0:
+                end_x = MOUSE_LEFT + note.x_end * MOUSE_LEGAL_WIDTH
+                top = self._proj(end_x, MOUSE_PLANE_HEIGHT + height, z)
+                bottom = self._proj(end_x, MOUSE_PLANE_HEIGHT, z)
+                arrow_h = max(2.0, abs(bottom[1] - top[1]))
+                arrow_w = arrow.get_width()
+                center_y = (top[1] + bottom[1]) / 2.0
+                x = top[0] - arrow_w if direction > 0 else top[0]
+                self._blit_tex(
+                    f"slide_arrow_{name}",
+                    (x, center_y - arrow_h / 2.0, arrow_w, arrow_h),
+                )
+            return True
+        assert isinstance(note, MouseClick)
+        height = max(0.006, self.settings.click_thickness)
+        x0 = MOUSE_LEFT + min(note.x_range()) * MOUSE_LEGAL_WIDTH
+        x1 = MOUSE_LEFT + max(note.x_range()) * MOUSE_LEGAL_WIDTH
+        middle = MOUSE_PLANE_HEIGHT + height / 2.0
+        corners = [
+            self._proj(x0, MOUSE_PLANE_HEIGHT, z),
+            self._proj(x1, MOUSE_PLANE_HEIGHT, z),
+            self._proj(x1, MOUSE_PLANE_HEIGHT + height, z),
+            self._proj(x0, MOUSE_PLANE_HEIGHT + height, z),
+        ]
+        bbox = self._bbox(corners)
+        if not self._blit_tex("click_range", bbox):
+            return False
+        diamond_h = max(4.0, bbox[3])                 # 范围标识高度 = 菱形高度
+        center = self._proj(MOUSE_LEFT + note.center * MOUSE_LEGAL_WIDTH, middle, z)
+        self._blit_tex(
+            "click_diamond",
+            (center[0] - diamond_h / 2.0, center[1] - diamond_h / 2.0, diamond_h, diamond_h),
+        )
+        edge_w = max(2.0, diamond_h / 2.0)            # 边界标识 = 菱形竖切的一半
+        left = self._proj(x0, middle, z)
+        right = self._proj(x1, middle, z)
+        self._blit_tex("click_edge", (left[0] - edge_w / 2.0, left[1] - diamond_h / 2.0, edge_w, diamond_h))
+        self._blit_tex(
+            "click_edge",
+            (right[0] - edge_w / 2.0, right[1] - diamond_h / 2.0, edge_w, diamond_h),
+            flip_x=True,
+        )
+        return True
+
+    def _draw_pattern_legacy(self, note: Note, z: float) -> None:
+        """程序绘制的旧版样式（缺贴图时的兜底）。"""
         if isinstance(note, MouseSlide):
             color = (110, 230, 160) if note.direction >= 0 else (235, 210, 110)
             height = self.settings.slide_thickness
