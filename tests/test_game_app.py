@@ -875,14 +875,20 @@ class PlayerAppSmokeTests(unittest.TestCase):
         slide = next(n for n in chart.all_notes() if isinstance(n, MouseSlide))
         used = []
         original_blit = app._blit_tex
+        original_quad_blit = app._blit_tex_quad
         app._blit_tex = lambda name, rect, flip_x=False, alpha=255: (
             used.append((name, flip_x)),
             original_blit(name, rect, flip_x, alpha),
+        )[1]
+        app._blit_tex_quad = lambda name, corners, flip_x=False: (
+            used.append((name, flip_x)),
+            original_quad_blit(name, corners, flip_x),
         )[1]
         try:
             app._draw_pattern(slide, app._head_ms(slide))
         finally:
             app._blit_tex = original_blit
+            app._blit_tex_quad = original_quad_blit
         names = [item[0] for item in used]
         expected_body = "slide_body_right" if slide.direction >= 0 else "slide_body_left"
         self.assertIn(expected_body, names, "滑键主体用贴图")
@@ -895,10 +901,15 @@ class PlayerAppSmokeTests(unittest.TestCase):
             used.append((name, flip_x)),
             original_blit(name, rect, flip_x, alpha),
         )[1]
+        app._blit_tex_quad = lambda name, corners, flip_x=False: (
+            used.append((name, flip_x)),
+            original_quad_blit(name, corners, flip_x),
+        )[1]
         try:
             app._draw_pattern(click, app._head_ms(click))
         finally:
             app._blit_tex = original_blit
+            app._blit_tex_quad = original_quad_blit
         names = [item[0] for item in used]
         self.assertIn("click_range", names, "范围标识用贴图")
         self.assertIn("click_diamond", names, "位置标识用贴图")
@@ -1128,18 +1139,24 @@ class PlayerAppSmokeTests(unittest.TestCase):
             app._draw_planes(0.0)
         finally:
             app._quad, app._alpha_quad = original_quad, original_alpha
+        # 只认鼠标平面那层蓝底渐变（轨道贴图填充也是 _alpha_quad，颜色不同）
         first_gradient = next(
-            index for index, entry in enumerate(order) if entry[0] == "gradient"
+            index
+            for index, entry in enumerate(order)
+            if entry[1] == (58, 108, 200)
         )
         highlight_indexes = [
             index
             for index, entry in enumerate(order)
             if entry == ("quad", SIDE_TINT)
         ]
+        press_colors = {
+            app.texture_avg.get(f"lane_{lane}_pressed", ())[:3] for lane in range(1, 7)
+        } | {LANE_PRESS_TINT}
         press_indexes = [
             index
             for index, entry in enumerate(order)
-            if entry == ("quad", LANE_PRESS_TINT)
+            if entry[1] in press_colors
         ]
         self.assertEqual(len(highlight_indexes), 2, "第 1 / 第 6 轨各一块高亮")
         for index in highlight_indexes + press_indexes:

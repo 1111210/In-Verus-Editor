@@ -12,6 +12,7 @@
 from __future__ import annotations
 
 import os
+import math
 import subprocess
 import sys
 import time
@@ -198,6 +199,7 @@ class PlayerApp:
         self.textures: dict = {}
         self.texture_avg: dict = {}          # 边界等窄条用平均色画正梯形
         self._tex_cache: dict = {}
+        self._quad_cache: dict = {}          # 仿射（旋转 + 缩放）贴图缓存
         self.gl_cost = 0.0                 # OpenGL 呈现耗时（指数平滑，太慢就回退）
         self.gl_frames = 0
         self.display_mode = "windowed"     # windowed / borderless / fullscreen
@@ -552,7 +554,21 @@ class PlayerApp:
             print(f"[In Verus 游玩器] 贴图加载失败（{exc}），使用占位图", flush=True)
             self.textures = {}
         self._tex_cache.clear()
+        self._quad_cache.clear()
         self.texture_avg = {}
+        surface = self.textures.get("region_area")
+        if surface is not None:
+            self.texture_avg["region_area"] = textures.average_color(surface)
+        for lane in range(1, LANE_COUNT + 1):
+            surface = self.textures.get(f"hold_body_{lane}")
+            if surface is not None:
+                self.texture_avg[f"hold_body_{lane}"] = textures.average_color(surface)
+        for lane in range(1, LANE_COUNT + 1):
+            for suffix in ("default", "pressed"):
+                key = f"lane_{lane}_{suffix}"
+                surface = self.textures.get(key)
+                if surface is not None:
+                    self.texture_avg[key] = textures.average_color(surface)
         for name in (
             "lane_edge_left_highlight",
             "lane_edge_left_highlight_pressed",
@@ -598,6 +614,42 @@ class PlayerApp:
             surface = surface.copy()
             surface.set_alpha(alpha)
         self.screen.blit(surface, (rect[0], rect[1]))
+        return True
+
+    def _blit_tex_quad(self, name: str, corners, flip_x: bool = False) -> bool:
+        """按**仿射**把贴图铺到投影后的四边形上（不是拉伸到外接矩形）。
+
+        ``corners`` 顺序与贴图一致：``[左上, 右上, 右下, 左下]``。
+        用“上边向量”定旋转角与宽度、“左边向量”定高度，再以四边形中心对齐 blit；
+        6K 平面里再配合“按屏幕高度切片”，透视就不会被抹平成方块。
+        """
+        surface = self._tex(name)
+        if surface is None or len(corners) != 4:
+            return False
+        points = [(float(p[0]), float(p[1])) for p in corners]
+        (x0, y0), (x1, y1), (x2, y2), (x3, y3) = points
+        edge_x = (x1 - x0, y1 - y0)
+        edge_y = (x3 - x0, y3 - y0)
+        width = max(1.0, math.hypot(*edge_x))
+        height = max(1.0, math.hypot(*edge_y))
+        angle = -math.degrees(math.atan2(edge_x[1], edge_x[0]))
+        key = (name, int(round(width)), int(round(height)), round(angle * 2) / 2.0, flip_x)
+        cached = self._quad_cache.get(key)
+        if cached is None:
+            base = pygame.transform.flip(surface, True, False) if flip_x else surface
+            scaled = pygame.transform.smoothscale(base, (int(round(width)), int(round(height))))
+            if abs(angle) > 0.05:
+                scaled = pygame.transform.rotate(scaled, angle)
+            if len(self._quad_cache) > 512:
+                self._quad_cache.clear()
+            cached = scaled
+            self._quad_cache[key] = cached
+        center_x = (x0 + x1 + x2 + x3) / 4.0
+        center_y = (y0 + y1 + y2 + y3) / 4.0
+        self.screen.blit(
+            cached,
+            (center_x - cached.get_width() / 2.0, center_y - cached.get_height() / 2.0),
+        )
         return True
 
     @staticmethod
@@ -1642,9 +1694,9 @@ class PlayerApp:
         far_right = self._proj(K6_LEFT + width, 0.0, START_Z)
         near_left = self._proj(K6_LEFT, 0.0, 0.0)
         near_right = self._proj(K6_LEFT + width, 0.0, 0.0)
-        # 每条轨道一段贴图（默认 / 按下），整条轨道按 z 切片铺开
+        # 每条轨道用贴图的颜色按**透视正确的四边形**铺（轨道贴图是平色块，切片反而会出台阶）
         lane_textured = all(
-            self._tex(f"lane_{index}_default") is not None for index in range(1, LANE_COUNT + 1)
+            f"lane_{index}_default" in self.texture_avg for index in range(1, LANE_COUNT + 1)
         )
         if lane_textured:
             for lane in range(LANE_COUNT):
@@ -1653,13 +1705,27 @@ class PlayerApp:
                     if lane in self.pressed_lanes
                     else f"lane_{lane + 1}_default"
                 )
-                self._blit_strip(
-                    name,
-                    K6_LEFT + lane * LANE_WIDTH,
-                    K6_LEFT + (lane + 1) * LANE_WIDTH,
-                    0.0,
-                    START_Z,
-                    slices=10,
+                color = self.texture_avg[name]
+                x0 = K6_LEFT + lane * LANE_WIDTH
+                x1 = x0 + LANE_WIDTH
+                quad = [
+                    self._proj(x0, 0.0, START_Z),
+                    self._proj(x1, 0.0, START_Z),
+                    self._proj(x1, 0.0, 0.0),
+                    self._proj(x0, 0.0, 0.0),
+                ]
+                if color[3] >= 250:
+                    self._quad(quad, color[:3])
+                else:
+                    self._alpha_quad(quad, color[:3], color[3])
+            # 轨道之间的分界线（默认贴图里带的边线）
+            for lane in range(LANE_COUNT + 1):
+                x = K6_LEFT + lane * LANE_WIDTH
+                self._line(
+                    self._proj(x, 0.0, START_Z),
+                    self._proj(x, 0.0, 0.0),
+                    (46, 48, 58),
+                    1,
                 )
         else:
             self._quad([far_left, far_right, near_right, near_left], (24, 26, 36))
@@ -1838,7 +1904,22 @@ class PlayerApp:
         if note.is_hold:
             tail_z = self._note_z(self.chart.timing.beat_to_song_ms(note.tail_beat), now_ms)
             body = f"hold_body_{tex_index}"
-            if not self._blit_strip(body, x0, x1, max(0.0, head_z), max(0.0, tail_z)):
+            body_color = self.texture_avg.get(body)
+            if body_color is not None:
+                # 长条用透视正确的多边形填（pygame 无法做透视 warp，逐片贴图会出台阶）
+                quad = [
+                    self._proj(x0, 0.0, max(0.0, tail_z)),
+                    self._proj(x1, 0.0, max(0.0, tail_z)),
+                    self._proj(x1, 0.0, max(0.0, head_z)),
+                    self._proj(x0, 0.0, max(0.0, head_z)),
+                ]
+                if body_color[3] >= 250:
+                    self._quad(quad, body_color[:3])
+                else:
+                    self._alpha_quad(quad, body_color[:3], body_color[3])
+                if not self._blit_hold_center_line(x0, x1, head_z, tail_z):
+                    pass
+            elif not self._blit_strip(body, x0, x1, max(0.0, head_z), max(0.0, tail_z)):
                 near, near2 = self._proj(x0, 0.0, max(0.0, head_z)), self._proj(x1, 0.0, max(0.0, head_z))
                 far, far2 = self._proj(x0, 0.0, max(0.0, tail_z)), self._proj(x1, 0.0, max(0.0, tail_z))
                 self._quad([near, near2, far2, far], (60, 120, 220))
@@ -1847,13 +1928,13 @@ class PlayerApp:
                 self._line_scaled(mid_near, mid_far, WHITE, 2.4, min(near[2], far[2]))
             # 开头盖在主体上面（有意让一部分主体被开头覆盖）
             head_top = max(0.0, head_z) + max(0.4, self.settings.note_thickness)
-            head_bbox = self._bbox(
-                [
-                    self._proj(x0, 0.0, max(0.0, head_z)),
-                    self._proj(x1, 0.0, min(START_Z, head_top)),
-                ]
-            )
-            if not self._blit_tex(f"hold_head_{tex_index}", head_bbox):
+            head_quad = [
+                self._proj(x0, 0.0, min(START_Z, head_top)),
+                self._proj(x1, 0.0, min(START_Z, head_top)),
+                self._proj(x1, 0.0, max(0.0, head_z)),
+                self._proj(x0, 0.0, max(0.0, head_z)),
+            ]
+            if not self._blit_tex_quad(f"hold_head_{tex_index}", head_quad):
                 self._quad(
                     [
                         self._proj(x0, 0.0, max(0.0, head_z)),
@@ -1871,13 +1952,13 @@ class PlayerApp:
                 else self.settings.note_thickness
             )
             far_z = min(START_Z, max(0.0, head_z) + thickness)
-            bbox = self._bbox(
-                [
-                    self._proj(x0, 0.0, max(0.0, head_z)),
-                    self._proj(x1, 0.0, far_z),
-                ]
-            )
-            if self._blit_tex(f"tap_{tex_index}", bbox):
+            tap_quad = [
+                self._proj(x0, 0.0, far_z),
+                self._proj(x1, 0.0, far_z),
+                self._proj(x1, 0.0, max(0.0, head_z)),
+                self._proj(x0, 0.0, max(0.0, head_z)),
+            ]
+            if self._blit_tex_quad(f"tap_{tex_index}", tap_quad):
                 return
             near, near2 = self._proj(x0, 0.0, max(0.0, head_z)), self._proj(x1, 0.0, max(0.0, head_z))
             far, far2 = self._proj(x0, 0.0, far_z), self._proj(x1, 0.0, far_z)
@@ -1885,7 +1966,7 @@ class PlayerApp:
             # 白色实线就在“判定时刻与判定线重合”的那条边上，粗细随透视变细
             self._line_scaled(near, near2, WHITE, 2.4, near[2])
 
-    def _blit_strip(self, name: str, x0: float, x1: float, z0: float, z1: float, slices: int = 14) -> bool:
+    def _blit_strip(self, name: str, x0: float, x1: float, z0: float, z1: float, slices: int = 28) -> bool:
         """铺一条贴图（6K 平面内）：**按屏幕高度切片**，保证每片都是窄条、透视正确。"""
         if self._tex(name) is None or z1 <= z0:
             return False
@@ -1895,15 +1976,21 @@ class PlayerApp:
         for za, zb in zip(boundaries, boundaries[1:]):
             if zb - za < 1e-6:
                 continue
-            bbox = self._bbox(
-                [
-                    self._proj(x0, 0.0, za),
-                    self._proj(x1, 0.0, za),
-                    self._proj(x0, 0.0, zb),
-                    self._proj(x1, 0.0, zb),
-                ]
-            )
-            self._blit_tex(name, bbox)
+            near_left = self._proj(x0, 0.0, za)
+            near_right = self._proj(x1, 0.0, za)
+            far_left = self._proj(x0, 0.0, zb)
+            far_right = self._proj(x1, 0.0, zb)
+            # 贴图的“上”对应远处：左上 / 右上 / 右下 / 左下
+            self._blit_tex_quad(name, [far_left, far_right, near_right, near_left])
+        return True
+
+    def _blit_hold_center_line(self, x0: float, x1: float, head_z: float, tail_z: float) -> bool:
+        """长按主体中间那条纯白竖线（宽度取自贴图：约 1/6）。"""
+        center = (x0 + x1) / 2.0
+        half = (x1 - x0) / 12.0
+        near = self._proj(center, 0.0, max(0.0, head_z))
+        far = self._proj(center, 0.0, max(0.0, tail_z))
+        self._line_scaled(near, far, WHITE, max(2.0, abs(near[0] - self._proj(center - half, 0.0, max(0.0, head_z))[0]) * 2.0), near[2])
         return True
 
     def _draw_region(self, note: MouseRegion, now_ms: float) -> None:
@@ -1912,7 +1999,7 @@ class PlayerApp:
         timing = self.chart.timing
         if self._note_z(timing.beat_to_song_ms(note.beat_start), now_ms) > START_Z:
             return
-        samples = 12
+        samples = 28
         left_points: List[Tuple[float, float, float]] = []
         right_points: List[Tuple[float, float, float]] = []
         for index in range(samples + 1):
@@ -1928,31 +2015,78 @@ class PlayerApp:
         if len(left_points) < 2:
             return
         # 底图：一整张带横向条纹的淡蓝图（底边贴着判定线，越往上越透明）
-        area_bbox = self._bbox(left_points + right_points)
-        if not self._blit_tex("region_area", area_bbox):
+        area_color = self.texture_avg.get("region_area")
+        if area_color is None:
+            surface = self._tex("region_area")
+            if surface is not None:
+                area_color = textures.average_color(surface)
+        if area_color is not None:
+            # 半透明底：长条用透视正确的多边形填（逐片贴图会出台阶）
+            self._alpha_quad(
+                left_points + list(reversed(right_points)),
+                area_color[:3],
+                min(255, area_color[3] + 40),
+            )
+            for index in range(0, len(left_points) - 1, 2):     # 横向细条纹（近似贴图里的横纹）
+                a_l, a_r = left_points[index], right_points[index]
+                b_l, b_r = left_points[index + 1], right_points[index + 1]
+                mid_l = ((a_l[0] + b_l[0]) / 2.0, (a_l[1] + b_l[1]) / 2.0)
+                mid_r = ((a_r[0] + b_r[0]) / 2.0, (a_r[1] + b_r[1]) / 2.0)
+                self._alpha_quad(
+                    [
+                        (mid_l[0], mid_l[1] - 1.0),
+                        (mid_r[0], mid_r[1] - 1.0),
+                        (mid_r[0], mid_r[1] + 1.0),
+                        (mid_l[0], mid_l[1] + 1.0),
+                    ],
+                    area_color[:3],
+                    min(255, area_color[3] + 70),
+                )
+        else:
             # 半透明：空域在鼠标平面上，挡住下面的 6K 物件就没法看谱了
             self._alpha_quad(left_points + list(reversed(right_points)), (60, 110, 200), 104)
         # 左右边界：单像素边界图（多像素时由加载阶段取平均）
-        edge_ready = self._tex("region_edge") is not None
+        edge_color = self.texture_avg.get("region_edge")
+        if edge_color is None:
+            surface = self._tex("region_edge")
+            if surface is not None:
+                edge_color = textures.average_color(surface)
         for index in range(len(left_points) - 1):
             for points in (left_points, right_points):
-                if edge_ready:
-                    bbox = self._bbox([points[index], points[index + 1]])
-                    bbox = (bbox[0] - 1.0, bbox[1], max(2.0, bbox[2]), max(2.0, bbox[3]))
-                    self._blit_tex("region_edge", bbox)
+                if edge_color is not None:
+                    a, b = points[index], points[index + 1]
+                    dx, dy = b[0] - a[0], b[1] - a[1]
+                    length = max(1.0, math.hypot(dx, dy))
+                    nx, ny = -dy / length, dx / length      # 法线方向
+                    quad = [
+                        (a[0] + nx, a[1] + ny),
+                        (b[0] + nx, b[1] + ny),
+                        (b[0] - nx, b[1] - ny),
+                        (a[0] - nx, a[1] - ny),
+                    ]
+                    self._alpha_quad(quad, edge_color[:3], edge_color[3])
                 else:
                     self._line(points[index], points[index + 1], MOUSE_TINT, 2)
         # 空域判定线：单像素图铺在判定线处
-        line_bbox = self._bbox(
-            [
-                self._proj(
-                    MOUSE_LEFT, MOUSE_PLANE_HEIGHT, 0.0
-                ),
-                self._proj(MOUSE_LEFT + MOUSE_LEGAL_WIDTH, MOUSE_PLANE_HEIGHT, 0.0),
-            ]
-        )
-        line_bbox = (line_bbox[0], line_bbox[1] - 1.0, line_bbox[2], 3.0)
-        if not self._blit_tex("region_line", line_bbox):
+        line_color = self.texture_avg.get("region_line")
+        if line_color is None:
+            surface = self._tex("region_line")
+            if surface is not None:
+                line_color = textures.average_color(surface)
+        if line_color is not None:
+            a = self._proj(MOUSE_LEFT, MOUSE_PLANE_HEIGHT, 0.0)
+            b = self._proj(MOUSE_LEFT + MOUSE_LEGAL_WIDTH, MOUSE_PLANE_HEIGHT, 0.0)
+            self._alpha_quad(
+                [
+                    (a[0], a[1] - 1.5),
+                    (b[0], b[1] - 1.5),
+                    (b[0], b[1] + 1.5),
+                    (a[0], a[1] + 1.5),
+                ],
+                line_color[:3],
+                line_color[3],
+            )
+        else:
             self._line(
                 self._proj(MOUSE_LEFT, MOUSE_PLANE_HEIGHT, 0.0),
                 self._proj(MOUSE_LEFT + MOUSE_LEGAL_WIDTH, MOUSE_PLANE_HEIGHT, 0.0),
@@ -1977,66 +2111,70 @@ class PlayerApp:
             direction = 1 if note.direction >= 0 else -1
             name = "right" if direction > 0 else "left"
             height = max(0.006, self.settings.slide_thickness)
-            body_bbox = self._bbox(
-                [
-                    self._proj(MOUSE_LEFT + note.x_start * MOUSE_LEGAL_WIDTH, MOUSE_PLANE_HEIGHT, z),
-                    self._proj(MOUSE_LEFT + note.x_end * MOUSE_LEGAL_WIDTH, MOUSE_PLANE_HEIGHT, z),
-                    self._proj(
-                        MOUSE_LEFT + note.x_start * MOUSE_LEGAL_WIDTH,
-                        MOUSE_PLANE_HEIGHT + height,
-                        z,
-                    ),
-                    self._proj(
-                        MOUSE_LEFT + note.x_end * MOUSE_LEGAL_WIDTH,
-                        MOUSE_PLANE_HEIGHT + height,
-                        z,
-                    ),
-                ]
-            )
-            if not self._blit_tex(f"slide_body_{name}", body_bbox):
+            start_x = MOUSE_LEFT + note.x_start * MOUSE_LEGAL_WIDTH
+            end_x = MOUSE_LEFT + note.x_end * MOUSE_LEGAL_WIDTH
+            body_quad = [
+                self._proj(start_x, MOUSE_PLANE_HEIGHT + height, z),
+                self._proj(end_x, MOUSE_PLANE_HEIGHT + height, z),
+                self._proj(end_x, MOUSE_PLANE_HEIGHT, z),
+                self._proj(start_x, MOUSE_PLANE_HEIGHT, z),
+            ]
+            if not self._blit_tex_quad(f"slide_body_{name}", body_quad):
                 return False
             # 箭头：宽度不拉伸（用贴图原宽），高度按用户设置拉伸；贴在朝向侧顶点
             arrow = self._tex(f"slide_arrow_{name}")
             if arrow is not None and arrow.get_width() > 0:
-                end_x = MOUSE_LEFT + note.x_end * MOUSE_LEGAL_WIDTH
-                top = self._proj(end_x, MOUSE_PLANE_HEIGHT + height, z)
-                bottom = self._proj(end_x, MOUSE_PLANE_HEIGHT, z)
-                arrow_h = max(2.0, abs(bottom[1] - top[1]))
-                arrow_w = arrow.get_width()
-                center_y = (top[1] + bottom[1]) / 2.0
-                x = top[0] - arrow_w if direction > 0 else top[0]
-                self._blit_tex(
-                    f"slide_arrow_{name}",
-                    (x, center_y - arrow_h / 2.0, arrow_w, arrow_h),
-                )
+                inner = end_x - height * direction       # 箭头朝内延伸，宽度 = 厚度（不拉伸）
+                arrow_quad = [
+                    self._proj(max(inner, end_x), MOUSE_PLANE_HEIGHT + height, z),
+                    self._proj(min(inner, end_x), MOUSE_PLANE_HEIGHT + height, z),
+                    self._proj(min(inner, end_x), MOUSE_PLANE_HEIGHT, z),
+                    self._proj(max(inner, end_x), MOUSE_PLANE_HEIGHT, z),
+                ]
+                self._blit_tex_quad(f"slide_arrow_{name}", arrow_quad, flip_x=direction < 0)
             return True
         assert isinstance(note, MouseClick)
         height = max(0.006, self.settings.click_thickness)
         x0 = MOUSE_LEFT + min(note.x_range()) * MOUSE_LEGAL_WIDTH
         x1 = MOUSE_LEFT + max(note.x_range()) * MOUSE_LEGAL_WIDTH
         middle = MOUSE_PLANE_HEIGHT + height / 2.0
-        corners = [
-            self._proj(x0, MOUSE_PLANE_HEIGHT, z),
-            self._proj(x1, MOUSE_PLANE_HEIGHT, z),
-            self._proj(x1, MOUSE_PLANE_HEIGHT + height, z),
+        range_quad = [
             self._proj(x0, MOUSE_PLANE_HEIGHT + height, z),
+            self._proj(x1, MOUSE_PLANE_HEIGHT + height, z),
+            self._proj(x1, MOUSE_PLANE_HEIGHT, z),
+            self._proj(x0, MOUSE_PLANE_HEIGHT, z),
         ]
-        bbox = self._bbox(corners)
-        if not self._blit_tex("click_range", bbox):
+        if not self._blit_tex_quad("click_range", range_quad):
             return False
-        diamond_h = max(4.0, bbox[3])                 # 范围标识高度 = 菱形高度
-        center = self._proj(MOUSE_LEFT + note.center * MOUSE_LEGAL_WIDTH, middle, z)
-        self._blit_tex(
+        d = height / 2.0                              # 菱形 / 边界的半高
+        cx = MOUSE_LEFT + note.center * MOUSE_LEGAL_WIDTH
+        self._blit_tex_quad(
             "click_diamond",
-            (center[0] - diamond_h / 2.0, center[1] - diamond_h / 2.0, diamond_h, diamond_h),
+            [
+                self._proj(cx - d, middle + d, z),
+                self._proj(cx + d, middle + d, z),
+                self._proj(cx + d, middle - d, z),
+                self._proj(cx - d, middle - d, z),
+            ],
         )
-        edge_w = max(2.0, diamond_h / 2.0)            # 边界标识 = 菱形竖切的一半
-        left = self._proj(x0, middle, z)
-        right = self._proj(x1, middle, z)
-        self._blit_tex("click_edge", (left[0] - edge_w / 2.0, left[1] - diamond_h / 2.0, edge_w, diamond_h))
-        self._blit_tex(
+        # 边界标识 = 菱形竖切的右半：左边界朝内（向右），右边界镜像
+        self._blit_tex_quad(
             "click_edge",
-            (right[0] - edge_w / 2.0, right[1] - diamond_h / 2.0, edge_w, diamond_h),
+            [
+                self._proj(x0, middle + d, z),
+                self._proj(x0 + d, middle + d, z),
+                self._proj(x0 + d, middle - d, z),
+                self._proj(x0, middle - d, z),
+            ],
+        )
+        self._blit_tex_quad(
+            "click_edge",
+            [
+                self._proj(x1 - d, middle + d, z),
+                self._proj(x1, middle + d, z),
+                self._proj(x1, middle - d, z),
+                self._proj(x1 - d, middle - d, z),
+            ],
             flip_x=True,
         )
         return True
