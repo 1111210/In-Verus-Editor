@@ -25,6 +25,7 @@ try:  # pragma: no cover - 依赖可选依赖
         GraphicsOutput,
         GraphicsPipe,
         NodePath,
+        PerspectiveLens,
         Texture,
         TransparencyAttrib,
         WindowProperties,
@@ -127,12 +128,7 @@ class Scene3D:
         aspect = max(0.2, float(self.width) / float(self.height))
         vertical = math.radians(self.fov)
         horizontal = 2.0 * math.atan(math.tan(vertical / 2.0) * aspect)
-        lens = self.camera.node().getLens()      # 新相机自带镜头，改它才生效
-        lens.setAspectRatio(aspect)
-        lens.setFov(math.degrees(horizontal), aspect)
-        lens.setNearFar(0.05, 200.0)
-        self.base.camLens.setAspectRatio(aspect)
-        self.base.camLens.setFov(math.degrees(horizontal), aspect)
+        self.set_camera()
         self.base.setBackgroundColor(0.04, 0.04, 0.055, 1.0)
 
     def set_camera(self, pitch: float = None, fov: float = None,
@@ -149,11 +145,13 @@ class Scene3D:
         self.camera.setPos(0.0, -self.camera_back, self.camera_height)
         self.camera.setP(-self.pitch)
         aspect = max(0.2, float(self.width) / float(self.height))
-        vertical = math.radians(self.fov)
-        horizontal = 2.0 * math.atan(math.tan(vertical / 2.0) * aspect)
-        lens = self.camera.node().getLens()
-        lens.setAspectRatio(aspect)
-        lens.setFov(math.degrees(horizontal), aspect)
+        # 实测：改 makeCamera 自带的镜头不生效（画面完全不动），必须**换一个新镜头对象**
+        lens = PerspectiveLens()
+        # 用“胶片尺寸 + 焦距”显式定义**竖直** FOV：tan(vFov/2) = (film高/2) / 焦距
+        lens.setFilmSize(2.0 * aspect, 2.0)
+        lens.setFocalLength(1.0 / math.tan(math.radians(self.fov) / 2.0))
+        lens.setNearFar(0.05, 200.0)
+        self.camera.node().setLens(lens)
 
     def texture(self, name: str) -> Optional["Texture"]:
         cached = self._textures.get(name)
