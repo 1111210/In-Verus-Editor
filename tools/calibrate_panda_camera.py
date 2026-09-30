@@ -45,16 +45,22 @@ def main() -> int:
     target_mouse = round(targets["mouse"])
     print(f"目标（软件版）：6K 行 {target_k6} / 鼠标行 {target_mouse}")
     texture_dir = os.path.join(ROOT, "assets", "textures", "player")
-    scene3d = render3d.Scene3D(width, height, texture_dir)
+    scene3d = render3d.Scene3D(width, height, texture_dir, decorations=False)
     best = None
+    first = True
     try:
-        for fov_v in (30, 35, 40, 45, 50, 55, 60):
-            for pitch in (10, 14, 18, 22, 26):
-                for back in (1.4, 1.7, 2.0, 2.3):
+        for fov_v in (40, 55, 70, 85):
+            for pitch in (14, 18, 22):
+                for back in (1.7, 2.2):
                     scene3d.set_camera(fov=fov_v, pitch=pitch, back=back, height=1.15)
                     scene3d.begin()
                     frame = scene3d.render()
                     k6_row, mouse_row = detect_lines(frame, width, height)
+                    pred_k6 = scene3d.project(0.0, 0.0, 0.0)
+                    pred_mu = scene3d.project(0.0, 0.4, 0.0)
+                    if first:
+                        print(f'  预测（自己的公式）：6K {pred_k6[1]:.0f} / 鼠标 {pred_mu[1]:.0f}')
+                        first = False
                     if k6_row < 0 or mouse_row < 0:
                         continue
                     err = abs(k6_row - target_k6) + abs(mouse_row - target_mouse)

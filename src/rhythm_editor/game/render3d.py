@@ -69,7 +69,7 @@ class Scene3D:
     def __init__(self, width: int, height: int, texture_dir: str, lane_count: int = 6,
                  lane_width: float = 0.25, start_z: float = 12.0,
                  camera_height: float = 1.15, camera_back: float = 1.7,
-                 pitch: float = 20.0, fov: float = 55.0) -> None:
+                 pitch: float = 20.0, fov: float = 55.0, decorations: bool = True) -> None:
         if not _AVAILABLE:  # pragma: no cover - 由调用方先检查
             raise RuntimeError(f"没有可用的 Panda3D：{import_error()}")
         loadPrcFileData("", "window-type offscreen")
@@ -86,6 +86,7 @@ class Scene3D:
         self.fov = fov
         self.width = width
         self.height = height
+        self.decorations = decorations
         self._textures: Dict[str, "Texture"] = {}
         self._pool: List["NodePath"] = []
         self._used = 0
@@ -174,6 +175,11 @@ class Scene3D:
     def build_static(self) -> None:
         width = self.lane_count * self.lane_width
         self.static_root.node().removeAllChildren()
+        if not self.decorations:
+            # 标定用：只画两条判定线（白 6K / 青鼠标），其余装饰都省掉
+            self._static_quad("", 0.0, 0.02, width, 0.04, 0.0, (1, 1, 1, 1))
+            self._static_quad("", 0.0, 0.02, 1.0, 0.04, 0.4, (0.35, 0.86, 1.0, 1.0))
+            return
         # 6K 底面
         self._static_quad("", -width / 2 + width / 2, self.start_z / 2, width, self.start_z,
                           0.0, (0.09, 0.10, 0.14, 1.0))
