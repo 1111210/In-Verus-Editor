@@ -1262,6 +1262,23 @@ class PlayerApp:
         """玩家名：开启自动播放时显示为 ``Autoplay``。"""
         return "Autoplay" if self.settings.autoplay else self.settings.player_name
 
+    def _screen_point(self, world_x: float, world_y: float, world_z: float = 0.0):
+        """世界点 -> 屏幕像素：Panda3D 路径用 Panda 相机，软件路径用软件投影。"""
+        if self.scene3d is not None:
+            point = self.scene3d.project(world_x, world_y, world_z)
+            if point is not None:
+                return point
+        projected = self._proj(world_x, world_y, world_z)
+        return projected[0], projected[1]
+
+    def _judge_line_screen_y(self, plane_y: float) -> float:
+        """判定线的屏幕 y（连击数字等的锚点）。"""
+        if self.scene3d is not None:
+            return self.scene3d.judge_line_y(plane_y)
+        return self.scene.judgment_lines(self.w, self.h)[
+            "mouse" if plane_y > 0.0 else "k6"
+        ]
+
     def _popup_anchor(self, note: Optional[Note]) -> Tuple[float, float]:
         """判定飘字锚点：单键 / 多轨在 6K 线上，鼠标物件在鼠标线上（瞬时物件也要有字符）。"""
         if isinstance(note, LaneNote):
@@ -1276,8 +1293,7 @@ class PlayerApp:
                 except Exception:                    # pragma: no cover - 兜底
                     lo, hi = 0.5, 0.5
                 world_x = MOUSE_LEFT + (min(lo, hi) + max(lo, hi)) / 2.0 * MOUSE_LEGAL_WIDTH
-        anchor = self._proj(world_x, world_y, 0.0)
-        return anchor[0], anchor[1]
+        return self._screen_point(world_x, world_y, 0.0)
 
     def _update(self, dt: float) -> None:
         # 慢放后端（重采样）需要每帧喂下一段窗口；不喂的话低倍速时只会播第一段，
@@ -1678,7 +1694,8 @@ class PlayerApp:
         else:
             self._draw_planes(now_ms)
             self._draw_notes(now_ms)
-        self._draw_mouse_marker()
+        if self.scene3d is None:
+            self._draw_mouse_marker()       # Panda3D 路径下指针在场景里
         self._draw_popups()
         self._draw_hud(now_ms)
         if now_ms < -LEAD_MS + 400:
@@ -1920,6 +1937,19 @@ class PlayerApp:
             elif isinstance(note, MouseClick):
                 self._draw_pattern(note, now_ms)
 
+    def _scene_marker(self) -> None:
+        """鼠标指针是**场景内元素**：交给 Panda3D 画在水平面里。
+
+        无界鼠标永远实心；关闭时界内实心、出界则判定位置实心 + 实际位置边线。
+        """
+        if self.scene3d is None:
+            return
+        inside = 0.0 <= self.mouse_raw <= 1.0
+        outline = None if (self.settings.unbounded_mouse or inside) else self.mouse_raw
+        self.scene3d.mouse_marker(
+            self.mouse_norm, MOUSE_PLANE_HEIGHT, 0.03, outline_x=outline
+        )
+
     def _render_scene3d(self, now_ms: float):
         """用 Panda3D 渲染一帧 3D 场景（轨道 / 判定线 / 物件），返回 pygame 画面。"""
         assert self.chart is not None and self.scene3d is not None
@@ -1985,6 +2015,7 @@ class PlayerApp:
                            (1, 1, 1, 1), vertical=True)
                 scene.quad("click_edge", x1, z, height / 2.0, height, center_y,
                            (1, 1, 1, 1), vertical=True, angle=180.0)
+        self._scene_marker()
         return scene.render()
 
     def _draw_lane_note(self, note: LaneNote, now_ms: float) -> None:
@@ -2426,7 +2457,7 @@ class PlayerApp:
             self.screen.blit(surface, (self.w - surface.get_width() - 24, 16 + index * 26))
         # 连击数醒目显示在判定面上方
         if self.judge.combo >= 5:
-            base_y = self.scene.judgment_lines(self.w, self.h)["mouse"]
+            base_y = self._judge_line_screen_y(MOUSE_PLANE_HEIGHT)
             self.center_text(f"{self.judge.combo}", base_y - 170, self.f_big, (255, 226, 120))
 
     def _hud_right_lines(self) -> Tuple[str, ...]:

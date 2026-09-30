@@ -31,6 +31,7 @@ EXPECTED_CLICK_EDGE = (32, 64)
 EXPECTED_LANE = (128, 512)
 EXPECTED_LANE_EDGE = (8, 512)
 EXPECTED_REGION_AREA = (256, 256)
+EXPECTED_MOUSE_MARKER = (96, 96)
 SINGLE_PIXEL_SIZE = (1, 1)
 
 # 单像素图（多像素时取平均）
@@ -41,6 +42,8 @@ def expected_sizes() -> Dict[str, Tuple[int, int]]:
     """所有贴图名字 -> 期望尺寸。"""
     sizes: Dict[str, Tuple[int, int]] = {name: SINGLE_PIXEL_SIZE for name in SINGLE_PIXEL_NAMES}
     sizes["region_area"] = EXPECTED_REGION_AREA
+    sizes["mouse_marker_solid"] = EXPECTED_MOUSE_MARKER
+    sizes["mouse_marker_outline"] = EXPECTED_MOUSE_MARKER
     for lane in range(1, LANE_COUNT + 1):
         sizes[f"tap_{lane}"] = EXPECTED_TAP
         sizes[f"hold_head_{lane}"] = EXPECTED_HOLD_HEAD

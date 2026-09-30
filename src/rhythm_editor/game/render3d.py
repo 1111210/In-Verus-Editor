@@ -120,11 +120,15 @@ class Scene3D:
         self.camera.setPos(0.0, -self.camera_back, self.camera_height)
         self.camera.setP(-self.pitch)
         # Panda 的 setFov 是**水平** FOV；我们按竖直 FOV 换算，画面比例才和软件渲染一致
-        aspect = max(0.2, float(width) / float(height))
+        aspect = max(0.2, float(self.width) / float(self.height))
         vertical = math.radians(self.fov)
         horizontal = 2.0 * math.atan(math.tan(vertical / 2.0) * aspect)
-        self.base.camLens.setFov(math.degrees(horizontal))
-        self.base.camLens.setNearFar(0.05, 200.0)
+        lens = self.camera.node().getLens()      # 新相机自带镜头，改它才生效
+        lens.setAspectRatio(aspect)
+        lens.setFov(math.degrees(horizontal), aspect)
+        lens.setNearFar(0.05, 200.0)
+        self.base.camLens.setAspectRatio(aspect)
+        self.base.camLens.setFov(math.degrees(horizontal), aspect)
         self.base.setBackgroundColor(0.04, 0.04, 0.055, 1.0)
 
     def texture(self, name: str) -> Optional["Texture"]:
@@ -185,6 +189,19 @@ class Scene3D:
         node.reparentTo(self.static_root)
 
     # ------------------------------------------------------------------ 每帧
+    def project(self, x: float, y: float, z: float):
+        """世界坐标 -> 屏幕像素（和渲染用的是同一个相机）。"""
+        from panda3d.core import Point3
+        ndc = Point3()
+        if not self.base.camLens.project(Point3(x, z, y), ndc):
+            return None
+        return ((ndc.x + 1.0) * 0.5 * self.width, (1.0 - ndc.y) * 0.5 * self.height)
+
+    def judge_line_y(self, plane_y: float = 0.4) -> float:
+        """判定线（某个平面在 z=0 处）的屏幕 y 坐标。"""
+        point = self.project(0.0, plane_y, 0.0)
+        return point[1] if point else self.height * 0.5
+
     def begin(self) -> None:
         self._used = 0
 
@@ -212,6 +229,24 @@ class Scene3D:
             self._pool.append(node)
         self._used += 1
         return node
+
+    def mouse_marker(self, norm_x: float, plane_y: float, thickness: float,
+                     outline_x: float = None) -> None:
+        """鼠标指针（场景内元素）：躺在水平面里的矮胖三角形。
+
+        `outline_x` 给定时，额外用边线画一个“实际位置”的指针（关闭无界鼠标且出界时）。
+        """
+        from .scene import MOUSE_LEFT, MOUSE_LEGAL_WIDTH
+        half_w = 0.07
+        length = 0.26
+        width = MOUSE_LEGAL_WIDTH * 0.14
+        x = MOUSE_LEFT + norm_x * MOUSE_LEGAL_WIDTH
+        self.quad("mouse_marker_solid", x, length * 0.5, width, length, plane_y,
+                  (1, 1, 1, 1))
+        if outline_x is not None:
+            ox = MOUSE_LEFT + outline_x * MOUSE_LEGAL_WIDTH
+            self.quad("mouse_marker_outline", ox, length * 0.5, width, length, plane_y,
+                      (1, 1, 1, 1))
 
     def render(self):
         """渲染一帧并返回 ``pygame.Surface``（RGB）。"""

@@ -217,6 +217,24 @@ def transparent(size: int = 48) -> np.ndarray:
     return np.zeros((size, size, 4), dtype=np.uint8)
 
 
+def mouse_marker(filled: bool, size: int = 96) -> np.ndarray:
+    """鼠标指针（场景内元素）：躺在鼠标平面里的矮胖三角形，可实心 / 只画边线。"""
+    xs = np.linspace(-1.0, 1.0, size, dtype=np.float32)[None, :]
+    ys = np.linspace(-1.0, 1.0, size, dtype=np.float32)[:, None]   # -1 = 图顶（远处）
+    # 三角形：底边在下方（y=+0.9），顶点在上方（y=-0.9）
+    inside = (ys >= 0.9) | (np.abs(xs) <= (0.9 - ys) / 1.8)
+    edge = inside & ~(
+        (ys > 0.86) | (np.abs(xs) < (0.88 - ys) / 1.8 - 0.06)
+    )
+    rgba = np.zeros((size, size, 4), dtype=np.float32)
+    rgba[..., 0], rgba[..., 1], rgba[..., 2] = 90, 220, 255
+    if filled:
+        rgba[..., 3] = np.where(inside, 130.0, 0.0)
+    else:
+        rgba[..., 3] = np.where(edge, 255.0, 0.0)
+    return rgba.astype(np.uint8)
+
+
 def build_all(out_dir: str) -> list:
     os.makedirs(out_dir, exist_ok=True)
     written = []
@@ -236,6 +254,8 @@ def build_all(out_dir: str) -> list:
     written.append(_save("click_diamond.png", click_diamond(), out_dir))
     written.append(_save("click_range.png", click_range(), out_dir))
     written.append(_save("click_edge.png", click_edge(), out_dir))
+    written.append(_save("mouse_marker_solid.png", mouse_marker(True), out_dir))
+    written.append(_save("mouse_marker_outline.png", mouse_marker(False), out_dir))
     for side in ("left", "right"):
         # 边界：高亮图 + 高亮按下图（默认边界直接用轨道贴图自带的边线）
         written.append(

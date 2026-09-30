@@ -31,7 +31,7 @@ class TextureLoadTests(unittest.TestCase):
         pygame.quit()
 
     def test_expected_names_cover_all_requested_assets(self) -> None:
-        """6 单键 + 12 长按 + 空域 4 + 滑键 4 + 点击 3 + 轨道 12 + 边界 4 = 45 张。"""
+        """6 单键 + 12 长按 + 空域 4 + 滑键 4 + 点击 3 + 轨道 12 + 边界 4 + 鼠标指针 2 = 47 张。"""
         sizes = T.expected_sizes()
         for name in (
             "tap_1", "tap_6",
@@ -44,7 +44,7 @@ class TextureLoadTests(unittest.TestCase):
             "lane_edge_right_highlight", "lane_edge_right_highlight_pressed",
         ):
             self.assertIn(name, sizes)
-        self.assertEqual(len(sizes), 45)
+        self.assertEqual(len(sizes), 47)
 
     def test_single_pixel_images_are_averaged(self) -> None:
         """单像素图被改成多像素图时取各个像素平均值。"""
