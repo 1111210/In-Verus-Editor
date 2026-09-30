@@ -115,6 +115,14 @@ class Scene3D:
         )
         if self.buffer is None:  # pragma: no cover - 依赖驱动
             raise RuntimeError("Panda3D 离屏缓冲创建失败")
+        # make_output 会自带一个**没有相机**的 display region，它会盖住我们自己相机的渲染，
+        # 于是“镜头怎么调都对不上”。按文档把无相机的 region 停用，只留我们的。
+        for index in range(self.buffer.get_num_display_regions()):
+            region = self.buffer.get_display_region(index)
+            if region.get_camera() is None:
+                region.set_active(False)
+                region.set_clear_color_active(False)
+                region.set_clear_depth_active(False)
         self.frame_texture = Texture("verus-frame")
         self.frame_texture.setFormat(Texture.FRgba8)
         self.buffer.setClearColor((0.04, 0.04, 0.055, 1.0))
@@ -147,9 +155,14 @@ class Scene3D:
         aspect = max(0.2, float(self.width) / float(self.height))
         # 实测：改 makeCamera 自带的镜头不生效（画面完全不动），必须**换一个新镜头对象**
         lens = PerspectiveLens()
-        # 用“胶片尺寸 + 焦距”显式定义**竖直** FOV：tan(vFov/2) = (film高/2) / 焦距
-        lens.setFilmSize(2.0 * aspect, 2.0)
-        lens.setFocalLength(1.0 / math.tan(math.radians(self.fov) / 2.0))
+        # 依据 Panda3D 文档（Lens.setFov）：
+        #   单参数 setFov(fov) = **水平** FOV；两参数 setFov(hfov, vfov) = 同时指定水平与竖直。
+        # 我们按**竖直** FOV 定义取景，所以要把水平 FOV 一起算出来传两个参数。
+        vertical_deg = float(self.fov)
+        horizontal_deg = math.degrees(
+            2.0 * math.atan(math.tan(math.radians(vertical_deg) / 2.0) * aspect)
+        )
+        lens.setFov(horizontal_deg, vertical_deg)
         lens.setNearFar(0.05, 200.0)
         self.camera.node().setLens(lens)
 
