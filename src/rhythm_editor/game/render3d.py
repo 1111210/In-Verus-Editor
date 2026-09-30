@@ -97,6 +97,9 @@ class Scene3D:
         self.static_root = self.root.attachNewNode("static")
         self.dynamic_root = self.root.attachNewNode("dynamic")
         self.build_static()
+        # 取景与软件版对齐（那套投影是 1.15 高 / 1.7 后 + 俯仰 20° + 竖直 FOV 55°，
+        # 但软件版还要把游玩区缩放填满窗口；这里是按判定线行数实测标定的等效参数）
+        self.set_camera(pitch=14.0, fov=28.0, back=2.2, height=1.15)
 
     # ------------------------------------------------------------------ 设置
     def _make_buffer(self, width: int, height: int) -> None:
@@ -130,6 +133,26 @@ class Scene3D:
         self.base.camLens.setAspectRatio(aspect)
         self.base.camLens.setFov(math.degrees(horizontal), aspect)
         self.base.setBackgroundColor(0.04, 0.04, 0.055, 1.0)
+
+    def set_camera(self, pitch: float = None, fov: float = None,
+                   height: float = None, back: float = None) -> None:
+        """调整相机参数（取景对齐用）。"""
+        if pitch is not None:
+            self.pitch = pitch
+        if fov is not None:
+            self.fov = fov
+        if height is not None:
+            self.camera_height = height
+        if back is not None:
+            self.camera_back = back
+        self.camera.setPos(0.0, -self.camera_back, self.camera_height)
+        self.camera.setP(-self.pitch)
+        aspect = max(0.2, float(self.width) / float(self.height))
+        vertical = math.radians(self.fov)
+        horizontal = 2.0 * math.atan(math.tan(vertical / 2.0) * aspect)
+        lens = self.camera.node().getLens()
+        lens.setAspectRatio(aspect)
+        lens.setFov(math.degrees(horizontal), aspect)
 
     def texture(self, name: str) -> Optional["Texture"]:
         cached = self._textures.get(name)
@@ -190,12 +213,25 @@ class Scene3D:
 
     # ------------------------------------------------------------------ 每帧
     def project(self, x: float, y: float, z: float):
-        """世界坐标 -> 屏幕像素（和渲染用的是同一个相机）。"""
-        from panda3d.core import Point3
-        ndc = Point3()
-        if not self.base.camLens.project(Point3(x, z, y), ndc):
+        """世界坐标 -> 屏幕像素（按相机参数自己算，不依赖 Panda 的 project API）。
+
+        相机在世界 `(0, camera_height, -camera_back)`，俯仰角 `pitch`（向下），
+        竖直 FOV = `fov`；先转到相机坐标系再除以深度，最后映射到像素。
+        """
+        pitch = math.radians(self.pitch)
+        dx = x
+        dy = y - self.camera_height
+        dz = z + self.camera_back
+        forward = (0.0, -math.sin(pitch), math.cos(pitch))
+        up = (0.0, math.cos(pitch), math.sin(pitch))
+        depth = dy * forward[1] + dz * forward[2]
+        if depth <= 1e-4:
             return None
-        return ((ndc.x + 1.0) * 0.5 * self.width, (1.0 - ndc.y) * 0.5 * self.height)
+        cam_y = dy * up[1] + dz * up[2]
+        vertical = math.tan(math.radians(self.fov) / 2.0)
+        ndc_x = (dx / depth) / (vertical * (self.width / max(1.0, self.height)))
+        ndc_y = (cam_y / depth) / vertical
+        return ((ndc_x + 1.0) * 0.5 * self.width, (1.0 - ndc_y) * 0.5 * self.height)
 
     def judge_line_y(self, plane_y: float = 0.4) -> float:
         """判定线（某个平面在 z=0 处）的屏幕 y 坐标。"""
@@ -241,11 +277,12 @@ class Scene3D:
         length = 0.26
         width = MOUSE_LEGAL_WIDTH * 0.14
         x = MOUSE_LEFT + norm_x * MOUSE_LEGAL_WIDTH
-        self.quad("mouse_marker_solid", x, length * 0.5, width, length, plane_y,
+        lifted = plane_y + 0.012                     # 抬一点点，避免和鼠标平面共面闪烁
+        self.quad("mouse_marker_solid", x, length * 0.5, width, length, lifted,
                   (1, 1, 1, 1))
         if outline_x is not None:
             ox = MOUSE_LEFT + outline_x * MOUSE_LEGAL_WIDTH
-            self.quad("mouse_marker_outline", ox, length * 0.5, width, length, plane_y,
+            self.quad("mouse_marker_outline", ox, length * 0.5, width, length, lifted,
                       (1, 1, 1, 1))
 
     def render(self):

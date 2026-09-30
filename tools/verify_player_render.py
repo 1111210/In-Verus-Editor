@@ -17,13 +17,15 @@ ROOT = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
 sys.path.insert(0, os.path.join(ROOT, "src"))
 
 
-def brightest_row(surface, width: int, height: int, predicate) -> int:
+def brightest_row(surface, width: int, height: int, predicate, min_ratio: float = 0.0) -> int:
+    """找最“亮”的那一行；`min_ratio` 要求该行的命中比例达到阈值（细线判据）。"""
     best_row, best_count = -1, -1
+    samples = len(range(0, width, 4))
     for y in range(height):
         count = sum(
             1 for x in range(0, width, 4) if predicate(surface.get_at((x, y)))
         )
-        if count > best_count:
+        if count > best_count and count >= min_ratio * samples:
             best_row, best_count = y, count
     return best_row
 
@@ -58,8 +60,11 @@ def main() -> int:
 
         k6_row = brightest_row(base, width, height,
                                lambda p: p[0] > 200 and p[1] > 200 and p[2] > 200)
-        mouse_row = brightest_row(base, width, height,
-                                  lambda p: p[2] > 180 and p[0] < 160 and p[1] > 120)
+        mouse_row = brightest_row(
+            base, width, height,
+            lambda p: p[2] > 190 and p[0] < 150 and 150 < p[1] < 235,
+            min_ratio=0.5,                     # 判定线是一条贯穿的细线，不是色块
+        )
         soft = soft_scene.PlayerScene()
         soft_lines = soft.judgment_lines(width, height)
         print(f"6K 判定线：Panda 行 {k6_row} / 软件 {soft_lines['k6']:.0f}")
