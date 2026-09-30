@@ -31,7 +31,8 @@ from winshot import capture_to_png_smart  # noqa: E402
 def main() -> int:
     out_dir = sys.argv[1] if len(sys.argv) > 1 else os.path.join(ROOT, "docs", "images")
     os.makedirs(out_dir, exist_ok=True)
-    chart = os.path.join(ROOT, "charts", "demo", "demo.json")
+    chart = (sys.argv[2] if len(sys.argv) > 2
+             else os.path.join(ROOT, "charts", "demo", "demo.json"))
     app = PlayerApp([chart])
     hwnd = pygame.display.get_wm_info().get("window")
     taken = []

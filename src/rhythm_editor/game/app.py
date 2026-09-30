@@ -1983,9 +1983,28 @@ class PlayerApp:
         scene = self.scene3d
         scene.begin()
         timing = self.chart.timing
-        for note in self.chart.all_notes():
-            if not (self._note_ahead(note, now_ms) and self._note_visible(note, now_ms)):
-                continue
+        # 轨道状态（按下高亮 / 侧轨高亮）与小节线：和软件渲染器同一套规则
+        scene.set_lane_state(
+            self.pressed_lanes,
+            self.settings.side_lane_highlight,
+            (*[channel / 255.0 for channel in SIDE_TINT], 1.0),
+        )
+        beat = timing.song_ms_to_beat(max(0.0, now_ms))
+        span_beats = max(
+            0.5, self._visible_span_ms() / 1000.0 * timing.bpm_at(beat) / 60.0
+        )
+        scene.bar_lines([
+            self._note_z(timing.beat_to_song_ms(line), now_ms)
+            for line in timing.bar_lines(beat, beat + span_beats)
+        ])
+        visible = [
+            note for note in self.chart.all_notes()
+            if self._note_ahead(note, now_ms) and self._note_visible(note, now_ms)
+        ]
+        # 图层顺序与编辑器一致（多轨长按 < 单轨长按 < 多轨单键 < 单键 < 空域 < 滑键 < 点击）
+        visible.sort(key=lambda note: (self._layer_of(note), note.head_beat))
+        for note in visible:
+            layer = f"note{self._layer_of(note)}"
             if isinstance(note, LaneNote):
                 head = self._note_z(self._head_ms(note), now_ms)
                 if head < -0.4:
@@ -1999,22 +2018,18 @@ class PlayerApp:
                     tail = self._note_z(timing.beat_to_song_ms(note.tail_beat), now_ms)
                     body_center = (max(0.0, head) + max(0.0, tail)) / 2.0
                     scene.quad(f"hold_body_{lane}", center_x, body_center, x1 - x0,
-                               max(0.2, abs(tail - head)), 0.004, (1, 1, 1, 0.75))
+                               max(0.2, abs(tail - head)), 0.004, (1, 1, 1, 0.75),
+                               layer=layer)
                     head_size = max(0.25, self.settings.note_thickness)
                     scene.quad(f"hold_head_{lane}", center_x, max(0.0, head) + head_size / 2.0,
-                               x1 - x0, head_size, 0.006)
+                               x1 - x0, head_size, 0.006, layer=layer)
                 else:
                     thickness = (self.settings.multi_thickness if note.is_multi
                                  else self.settings.note_thickness)
                     scene.quad(f"tap_{lane}", center_x, max(0.0, head) + thickness / 2.0,
-                               x1 - x0, thickness, 0.006)
+                               x1 - x0, thickness, 0.006, layer=layer)
             elif isinstance(note, MouseRegion):
-                z_head = self._note_z(timing.beat_to_song_ms(note.beat_start), now_ms)
-                z_tail = self._note_z(timing.beat_to_song_ms(note.beat_end), now_ms)
-                center = (max(0.0, z_head) + max(0.0, z_tail)) / 2.0
-                scene.quad("region_area", 0.0, center, MOUSE_LEGAL_WIDTH,
-                           max(0.2, abs(z_tail - z_head)), MOUSE_PLANE_HEIGHT + 0.006,
-                           (1, 1, 1, 0.5))
+                self._draw_region3d(note, now_ms)
             elif isinstance(note, MouseSlide):
                 z = max(0.0, self._note_z(self._head_ms(note), now_ms))
                 direction = 1 if note.direction >= 0 else -1
@@ -2024,9 +2039,10 @@ class PlayerApp:
                 thick = self.settings.slide_thickness
                 center_y = MOUSE_PLANE_HEIGHT + thick / 2.0
                 scene.quad(f"slide_body_{name}", (x_start + x_end) / 2.0, z,
-                           abs(x_end - x_start), thick, center_y, (1, 1, 1, 1), vertical=True)
+                           abs(x_end - x_start), thick, center_y, (1, 1, 1, 1),
+                           vertical=True, layer=layer)
                 scene.quad(f"slide_arrow_{name}", x_end, z, thick, thick, center_y,
-                           (1, 1, 1, 1), vertical=True)
+                           (1, 1, 1, 1), vertical=True, layer=layer)
             elif isinstance(note, MouseClick):
                 z = max(0.0, self._note_z(self._head_ms(note), now_ms))
                 lo, hi = note.x_range()
@@ -2035,16 +2051,48 @@ class PlayerApp:
                 height = self.settings.click_thickness
                 center_y = MOUSE_PLANE_HEIGHT + height / 2.0
                 scene.quad("click_range", (x0 + x1) / 2.0, z, x1 - x0, height, center_y,
-                           (1, 1, 1, 1), vertical=True)
+                           (1, 1, 1, 1), vertical=True, layer=layer)
                 cx = MOUSE_LEFT + note.center * MOUSE_LEGAL_WIDTH
                 scene.quad("click_diamond", cx, z, height, height, center_y,
-                           (1, 1, 1, 1), vertical=True, angle=45.0)
+                           (1, 1, 1, 1), vertical=True, angle=45.0, layer=layer)
                 scene.quad("click_edge", x0, z, height / 2.0, height, center_y,
-                           (1, 1, 1, 1), vertical=True)
+                           (1, 1, 1, 1), vertical=True, layer=layer)
                 scene.quad("click_edge", x1, z, height / 2.0, height, center_y,
-                           (1, 1, 1, 1), vertical=True, angle=180.0)
+                           (1, 1, 1, 1), vertical=True, angle=180.0, layer=layer)
         self._scene_marker()
         return scene.render()
+
+    def _draw_region3d(self, note: MouseRegion, now_ms: float) -> None:
+        """Panda 路径的空域：按左右边界曲线采样，铺成**透视正确的梯形/弯边界**。
+
+        贴图与软件渲染器同一套（``region_fill`` 底色 + ``region_area`` 横纹渐变 +
+        ``region_edge`` 左右边线）；这里是 3D 网格，透视天然正确，也不会出现
+        「两端都被夹到远端、只剩一条小色块」的老问题。
+        """
+        assert self.chart is not None and self.scene3d is not None
+        scene = self.scene3d
+        timing = self.chart.timing
+        span = note.beat_end - note.beat_start
+        samples = 36
+        left: List[Tuple[float, float]] = []
+        right: List[Tuple[float, float]] = []
+        for index in range(samples + 1):
+            beat = note.beat_start + span * index / samples
+            z = min(START_Z, max(0.0, self._note_z(timing.beat_to_song_ms(beat), now_ms)))
+            left.append((MOUSE_LEFT + note.left_at(beat) * MOUSE_LEGAL_WIDTH, z))
+            right.append((MOUSE_LEFT + note.right_at(beat) * MOUSE_LEGAL_WIDTH, z))
+        if len(left) < 2:
+            return
+        y = MOUSE_PLANE_HEIGHT + 0.002
+        # 底图用 region_area 自带的「底边略不透明 + 越往上越透明 + 横向条纹」，
+        # alpha 再压一点，和软件渲染器的观感（约 0.4）保持一致
+        scene.region_shape(left, right, y, "region_area", (1.0, 1.0, 1.0, 0.9),
+                           layer="region_top")
+        edge = self.texture_avg.get("region_edge") or (90, 220, 255, 255)
+        for points in (left, right):
+            scene.ribbon(points, y + 0.002, 0.006,
+                         (edge[0] / 255.0, edge[1] / 255.0, edge[2] / 255.0, 0.85),
+                         layer="region_top")
 
     def _draw_lane_note(self, note: LaneNote, now_ms: float) -> None:
         """6K 单键 / 长按：用预设贴图绘制（贴图**底端**在判定边，到达判定线即判定）。"""

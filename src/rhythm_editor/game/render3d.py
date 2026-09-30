@@ -1,11 +1,15 @@
 """Panda3D 渲染层：把 3D 场景（轨道 / 物件 / 判定线）离屏渲染成一张图。
 
 坐标映射：我们的世界 ``(x, y 向上, z 向远处)`` → Panda3D ``(X, Y=z, Z=y)``，
-所以「水平面」正好是 Panda 的 XY 平面，`CardMaker` 生成的卡片不需要旋转；
-平行于判定平面的图案（滑键 / 鼠标点击）绕 X 轴转 90°。
+所以「水平面」正好是 Panda 的 XY 平面；卡片要躺进水平面得绕 X 轴转 -90°
+（``setHpr(0, -90, 0)``），平行于判定平面的图案（滑键 / 鼠标点击）不转。
 
-每帧：``begin()`` → 若干 ``quad()`` → ``render()`` 取回 ``pygame.Surface``。
-UI（菜单 / HUD / 飘字）仍由 pygame 画在这张图之上。
+绘制方式与软件渲染器保持一致：**关掉深度测试，用 render bin 显式定层**（画家
+算法）。所有东西都是同一两个平面上的卡片，深度缓冲只会带来共面闪烁（条纹）
+和互相遮挡（物件消失），没有任何好处。
+
+每帧：``begin()`` → 若干 ``quad()`` / ``region_shape()`` → ``render()`` 取回
+``pygame.Surface``。UI（菜单 / HUD / 飘字）仍由 pygame 画在这张图之上。
 """
 
 from __future__ import annotations
@@ -22,9 +26,16 @@ try:  # pragma: no cover - 依赖可选依赖
         CardMaker,
         Filename,
         FrameBufferProperties,
+        Geom,
+        GeomNode,
+        GeomTriangles,
+        GeomVertexData,
+        GeomVertexFormat,
+        GeomVertexWriter,
         GraphicsOutput,
         GraphicsPipe,
         NodePath,
+        Point3,
         PerspectiveLens,
         SamplerState,
         Texture,
@@ -52,7 +63,7 @@ def make_gradient_texture(direction: str = "area") -> "Texture":  # pragma: no c
     """生成鼠标平面 / 空域用的渐变贴图（贴图版不好表达，直接给一张）。"""
     import numpy as np
 
-    height, width = 8, 256
+    height, width = 256, 256
     top = np.linspace(1.0, 0.0, height, dtype=np.float32)[:, None]
     bottom = 1.0 - top
     alpha = np.clip(bottom ** 1.15 * 0.42 if direction == "area" else (bottom ** 1.6) * 0.55, 0, 1)
@@ -67,6 +78,23 @@ def make_gradient_texture(direction: str = "area") -> "Texture":  # pragma: no c
 
 class Scene3D:
     """离屏 Panda3D 场景：静态轨道 + 每帧物件。"""
+
+    # 图层顺序 = 绘制顺序（画家算法）。每层一个**独立的父节点**，Panda 按父节点
+    # 的创建顺序遍历子节点，所以层序稳定可靠 —— 实测 "fixed" render bin 的
+    # draw_order 在这里不生效（池节点与新建节点都只按加入顺序画），不能依赖它。
+    LAYER_SEQUENCE = (
+        "base",          # 6K 底面
+        "lane",          # 轨道
+        "side",          # 侧轨高亮
+        "pressed",       # 按下轨道
+        "bar",           # 小节线
+        "mouse_plane",   # 鼠标平面蓝底渐变
+        "region",        # 空域底色
+        "region_top",    # 空域横纹与左右边线
+        "note0", "note1", "note2", "note3", "note4", "note5", "note6",
+        "marker",        # 鼠标指针
+        "line",          # 判定线
+    )
 
     def __init__(self, width: int, height: int, texture_dir: str, lane_count: int = 6,
                  lane_width: float = 0.25, start_z: float = 12.0,
@@ -89,19 +117,23 @@ class Scene3D:
         self.width = width
         self.height = height
         self.decorations = decorations
-        # 投影公式按渲染实测校准的线性系数（见 project() 的说明）
-        self.row_scale = 0.9215
-        self.row_offset = 60.3
         self._textures: Dict[str, "Texture"] = {}
-        self._pool: List["NodePath"] = []
-        self._used = 0
+        self._pools: Dict[str, List["NodePath"]] = {}
+        self._used: Dict[str, int] = {}
+        self._extra: List["NodePath"] = []      # 每帧重建的网格（空域）
+        self._static_nodes: List["NodePath"] = []
         self.card = CardMaker("quad")
         self.card.setFrame(-0.5, 0.5, -0.5, 0.5)          # 单位卡片，缩放即尺寸
         self._make_buffer(width, height)
-        self._make_camera()
         self.root = self.base.render.attachNewNode("world")
-        self.static_root = self.root.attachNewNode("static")
-        self.dynamic_root = self.root.attachNewNode("dynamic")
+        # 每层一个父节点：父节点的创建顺序就是绘制顺序（见 LAYER_SEQUENCE）
+        self.layers: Dict[str, "NodePath"] = {
+            name: self.root.attachNewNode(f"layer_{name}") for name in self.LAYER_SEQUENCE
+        }
+        self._make_camera()
+        # 画家算法：整棵树关掉深度测试，层序完全由图层父节点的顺序决定
+        self.root.setDepthTest(False)
+        self.root.setDepthWrite(False)
         self.build_static()
         # 取景标定：以**构图贴近软件版**为目标（两个平面的 8 个角点平均误差 31px），
         # 由 tools/fit_panda_composition.py 搜索得到。
@@ -134,10 +166,7 @@ class Scene3D:
     def _make_camera(self) -> None:
         # 文档配方：相机由 base.makeCamera(buffer) 创建，并挂到自己的场景根
         self.camera = self.base.makeCamera(self.buffer)
-        self.root = self.base.render.attachNewNode("world")
         self.camera.reparentTo(self.root)
-        self.static_root = self.root.attachNewNode("static")
-        self.dynamic_root = self.root.attachNewNode("dynamic")
         self.set_camera()
 
     def set_camera(self, pitch: float = None, fov: float = None,
@@ -180,57 +209,125 @@ class Scene3D:
             return None
         if texture is not None:
             texture.setFormat(Texture.FRgba)
-            # 远处被强烈缩小 -> 不开 mipmap 会出现移动条纹 / 闪烁
+            # 远处被强烈缩小 -> 没有 mipmap 会出现摩尔纹（看起来就是"条纹"）
             texture.setMinfilter(SamplerState.FTLinearMipmapLinear)
             texture.setMagfilter(SamplerState.FTLinear)
+            texture.setAnisotropicDegree(4)
+            try:                       # NPOT 贴图也把 mip 链补全（各向异性过滤需要）
+                texture.generateRamMipmapImages()
+            except Exception:          # pragma: no cover - 老驱动
+                pass
         self._textures[name] = texture
         return texture
 
     # ------------------------------------------------------------------ 静态
     def build_static(self) -> None:
         width = self.lane_count * self.lane_width
-        self.static_root.node().removeAllChildren()
+        self._clear_static()
+        self._lane_state = None
         if not self.decorations:
             # 标定用：只画两条判定线（白 6K / 青鼠标），其余装饰都省掉
-            self._static_quad("", 0.0, 0.02, width, 0.04, 0.0, (1, 1, 1, 1))
-            self._static_quad("", 0.0, 0.02, 1.0, 0.04, 0.4, (0.35, 0.86, 1.0, 1.0))
+            self._static_quad("", 0.0, 0.02, width, 0.04, 0.0, (1, 1, 1, 1), layer="line")
+            self._static_quad("", 0.0, 0.02, 1.0, 0.04, 0.4, (0.35, 0.86, 1.0, 1.0),
+                              layer="line")
             return
         # 6K 底面
         self._static_quad("", -width / 2 + width / 2, self.start_z / 2, width, self.start_z,
-                          0.0, (0.09, 0.10, 0.14, 1.0))
-        for lane in range(self.lane_count):
-            x = -width / 2 + (lane + 0.5) * self.lane_width
-            self._static_quad(f"lane_{lane + 1}_default", x, self.start_z / 2,
-                              self.lane_width, self.start_z, 0.0, (1, 1, 1, 1))
+                          0.0, (0.09, 0.10, 0.14, 1.0), layer="base")
+        # 轨道贴图 / 侧轨高亮 / 按下高亮 / 边界贴图都由 set_lane_state() 建
+        self.set_lane_state(frozenset(), False)
         # 判定线（6K 白 / 鼠标青）
         judge_y = 0.4
-        # 判定线：深度做得很薄（0.008），抬高 0.004 避免与平面共面闪烁
-        self._static_quad("", 0.0, 0.004, width, 0.008, 0.004, (1, 1, 1, 1))
+        self._static_quad("", 0.0, 0.004, width, 0.008, 0.004, (1, 1, 1, 1), layer="line")
         self._static_quad("", 0.0, 0.004, 1.0, 0.008, judge_y + 0.004,
-                          (0.35, 0.86, 1.0, 1.0))
-        # 6K 平面左右边线（细卡片，避免和平面共面）
-        for edge in (-width / 2, width / 2):
-            self._static_quad("", edge, self.start_z / 2, 0.012, self.start_z, 0.004,
-                              (0.47, 0.63, 1.0, 0.9))
+                          (0.35, 0.86, 1.0, 1.0), layer="line")
         # 鼠标平面渐变 + 合法区域边线
         gradient = getattr(self, "_gradient", None)
         if gradient is None:
             gradient = make_gradient_texture("mouse")
             self._gradient = gradient
         self._static_quad("", 0.0, self.start_z / 2, width, self.start_z, judge_y + 0.002,
-                          (1, 1, 1, 1), texture=gradient)
-        for edge in (-0.5, 0.5):
-            self._static_quad("", edge, self.start_z / 2, 0.012, self.start_z, judge_y + 0.004,
-                              (0.35, 0.86, 1.0, 0.9))
+                          (1, 1, 1, 1), texture=gradient, layer="mouse_plane")
+
+    def set_lane_state(self, pressed, side_highlight: bool = False,
+                       side_color=(58 / 255, 35 / 255, 82 / 255, 1.0)) -> None:
+        """建/重建轨道卡片：默认或按下贴图 + 侧轨高亮叠加 + 左右边界高亮。
+
+        按下高亮与侧轨高亮都由贴图/纯色卡片完成，且**都在鼠标平面下方**
+        （bin 12~16 < 鼠标平面 20），和软件渲染器的层序一致。
+        """
+        pressed = frozenset(int(lane) for lane in pressed)
+        if getattr(self, "_lane_state", None) == (pressed, bool(side_highlight)):
+            return
+        self._lane_state = (pressed, bool(side_highlight))
+        for node in list(getattr(self, "_lane_nodes", [])):
+            node.removeNode()
+            if node in self._static_nodes:      # 别让重建把已删节点留在静态列表里
+                self._static_nodes.remove(node)
+        self._lane_nodes = []
+        width = self.lane_count * self.lane_width
+        for lane in range(self.lane_count):
+            x = -width / 2 + (lane + 0.5) * self.lane_width
+            name = (f"lane_{lane + 1}_pressed" if lane in pressed
+                    else f"lane_{lane + 1}_default")
+            self._lane_nodes.append(self._static_quad(
+                name, x, self.start_z / 2, self.lane_width, self.start_z, 0.0,
+                (1, 1, 1, 1), layer="pressed" if lane in pressed else "lane"))
+        if side_highlight:
+            for lane in (0, self.lane_count - 1):
+                x = -width / 2 + (lane + 0.5) * self.lane_width
+                self._lane_nodes.append(self._static_quad(
+                    "", x, self.start_z / 2, self.lane_width, self.start_z, 0.0,
+                    side_color, layer="side"))
+        # 左右边界：高亮贴图（按下时换成 _pressed 版本）
+        suffix = "_pressed" if pressed else ""
+        for side, x in (("left", -width / 2), ("right", width / 2)):
+            name = f"lane_edge_{side}_highlight{suffix}"
+            if self.texture(name) is None:
+                name = f"lane_edge_{side}_highlight"
+            self._lane_nodes.append(self._static_quad(
+                name, x, self.start_z / 2, 0.02, self.start_z, 0.0,
+                (1, 1, 1, 1), layer="pressed" if pressed else "lane"))
+
+    def _layer_of(self, layer: str) -> str:
+        """``layer`` 支持 ``"note3"`` 这种带图层序号的写法（0=多轨长按 … 6=点击）。"""
+        if layer in self.layers:
+            return layer
+        if layer.startswith("note") and layer[4:].isdigit():
+            return f"note{min(6, int(layer[4:]))}"
+        return "note3"
+
+    def _apply_layer(self, node, layer: str) -> None:
+        """画家算法：关掉深度测试，并用 **fixed bin 的 draw_order** 显式定层。
+
+        实测（tools/diag_panda_render.py 的 "绘制顺序检查"）：
+        * 不加 bin 时，带透明的物体会被 Panda 按**深度**排序（近的后画），
+          图层结构会被无视；
+        * ``setBin("fixed", n)`` 的 draw_order 是生效的（n 大的后画，压在上面）；
+        * 同一 draw_order 内按场景图顺序画（所以每层还各有一个父节点兜底）。
+        """
+        name = self._layer_of(layer)
+        node.setBin("fixed", (self.LAYER_SEQUENCE.index(name) + 1) * 10)
+        node.setDepthTest(False)
+        node.setDepthWrite(False)
+
+    def _layer_root(self, layer: str) -> "NodePath":
+        return self.layers[self._layer_of(layer)]
+
+    def _clear_static(self) -> None:
+        for node in self._static_nodes:
+            node.removeNode()
+        self._static_nodes = []
 
     def _static_quad(self, name: str, x: float, z: float, sx: float, sz: float, y: float,
-                     color, texture=None) -> None:
+                     color, texture=None, layer: str = "base") -> "NodePath":
         node = NodePath(self.card.generate())
         node.setTransparency(TransparencyAttrib.MAlpha)
         node.setPos(x, z, y)
         node.setScale(sx, 1.0, sz)   # 卡片宽高在局部 X / Z 上
         # 实测：CardMaker 的卡片默认立在 XZ 平面（竖着），P=-90 才躺进水平面
         node.setHpr(0.0, -90.0, 0.0)
+        self._apply_layer(node, layer)
         node.setColor(*color)
         if texture is not None:
             node.setTexture(texture)
@@ -238,31 +335,29 @@ class Scene3D:
             loaded = self.texture(name)
             if loaded is not None:
                 node.setTexture(loaded)
-        node.reparentTo(self.static_root)
+        node.reparentTo(self._layer_root(layer))
+        self._static_nodes.append(node)
+        return node
 
     # ------------------------------------------------------------------ 每帧
     def project(self, x: float, y: float, z: float):
         """世界坐标 -> 屏幕像素。
 
-        用相机参数自己算透视（文档 API `Lens.project` 在标定后的取景下会判 false，
-        用不了；这里的公式是按**渲染实测**校准过的：同参数下公式行 992.6/787.9
-        对应渲染行 731/512，故做一次线性修正 row_渲染 ≈ 1.07 × row_公式 − 331）。
+        **直接问 Panda 的镜头**（`Lens.project`，输入相机空间点，输出 (-1,1) 的
+        NDC，(-1,-1) 是左下角）。实测这条路径与渲染画面相差 < 1px
+        （tools/diag_panda_render.py 的 "官方 Lens.project 校验"），比手写
+        投影公式 + 线性校准可靠得多：镜头参数（FOV / 纵横比 / 俯角）怎么改都跟得上。
         """
-        pitch = math.radians(self.pitch)
-        dx = x
-        dy = y - self.camera_height
-        dz = z + self.camera_back
-        depth = dy * (-math.sin(pitch)) + dz * math.cos(pitch)
-        if depth <= 1e-4:
+        if self.camera is None:                      # pragma: no cover - 未初始化
             return None
-        cam_y = dy * math.cos(pitch) + dz * math.sin(pitch)
-        vertical = math.tan(math.radians(self.fov) / 2.0)
-        aspect = self.width / max(1.0, self.height)
-        ndc_x = (dx / depth) / (vertical * aspect)
-        ndc_y = (cam_y / depth) / vertical
-        row = (1.0 - ndc_y) * 0.5 * self.height
-        row = self.row_scale * row + self.row_offset          # 渲染实测校准
-        return ((ndc_x + 1.0) * 0.5 * self.width, row)
+        # 世界 (x, y 向上, z 向远) -> Panda (X=x, Y=z, Z=y)
+        cam_point = self.camera.getRelativePoint(self.base.render, Point3(x, z, y))
+        ndc = Point3()
+        ok = self.camera.node().getLens().project(cam_point, ndc)
+        if not ok and cam_point.get_y() <= 0.0:      # 在镜头后面（投影无意义）
+            return None
+        return ((ndc.get_x() + 1.0) * 0.5 * self.width,
+                (1.0 - ndc.get_y()) * 0.5 * self.height)
 
     def judge_line_y(self, plane_y: float = 0.4) -> float:
         """判定线（某个平面在 z=0 处）的屏幕 y 坐标。"""
@@ -270,12 +365,101 @@ class Scene3D:
         return point[1] if point else self.height * 0.5
 
     def begin(self) -> None:
-        self._used = 0
+        for layer in self._pools:
+            self._used[layer] = 0
+        for node in self._extra:                # 上一帧的空域网格整体丢掉重建
+            node.removeNode()
+        self._extra.clear()
+
+    def bar_lines(self, zs, color=(70, 72, 84), half: float = 0.006) -> None:
+        """6K 平面上的小节线：一批薄卡片（**只画小节线，不画节拍线**）。"""
+        width = self.lane_count * self.lane_width
+        for z in zs:
+            if 0.0 <= z <= self.start_z:
+                self.quad("", 0.0, z, width, half * 2.0, 0.001,
+                          (color[0] / 255, color[1] / 255, color[2] / 255, 1.0),
+                          layer="bar")
+
+    def region_shape(self, left_points, right_points, y: float,
+                     texture_name: str = "region_area", color=(1.0, 1.0, 1.0, 1.0),
+                     layer: str = "region") -> None:
+        """空域：按左右边界采样点铺一条**透视正确的三角带**（贴图自带横纹与渐变）。
+
+        ``left_points`` / ``right_points`` 是 ``(x, z)`` 列表，逐点对应；
+        贴图 v 轴沿着空域长度（0 = 靠判定线的一端 = 贴图更不透明的底边）。
+        """
+        count = min(len(left_points), len(right_points))
+        if count < 2:
+            return
+        vdata = GeomVertexData("region", GeomVertexFormat.getV3t2(), Geom.UHStatic)
+        vdata.setNumRows(count * 2)
+        vertex = GeomVertexWriter(vdata, "vertex")
+        texcoord = GeomVertexWriter(vdata, "texcoord")
+        for index in range(count):
+            v = index / float(count - 1)
+            for point, u in ((left_points[index], 0.0), (right_points[index], 1.0)):
+                vertex.addData3(float(point[0]), float(point[1]), float(y))
+                texcoord.addData2(u, v)
+        triangles = GeomTriangles(Geom.UHStatic)
+        for index in range(count - 1):
+            a = index * 2
+            triangles.addVertices(a, a + 1, a + 2)
+            triangles.addVertices(a + 1, a + 3, a + 2)
+        triangles.closePrimitive()
+        geom = Geom(vdata)
+        geom.addPrimitive(triangles)
+        node = GeomNode("region")
+        node.addGeom(geom)
+        path = NodePath(node)
+        path.setTransparency(TransparencyAttrib.MAlpha)
+        path.setColor(*color)
+        loaded = self.texture(texture_name)
+        if loaded is not None:
+            path.setTexture(loaded)
+        self._apply_layer(path, layer)
+        path.reparentTo(self._layer_root(layer))
+        self._extra.append(path)
+
+    def ribbon(self, points, y: float, half: float, color=(1.0, 1.0, 1.0, 1.0),
+               texture_name: str = "", layer: str = "region_top") -> None:
+        """沿一串 ``(x, z)`` 点铺一条**竖直窄带**（空域左右边线用），x 方向宽 2*half。"""
+        if len(points) < 2:
+            return
+        vdata = GeomVertexData("ribbon", GeomVertexFormat.getV3t2(), Geom.UHStatic)
+        vdata.setNumRows(len(points) * 2)
+        vertex = GeomVertexWriter(vdata, "vertex")
+        texcoord = GeomVertexWriter(vdata, "texcoord")
+        for index, point in enumerate(points):
+            v = index / float(len(points) - 1)
+            for x, u in ((point[0] - half, 0.0), (point[0] + half, 1.0)):
+                vertex.addData3(float(x), float(point[1]), float(y))
+                texcoord.addData2(u, v)
+        triangles = GeomTriangles(Geom.UHStatic)
+        for index in range(len(points) - 1):
+            a = index * 2
+            triangles.addVertices(a, a + 1, a + 2)
+            triangles.addVertices(a + 1, a + 3, a + 2)
+        triangles.closePrimitive()
+        geom = Geom(vdata)
+        geom.addPrimitive(triangles)
+        node = GeomNode("ribbon")
+        node.addGeom(geom)
+        path = NodePath(node)
+        path.setTransparency(TransparencyAttrib.MAlpha)
+        path.setColor(*color)
+        loaded = self.texture(texture_name) if texture_name else None
+        if loaded is not None:
+            path.setTexture(loaded)
+        self._apply_layer(path, layer)
+        path.reparentTo(self._layer_root(layer))
+        self._extra.append(path)
 
     def quad(self, name: str, x: float, z: float, sx: float, sz: float, y: float,
-             color=(1, 1, 1, 1), vertical: bool = False, angle: float = 0.0) -> None:
+             color=(1, 1, 1, 1), vertical: bool = False, angle: float = 0.0,
+             layer: str = "note") -> "NodePath":
         """放一张卡片：水平面（默认）或平行判定平面（``vertical=True``）。"""
-        node = self._next_node()
+        layer = self._layer_of(layer)
+        node = self._next_node(layer)
         node.clearTexture()
         loaded = self.texture(name)
         if loaded is not None:
@@ -285,17 +469,21 @@ class Scene3D:
         node.setPos(x, z, y)
         # 水平面（轨道/平面/长条）= P -90；平行判定平面（滑键/点击）= P 0
         node.setHpr(0.0, 0.0 if vertical else -90.0, angle)
+        self._apply_layer(node, layer)
         node.setScale(sx, 1.0, sz)   # 卡片宽高在局部 X / Z 上
         node.show()
+        return node
 
-    def _next_node(self) -> "NodePath":
-        if self._used < len(self._pool):
-            node = self._pool[self._used]
+    def _next_node(self, layer: str) -> "NodePath":
+        pool = self._pools.setdefault(layer, [])
+        used = self._used.get(layer, 0)
+        if used < len(pool):
+            node = pool[used]
         else:
             node = NodePath(self.card.generate())
-            node.reparentTo(self.dynamic_root)
-            self._pool.append(node)
-        self._used += 1
+            node.reparentTo(self.layers[layer])
+            pool.append(node)
+        self._used[layer] = used + 1
         return node
 
     def mouse_marker(self, norm_x: float, plane_y: float, thickness: float,
@@ -313,18 +501,21 @@ class Scene3D:
         # 只抬 0.004 单位：既仍算“在物件运动的水平面内”，又避免和平面共面闪烁。
         lifted = plane_y + 0.004
         self.quad("mouse_marker_solid", x, length * 0.5, width, length, lifted,
-                  (1, 1, 1, 1), angle=180.0)
+                  (1, 1, 1, 1), angle=180.0, layer="marker")
         if outline_x is not None:
             ox = MOUSE_LEFT + outline_x * MOUSE_LEGAL_WIDTH
             self.quad("mouse_marker_outline", ox, length * 0.5, width, length, lifted,
-                      (1, 1, 1, 1), angle=180.0)
+                      (1, 1, 1, 1), angle=180.0, layer="marker")
 
     def render(self):
         """渲染一帧并返回 ``pygame.Surface``（RGB）。"""
         import pygame
 
-        for index in range(self._used, len(self._pool)):
-            self._pool[index].hide()
+        # 这一帧没用到的池节点必须藏起来：否则上一帧的物件会「残影」留在画面上
+        # （物件过线后数量减少时尤其明显）
+        for layer, pool in self._pools.items():
+            for index in range(self._used.get(layer, 0), len(pool)):
+                pool[index].hide()
         self.base.graphicsEngine.render_frame()
         raw = bytes(self.frame_texture.getRamImageAs("RGB"))
         surface = pygame.image.fromstring(raw, (self.width, self.height), "RGB")
