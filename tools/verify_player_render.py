@@ -62,7 +62,7 @@ def main() -> int:
                                lambda p: p[0] > 200 and p[1] > 200 and p[2] > 200)
         mouse_row = brightest_row(
             base, width, height,
-            lambda p: p[2] > 190 and p[0] < 150 and 150 < p[1] < 235,
+            lambda p: p[2] > 170 and p[0] < 200 and p[1] > 120,
             min_ratio=0.5,                     # 判定线是一条贯穿的细线，不是色块
         )
         soft = soft_scene.PlayerScene()

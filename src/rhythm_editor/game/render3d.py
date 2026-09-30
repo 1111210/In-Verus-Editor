@@ -88,6 +88,9 @@ class Scene3D:
         self.width = width
         self.height = height
         self.decorations = decorations
+        # 投影公式按渲染实测校准的线性系数（见 project() 的说明）
+        self.row_scale = 1.07
+        self.row_offset = -331.0
         self._textures: Dict[str, "Texture"] = {}
         self._pool: List["NodePath"] = []
         self._used = 0
@@ -99,29 +102,33 @@ class Scene3D:
         self.static_root = self.root.attachNewNode("static")
         self.dynamic_root = self.root.attachNewNode("dynamic")
         self.build_static()
-        # 取景与软件版对齐（那套投影是 1.15 高 / 1.7 后 + 俯仰 20° + 竖直 FOV 55°，
-        # 但软件版还要把游玩区缩放填满窗口；这里是按判定线行数实测标定的等效参数）
-        self.set_camera(pitch=14.0, fov=28.0, back=2.2, height=1.15)
+        # 取景按“渲染出来的判定线行号”实测标定（目标 = 软件版：6K 行 734 / 鼠标行 506）：
+        # fov=38 pitch=8 back=1.8 height=1.4 -> 实测 731 / 512（总误差 10px）
+        self.set_camera(pitch=8.0, fov=38.0, back=1.8, height=1.4)
 
     # ------------------------------------------------------------------ 设置
     def _make_buffer(self, width: int, height: int) -> None:
-        """按官方手册的做法创建离屏缓冲。
+        """创建**独立**离屏缓冲（文档：makeOutput + BFRefuseWindow + 不共享 GSG）。
 
-        文档（Low-Level Render-To-Texture）给的配方是：
-        `mybuffer = base.win.makeTextureBuffer(...)` → `mybuffer.setSort(-100)`
-        → `mycamera = base.makeCamera(mybuffer)` → 相机挂到自己的场景根。
-        之前用 `graphicsEngine.make_output(...)` 拿到的其实是主窗口那一层
-        （用 `base.cam` 的默认镜头），所以“镜头怎么调都对不上”。
+        文档在 low-level-render-to-texture 里明确提醒：**parasite buffer 是"先渲染到主窗口
+        再拷贝进纹理"**，那样读到的其实是主窗口的画面（用 base.cam 的镜头），
+        表现就是"怎么调我们自己的镜头都对不上"。所以这里传 gsg=None / host=None，
+        强制建立一个不依赖窗口的独立缓冲。
         """
-        self.buffer = self.base.win.makeTextureBuffer("verus-3d", width, height)
+        props = FrameBufferProperties()
+        props.setRgbaBits(8, 8, 8, 8)
+        props.setDepthBits(24)
+        win_props = WindowProperties.size(width, height)
+        self.buffer = self.base.graphicsEngine.make_output(
+            self.base.pipe, "verus-3d", -100, props, win_props,
+            GraphicsPipe.BFRefuseWindow, None, None,
+        )
         if self.buffer is None:  # pragma: no cover - 依赖驱动
-            raise RuntimeError("Panda3D 离屏缓冲创建失败")
-        self.buffer.setSort(-100)                      # 文档：先渲染离屏缓冲
+            raise RuntimeError("Panda3D 独立离屏缓冲创建失败")
+        self.buffer.setClearColor((0.04, 0.04, 0.055, 1.0))
         self.frame_texture = Texture("verus-frame")
         self.frame_texture.setFormat(Texture.FRgba8)
-        # 再加一张“拷回内存”的纹理，方便每帧读像素（getRamImageAs）
         self.buffer.add_render_texture(self.frame_texture, GraphicsOutput.RTMCopyRam)
-        self.buffer.setClearColor((0.04, 0.04, 0.055, 1.0))
 
     def _make_camera(self) -> None:
         # 文档配方：相机由 base.makeCamera(buffer) 创建，并挂到自己的场景根
@@ -223,25 +230,27 @@ class Scene3D:
 
     # ------------------------------------------------------------------ 每帧
     def project(self, x: float, y: float, z: float):
-        """世界坐标 -> 屏幕像素（按相机参数自己算，不依赖 Panda 的 project API）。
+        """世界坐标 -> 屏幕像素。
 
-        相机在世界 `(0, camera_height, -camera_back)`，俯仰角 `pitch`（向下），
-        竖直 FOV = `fov`；先转到相机坐标系再除以深度，最后映射到像素。
+        用相机参数自己算透视（文档 API `Lens.project` 在标定后的取景下会判 false，
+        用不了；这里的公式是按**渲染实测**校准过的：同参数下公式行 992.6/787.9
+        对应渲染行 731/512，故做一次线性修正 row_渲染 ≈ 1.07 × row_公式 − 331）。
         """
         pitch = math.radians(self.pitch)
         dx = x
         dy = y - self.camera_height
         dz = z + self.camera_back
-        forward = (0.0, -math.sin(pitch), math.cos(pitch))
-        up = (0.0, math.cos(pitch), math.sin(pitch))
-        depth = dy * forward[1] + dz * forward[2]
+        depth = dy * (-math.sin(pitch)) + dz * math.cos(pitch)
         if depth <= 1e-4:
             return None
-        cam_y = dy * up[1] + dz * up[2]
+        cam_y = dy * math.cos(pitch) + dz * math.sin(pitch)
         vertical = math.tan(math.radians(self.fov) / 2.0)
-        ndc_x = (dx / depth) / (vertical * (self.width / max(1.0, self.height)))
+        aspect = self.width / max(1.0, self.height)
+        ndc_x = (dx / depth) / (vertical * aspect)
         ndc_y = (cam_y / depth) / vertical
-        return ((ndc_x + 1.0) * 0.5 * self.width, (1.0 - ndc_y) * 0.5 * self.height)
+        row = (1.0 - ndc_y) * 0.5 * self.height
+        row = self.row_scale * row + self.row_offset          # 渲染实测校准
+        return ((ndc_x + 1.0) * 0.5 * self.width, row)
 
     def judge_line_y(self, plane_y: float = 0.4) -> float:
         """判定线（某个平面在 z=0 处）的屏幕 y 坐标。"""

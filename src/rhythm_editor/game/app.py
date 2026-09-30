@@ -568,8 +568,9 @@ class PlayerApp:
         if os.environ.get("SDL_VIDEODRIVER", "").lower() == "dummy":
             return False                          # 测试环境不建 GL 上下文
         if not os.environ.get("VERUS_PANDA"):
-            # Panda3D 场景取景还没标定好（会看到巨大色块），默认仍走软件 3D；
-            # 设置 VERUS_PANDA=1 才启用 Panda 渲染层（继续调试用）。
+            # Panda 层的“判定线定位/HUD 锚点/指针”已标定通过，但画面构图与软件版风格差异较大
+            # （鼠标平面在低俯角下被强烈压缩、渐变卡片占屏较多），默认仍走软件 3D；
+            # 想对比时设置 VERUS_PANDA=1。
             return False
         try:
             self.scene3d = render3d.Scene3D(self.w, self.h, self.texture_dir)
