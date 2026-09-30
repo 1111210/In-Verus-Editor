@@ -567,6 +567,10 @@ class PlayerApp:
             return False
         if os.environ.get("SDL_VIDEODRIVER", "").lower() == "dummy":
             return False                          # 测试环境不建 GL 上下文
+        if not os.environ.get("VERUS_PANDA"):
+            # Panda3D 场景取景还没标定好（会看到巨大色块），默认仍走软件 3D；
+            # 设置 VERUS_PANDA=1 才启用 Panda 渲染层（继续调试用）。
+            return False
         try:
             self.scene3d = render3d.Scene3D(self.w, self.h, self.texture_dir)
         except Exception as exc:                  # pragma: no cover - 依赖驱动
