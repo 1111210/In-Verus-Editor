@@ -25,8 +25,23 @@ def report(app, tag: str) -> None:
     win = pygame.display.get_window_size()
     surface = pygame.display.get_surface()
     flags = surface.get_flags() if surface is not None else 0
-    print(f"[{tag}] 窗口 {win} · screen {app.screen.get_size()} · SDL 标志 0x{flags:x}",
-          flush=True)
+    print(f"[{tag}] 窗口 {win} · screen {app.screen.get_size()} · SDL 标志 0x{flags:x}"
+          f" · 位置 {window_rect()}", flush=True)
+
+
+def window_rect():
+    """Windows 下取窗口的 (left, top, width, height)，其它平台返回 None。"""
+    if os.name != "nt":
+        return None
+    try:
+        import ctypes
+
+        hwnd = pygame.display.get_wm_info().get("window")
+        rect = ctypes.wintypes.RECT()
+        ctypes.windll.user32.GetWindowRect(int(hwnd), ctypes.byref(rect))
+        return (rect.left, rect.top, rect.right - rect.left, rect.bottom - rect.top)
+    except Exception:                              # pragma: no cover - 依赖系统
+        return None
 
 
 def main() -> int:
@@ -41,11 +56,17 @@ def main() -> int:
             time.sleep(0.01)
         report(app, "F10 最大化后")
     app._begin_chart(chart)
-    app._start_play()
-    app.timer = 9.0
-    report(app, "开局（还没建 3D）")
-    app._draw()                       # 第一次画：会创建 Panda 场景
-    report(app, "建了 3D 之后")
+    report(app, "进入加载页（还没建 3D）")
+    for index in range(150):          # 走真实状态机：加载页 → 游玩
+        app._events()
+        app._update(1 / 60.0)
+        app._draw()
+        app._present()
+        if index % 10 == 0 or index in (1, 2, 3):
+            report(app, f"第 {index:3d} 帧 · state={app.state}")
+            if app.state == "play" and index > 90:
+                break
+    report(app, "进入游玩后")
     base = getattr(app.scene3d, "base", None)
     if base is not None:
         print("    Panda 窗口数 =", base.graphicsEngine.getNumWindows(),

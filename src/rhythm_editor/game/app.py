@@ -207,6 +207,7 @@ class PlayerApp:
         self.display_mode = "windowed"     # windowed / borderless / fullscreen
         self.windowed_size: Optional[Tuple[int, int]] = None
         self.maximized = False             # F10 最大化状态（非 Windows 下的退路用）
+        self._window_guard: Optional[Tuple[Optional[dict], int]] = None   # 建 3D 后盯窗口
         self._prime_window()
         try:
             desktop = pygame.display.get_desktop_sizes()[0]
@@ -586,12 +587,21 @@ class PlayerApp:
             return False
         if os.environ.get("VERUS_SOFTWARE_3D"):
             return False
+        # 记下窗口原样：Panda3D 想在 Windows 上建 GL 上下文时**偶尔**会把前台窗口
+        # 动一下（尺寸 / 位置 / 取消最大化）。建完立刻核对并恢复，再盯半秒。
+        before = self._window_state()
         try:
             self.scene3d = render3d.Scene3D(self.w, self.h, self.texture_dir)
         except Exception as exc:                  # pragma: no cover - 依赖驱动
             self._fallback_renderer(f"Panda3D 初始化失败：{exc}")
             return False
+        if self._restore_window_state(before, "Panda3D 建场景时"):
+            self.scene3d.resize(self.w, self.h)
+        self._window_guard = (before, 20)          # 之后 20 帧继续盯着（异步改动）
         self.renderer_name = "panda3d"
+        print(f"[In Verus 游玩器] Panda3D 场景就绪 · 窗口 {self.w}x{self.h} · "
+              f"缓冲 {self.scene3d.buffer.getXSize()}x{self.scene3d.buffer.getYSize()}",
+              flush=True)
         return True
 
     def _drop_scene3d(self) -> None:
@@ -603,6 +613,77 @@ class PlayerApp:
             except Exception:                      # pragma: no cover - 依赖驱动
                 pass
             self.scene3d = None
+
+    # ------------------------------------------------------ 窗口状态保护
+    def _window_state(self) -> Optional[dict]:
+        """记录窗口的尺寸 / 位置 / 最大化状态（用来核对有没有被第三方动过）。"""
+        try:
+            size = pygame.display.get_window_size()
+        except Exception:                          # pragma: no cover - 依赖驱动
+            return None
+        state = {"size": (int(size[0]), int(size[1])), "outer": None, "maximized": False}
+        if os.name == "nt":
+            try:
+                import ctypes
+
+                hwnd = int(pygame.display.get_wm_info().get("window") or 0)
+                if hwnd:
+                    rect = ctypes.wintypes.RECT()
+                    ctypes.windll.user32.GetWindowRect(hwnd, ctypes.byref(rect))
+                    state["outer"] = (rect.left, rect.top,
+                                      rect.right - rect.left, rect.bottom - rect.top)
+                    state["maximized"] = bool(ctypes.windll.user32.IsZoomed(hwnd))
+            except Exception:                      # pragma: no cover - 依赖系统
+                pass
+        return state
+
+    def _restore_window_state(self, state: Optional[dict], why: str) -> bool:
+        """把窗口恢复成 ``state``（Panda3D 建 GL 上下文偶尔会把窗口动一下）。
+
+        返回是否真的动过手。执行后会把显示表面与 3D 缓冲一起同步。
+        """
+        if not state or os.name != "nt":
+            return False
+        now = self._window_state()
+        if now is None:
+            return False
+        if now["size"] == state["size"] and now["maximized"] == state["maximized"]:
+            return False
+        try:
+            import ctypes
+
+            hwnd = int(pygame.display.get_wm_info().get("window") or 0)
+            if not hwnd:
+                return False
+            user32 = ctypes.windll.user32
+            if state["maximized"]:
+                user32.ShowWindow(hwnd, 3)                     # SW_MAXIMIZE
+            elif state["outer"] is not None:
+                left, top, width, height = state["outer"]
+                # SWP_NOZORDER | SWP_NOACTIVATE
+                user32.SetWindowPos(hwnd, 0, int(left), int(top), int(width), int(height),
+                                    0x0004 | 0x0010)
+            else:
+                return False
+        except Exception:                          # pragma: no cover - 依赖系统
+            return False
+        self._sync_display_size()
+        if self.scene3d is not None:
+            self.scene3d.resize(self.w, self.h)
+        print(f"[In Verus 游玩器] {why} 把窗口改成了 {now['size']}"
+              f"（{state['size']} 才是原样），已恢复", flush=True)
+        return True
+
+    def _watch_window(self) -> None:
+        """建完 3D 的头几十帧继续核对窗口：驱动把改动推迟到下一帧也能兜住。"""
+        if not self._window_guard:
+            return
+        state, frames = self._window_guard
+        if self._restore_window_state(state, "Panda3D 运行中"):
+            self._window_guard = None
+            return
+        frames -= 1
+        self._window_guard = (state, frames) if frames > 0 else None
 
     def _fallback_renderer(self, why: str) -> None:
         """Panda3D 不可用 -> OpenGL；OpenGL 也不可用 -> 软件（用户要求的回退链）。"""
@@ -1342,6 +1423,7 @@ class PlayerApp:
         return self._screen_point(world_x, world_y, 0.0)
 
     def _update(self, dt: float) -> None:
+        self._watch_window()
         # 慢放后端（重采样）需要每帧喂下一段窗口；不喂的话低倍速时只会播第一段，
         # 谱面时钟会跟着卡住、音乐随后消失
         self.audio.poll()
