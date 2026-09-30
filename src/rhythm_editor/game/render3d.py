@@ -200,8 +200,9 @@ class Scene3D:
                               self.lane_width, self.start_z, 0.0, (1, 1, 1, 1))
         # 判定线（6K 白 / 鼠标青）
         judge_y = 0.4
-        self._static_quad("", 0.0, 0.02, width, 0.04, 0.0, (1, 1, 1, 1))
-        self._static_quad("", 0.0, 0.02, 1.0, 0.04, judge_y, (0.35, 0.86, 1.0, 1.0))
+        # 判定线：深度做得很薄（0.008），否则在这个取景下会变成一条 26px 宽的白带
+        self._static_quad("", 0.0, 0.004, width, 0.008, 0.0, (1, 1, 1, 1))
+        self._static_quad("", 0.0, 0.004, 1.0, 0.008, judge_y, (0.35, 0.86, 1.0, 1.0))
         # 鼠标平面渐变 + 合法区域边线
         gradient = getattr(self, "_gradient", None)
         if gradient is None:
@@ -218,7 +219,7 @@ class Scene3D:
         node = NodePath(self.card.generate())
         node.setTransparency(TransparencyAttrib.MAlpha)
         node.setPos(x, z, y)
-        node.setScale(sx, sz, 1.0)
+        node.setScale(sx, 1.0, sz)   # 卡片宽高在局部 X / Z 上
         # 实测：CardMaker 的卡片默认立在 XZ 平面（竖着），P=-90 才躺进水平面
         node.setHpr(0.0, -90.0, 0.0)
         node.setColor(*color)
@@ -275,7 +276,7 @@ class Scene3D:
         node.setPos(x, z, y)
         # 水平面（轨道/平面/长条）= P -90；平行判定平面（滑键/点击）= P 0
         node.setHpr(0.0, 0.0 if vertical else -90.0, angle)
-        node.setScale(sx, sz, 1.0)
+        node.setScale(sx, 1.0, sz)   # 卡片宽高在局部 X / Z 上
         node.show()
 
     def _next_node(self) -> "NodePath":
