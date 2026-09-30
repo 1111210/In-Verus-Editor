@@ -334,6 +334,54 @@ class PlayerAppSmokeTests(unittest.TestCase):
                 app_module.time.perf_counter = original_perf
         app.settings.rate = 1.0
 
+    def test_autoplay_judges_exact_and_scores_negative(self) -> None:
+        """自动播放：玩家名显示 Autoplay、输入不判定（只高亮）、过线全 EXACT、分数倍率 -1x。"""
+        from rhythm_editor.game.app import key_code
+        from rhythm_editor.model.notes import LaneNote, MouseClick
+
+        app = self.app
+        app.settings_row = app._row_index("autoplay")
+        app._adjust_setting(1)
+        self.assertTrue(app.settings.autoplay, "设置里可以开启自动播放")
+        app._enter_loading()
+        chart = app.chart
+        app._start_play()
+        self.assertTrue(app.judge.autoplay)
+        self.assertEqual(app._player_label(), "Autoplay")
+        # 键盘输入不再判定，但轨道高亮照常
+        tap = next(n for n in chart.all_notes() if isinstance(n, LaneNote) and not n.is_hold)
+        hit_ms = chart.timing.beat_to_song_ms(tap.head_beat)
+        app._now_ms = lambda: hit_ms - 500.0          # 提前按，依然不该判
+        pygame = self.pygame
+        app._event_play(
+            pygame.event.Event(pygame.KEYDOWN, key=key_code(app.settings.keys[tap.lane_start]), unicode="")
+        )
+        self.assertIn(tap.lane_start, app.pressed_lanes, "轨道高亮仍然要有")
+        self.assertEqual(app.judge.judged_notes, 0, "自动播放时键盘不参与判定")
+        app._event_play(
+            pygame.event.Event(pygame.MOUSEBUTTONDOWN, button=1, pos=(400, 300))
+        )
+        self.assertEqual(app.judge.judged_notes, 0, "自动播放时鼠标点击不参与判定")
+        # 时间推到曲末：所有物件 / 区间自动 EXACT
+        last_ms = max(
+            chart.timing.beat_to_song_ms(getattr(n, "tail_beat", n.head_beat))
+            for n in chart.all_notes()
+        )
+        app._now_ms = lambda: last_ms + 5000.0
+        app._update(1 / 120)
+        self.assertEqual(app.judge.counts["Break"], 0)
+        self.assertEqual(app.judge.counts["EXACT"], app.judge.total_notes)
+        self.assertEqual(app.judge.score, -app.judge.base_score)
+        self.assertAlmostEqual(app.judge.score_multiplier, -1.0)
+        # 结算页：倍速行注明 -1x，判定数换成准度
+        app._finish()
+        self.assertIn("-1x", app._result_rate_line())
+        self.assertIn("准度", app._result_accuracy_line())
+        self.assertRegex(app._result_accuracy_line(), r"准度：\d+\.\d{3}%", "准度保留三位小数")
+        self.assertEqual(app._player_label(), "Autoplay")
+        app._draw()
+        app.settings.autoplay = False
+
     def test_prompt_accepts_text_input_and_key_capture(self) -> None:
         """文字输入走 TEXTINPUT（中文可输入）；键位改为“按下想设的键”。"""
         app = self.app

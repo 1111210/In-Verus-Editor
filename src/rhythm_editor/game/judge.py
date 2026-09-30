@@ -110,11 +110,19 @@ class _IntervalState:
 class Judge:
     """一张谱面的判定状态机（按“听到的歌曲毫秒”推进）。"""
 
-    def __init__(self, chart: Chart, hit_sound=None, rate: float = 1.0) -> None:
+    def __init__(
+        self,
+        chart: Chart,
+        hit_sound=None,
+        rate: float = 1.0,
+        autoplay: bool = False,
+    ) -> None:
         self.chart = chart
         self.timing = chart.timing
         # 倍速：只影响分数倍率（分数 = 当前计分 × 倍速^1.5），不影响判定窗口
         self.rate = min(RATE_MAX, max(RATE_MIN, float(rate)))
+        # 自动播放：不吃输入，物件 / 判定区间完全过线时自动判 EXACT；分数倍率固定 -1
+        self.autoplay = bool(autoplay)
         self.results: List[Judged] = []
         self.notes: Dict[str, Note] = {n.id: n for n in chart.all_notes()}
         self._counts: Dict[str, int] = {g: 0 for g in GRADES}
@@ -261,8 +269,13 @@ class Judge:
 
     @property
     def score(self) -> int:
-        """最终分数 = 基础计分 × **倍速的 1.5 次方**（1.0x 时与原来一致）。"""
-        return int(round(self.base_score * (self.rate ** 1.5)))
+        """最终分数 = 基础计分 × 分数倍率（自动播放为 -1 倍）。"""
+        return int(round(self.base_score * self.score_multiplier))
+
+    @property
+    def score_multiplier(self) -> float:
+        """分数倍率：正常是倍速^1.5；**自动播放固定 -1 倍**。"""
+        return -1.0 if self.autoplay else (self.rate ** 1.5)
 
     @property
     def break_count(self) -> int:
@@ -344,6 +357,15 @@ class Judge:
             note = state.note
             if state.done:
                 continue
+            if self.autoplay:
+                # 自动播放：物件到达判定线即判 EXACT（不需要输入）
+                judge_ms = self.timing.beat_to_song_ms(getattr(note, "head_beat", 0.0))
+                if now_ms >= judge_ms:
+                    state.done = True
+                    out.append(
+                        self._judge_result(note.id, EXACT, getattr(note, "head_beat", 0.0))
+                    )
+                continue
             judge_ms = self.timing.beat_to_song_ms(getattr(note, "head_beat", 0.0))
             if now_ms - judge_ms > WINDOW_NEAR_MS and not isinstance(note, MouseSlide):
                 state.done = True
@@ -387,7 +409,11 @@ class Judge:
                 end_ms = min(end_ms, self.timing.beat_to_song_ms(state.end_beat))
             if now_ms < end_ms:
                 break
-            out.append(self._grade_interval(state, start_ms, end_ms, start_beat))
+            if self.autoplay:
+                # 自动播放：判定区间完全过线即 EXACT
+                out.append(self._judge_result(state.note.id, EXACT, start_beat))
+            else:
+                out.append(self._grade_interval(state, start_ms, end_ms, start_beat))
             state.index += 1
         return out
 

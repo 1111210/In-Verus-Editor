@@ -179,6 +179,26 @@ class RegionJudgeTests(unittest.TestCase):
 
 
 class ScoreTests(unittest.TestCase):
+    def test_autoplay_scores_negative_and_judges_exact(self) -> None:
+        """自动播放：完全过线即 EXACT（含区间），分数倍率固定 -1x。"""
+        chart = make_chart([LaneNote("L1", 0, 0, 2.0), MouseClick("M1", 2.0, 0.5, 0.1)])
+        judge = Judge(chart, autoplay=True)
+        self.assertTrue(judge.autoplay)
+        self.assertAlmostEqual(judge.score_multiplier, -1.0)
+        hit_ms = chart.timing.beat_to_song_ms(2.0)
+        judge.update(0.0)
+        self.assertEqual(judge.judged_notes, 0, "还没到判定时间不该提前判")
+        judge.update(hit_ms)
+        self.assertEqual(judge.counts[EXACT], 2, "物件过线即 EXACT（不需要输入）")
+        self.assertEqual(judge.counts[BREAK], 0)
+        self.assertEqual(judge.score, -judge.base_score)
+        # 长按 / 空域的每个判定区间也全部 EXACT
+        chart2 = make_chart([LaneNote("H1", 0, 0, 0.0, 3.0), MouseRegion("R1", 0.0, 3.0)])
+        judge2 = Judge(chart2, autoplay=True)
+        judge2.update(chart2.timing.beat_to_song_ms(8.0))
+        self.assertEqual(judge2.counts[EXACT], judge2.total_notes)
+        self.assertEqual(judge2.counts[BREAK], 0)
+
     def test_score_scales_with_rate_to_the_1_5(self) -> None:
         """分数 = 基础计分 × 倍速^1.5（1.0x 不变，0.5x 约 0.354 倍）。"""
         chart = make_chart([LaneNote("L1", 0, 0, 1.0)])

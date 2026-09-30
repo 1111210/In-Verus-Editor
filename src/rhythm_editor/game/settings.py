@@ -41,6 +41,7 @@ class PlayerSettings:
     unbounded_mouse: bool = False         # 无界鼠标：实际位置即判定位置
     renderer: str = "software"            # software / opengl
     rate: float = 1.0                     # 游玩倍速 0.1 ~ 3.0x（每 0.1 一档）
+    autoplay: bool = False                # 自动播放（判定全 EXACT，分数倍率 -1x）
     music_volume: float = 1.0
     hit_volume: float = 0.6
     recent: List[str] = field(default_factory=list)     # 最近打开的谱面（最多 8 条）
@@ -65,6 +66,7 @@ class PlayerSettings:
         self.player_name = (self.player_name or "Player")[:24]
         if self.renderer not in ("software", "opengl"):
             self.renderer = "software"
+        self.autoplay = bool(self.autoplay)
         unique: List[str] = []
         for path in self.recent:
             text = str(path)
@@ -99,6 +101,7 @@ class PlayerSettings:
             unbounded_mouse=bool(data.get("unbounded_mouse", False)),
             renderer=str(data.get("renderer", "software")),
             rate=float(data.get("rate", 1.0)),
+            autoplay=bool(data.get("autoplay", False)),
             music_volume=float(data.get("music_volume", 1.0)),
             hit_volume=float(data.get("hit_volume", 0.6)),
             recent=list(data.get("recent", [])),  # type: ignore[arg-type]

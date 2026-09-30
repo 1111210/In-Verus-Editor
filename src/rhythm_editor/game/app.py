@@ -665,6 +665,7 @@ class PlayerApp:
         ("hit_volume", "打击音效音量"),
         ("renderer", "渲染后端（软件 / OpenGL）"),
         ("rate", "倍速（0.1~3.0x）"),
+        ("autoplay", "自动播放（Autoplay）"),
     )
     # 数字类选项（有 − / ● / + 三个按钮；点 ● 可以自定义输入）：字段名 -> (最小, 最大, 步进)
     NUMERIC_ROWS = {
@@ -679,7 +680,7 @@ class PlayerApp:
         "hit_volume": (0.0, 1.0, 0.05),
         "rate": (psettings.RATE_MIN, psettings.RATE_MAX, psettings.RATE_STEP),
     }
-    TOGGLE_ROWS = ("side_lane_highlight", "unbounded_mouse")
+    TOGGLE_ROWS = ("side_lane_highlight", "unbounded_mouse", "autoplay")
 
     def _row_key(self, index: Optional[int] = None) -> str:
         return self.SETTING_ROWS[self.settings_row if index is None else index][0]
@@ -724,6 +725,8 @@ class PlayerApp:
             return f"{s.hit_volume * 100:.0f}%"
         if key == "renderer":
             return "OpenGL（切换即生效）" if s.renderer == "opengl" else "软件"
+        if key == "autoplay":
+            return "开（判定全 EXACT · 分数 ×-1）" if s.autoplay else "关"
         return f"{s.rate:.1f}x（得分 ×{s.rate ** 1.5:.2f}）"
 
     def _event_settings(self, event) -> None:
@@ -969,7 +972,9 @@ class PlayerApp:
     # ------------------------------------------------------------ 游玩
     def _start_play(self) -> None:
         assert self.chart is not None
-        self.judge = Judge(self.chart, rate=self.settings.rate)
+        self.judge = Judge(
+            self.chart, rate=self.settings.rate, autoplay=self.settings.autoplay
+        )
         self.pressed_lanes.clear()
         self.paused = False
         self.ending = False
@@ -1060,8 +1065,10 @@ class PlayerApp:
                 if event.key == key_code(name)
             ]
             if matched:
-                # 同一个键绑了多条轨道时都算按下，但**一次按键最多判一个**物件
+                # 同一个键绑了多条轨道时都算按下（自动播放时只用于轨道高亮）
                 self.pressed_lanes.update(matched)
+                if self.settings.autoplay:
+                    return                    # 自动播放：输入不参与判定
                 now = self._now_ms()
                 for lane in matched:
                     result = self.judge.on_press(now, lane=lane)
@@ -1085,7 +1092,7 @@ class PlayerApp:
                     self.pressed_lanes.discard(lane)
         elif event.type == pygame.MOUSEBUTTONDOWN:
             # 鼠标点击按键：**左右键都可以**（滚轮 4/5 不算）
-            if event.button in (1, 3):
+            if event.button in (1, 3) and not self.settings.autoplay:
                 self._register(self.judge.on_press(self._now_ms(), x=self.mouse_norm))
 
     def _register(self, result) -> None:
@@ -1099,6 +1106,10 @@ class PlayerApp:
             note = self.judge.notes.get(getattr(result, "note_id", ""))
         x, y = self._popup_anchor(note)
         self.popups.append((result.grade, result.grade, 0.7, x, y))
+
+    def _player_label(self) -> str:
+        """玩家名：开启自动播放时显示为 ``Autoplay``。"""
+        return "Autoplay" if self.settings.autoplay else self.settings.player_name
 
     def _popup_anchor(self, note: Optional[Note]) -> Tuple[float, float]:
         """判定飘字锚点：单键 / 多轨在 6K 线上，鼠标物件在鼠标线上（瞬时物件也要有字符）。"""
@@ -1137,7 +1148,8 @@ class PlayerApp:
             assert self.judge is not None
             now_ms = self._now_ms()
             # 滑键是在鼠标移动时判定的：返回值必须登记，否则滑键没有判定文字 / 音效
-            self._register(self.judge.on_move(now_ms, self.mouse_norm))
+            if not self.settings.autoplay:
+                self._register(self.judge.on_move(now_ms, self.mouse_norm))
             for result in self.judge.update(
                 now_ms, inside_hold=self._inside_region(now_ms), held=set(self.pressed_lanes)
             ):
@@ -1415,7 +1427,7 @@ class PlayerApp:
         self.center_text(f"{meta.title} · {meta.artist}", 240, self.f_mid, WHITE)
         self.center_text(f"难度：{meta.difficulty_name} {meta.difficulty_level}", 280, self.f_small, DIM)
         self.center_text(f"初始 BPM：{self.chart.timing.bpm_at(0.0):.2f}", 310, self.f_small, DIM)
-        self.center_text(f"玩家：{self.settings.player_name}", 340, self.f_small, ACCENT)
+        self.center_text(f"玩家：{self._player_label()}", 340, self.f_small, ACCENT)
         self.center_text("第 0 拍将在 1.5 秒后到达判定平面", 400, self.f_small, DIM)
 
     # -------------------------------------------------- 3D 世界与物件
@@ -1883,14 +1895,14 @@ class PlayerApp:
         left_lines = (
             f"{meta.title} · {meta.artist}",
             f"难度 {meta.difficulty_name} {meta.difficulty_level} · BPM {self.chart.timing.bpm_at(beat):.2f}",
-            f"玩家 {self.settings.player_name}",
+            f"玩家 {self._player_label()}",
         )
         for index, line in enumerate(left_lines):
             self.text(line, (24, 16 + index * 26), self.f_small, WHITE if index == 0 else DIM)
         counts = self.judge.counts
         right_lines = (
-            f"准度 {self.judge.accuracy * 100:.1f}% · 倍速 {self.settings.rate:.1f}x",
-            f"分数 {self.judge.score}（×{self.settings.rate ** 1.5:.2f}）",
+            f"准度 {self.judge.accuracy * 100:.3f}% · 倍速 {self.settings.rate:.1f}x",
+            f"分数 {self.judge.score}（×{self.judge.score_multiplier:.2f}）",
             f"连击 {self.judge.combo}（最大 {self.judge.max_combo}）",
             "  ".join(f"{grade} {counts[grade]}" for grade in GRADES),
         )
@@ -1917,7 +1929,7 @@ class PlayerApp:
             meta.title,
             meta.artist,
             f"{meta.difficulty_name} {meta.difficulty_level}",
-            f"玩家：{self.settings.player_name}",
+            f"玩家：{self._player_label()}",
         )
         for index, line in enumerate(left_lines):
             self.text(line, (40, 140 + index * 34), self.f_mid, WHITE if index == 0 else DIM)
@@ -1943,7 +1955,7 @@ class PlayerApp:
             ACCENT,
         )
         self.text(
-            f"判定数：{self.judge.judged_notes} / {self.judge.total_notes}",
+            self._result_accuracy_line(),
             (split + 40, 258),
             self.f_small,
             DIM,
@@ -1989,8 +2001,15 @@ class PlayerApp:
         return f"最大连击：{self.judge.max_combo} / {self.judge.total_notes}"
 
     def _result_rate_line(self) -> str:
-        """倍速 —— 放在最大连击后面。"""
+        """倍速（自动播放时注明分数倍率 -1x）—— 放在最大连击后面。"""
+        if self.settings.autoplay:
+            return f"倍速：{self.settings.rate:.1f}x（Autoplay · 分数倍率 -1x）"
         return f"倍速：{self.settings.rate:.1f}x"
+
+    def _result_accuracy_line(self) -> str:
+        """准度（取代原来的“判定数 a / 总数”）。"""
+        assert self.judge is not None
+        return f"准度：{self.judge.accuracy * 100:.3f}%"
 
     def _event_result(self, event) -> None:
         if event.type == pygame.MOUSEMOTION:
