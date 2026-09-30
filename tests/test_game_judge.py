@@ -194,7 +194,7 @@ class ScoreTests(unittest.TestCase):
         judge.update(hit_ms)
         self.assertEqual(judge.counts[EXACT], 2, "物件过线即 EXACT（不需要输入）")
         self.assertEqual(judge.counts[BREAK], 0)
-        self.assertEqual(judge.score, -judge.base_score)
+        self.assertEqual(judge.score, -judge.accuracy_score + judge.exact_bonus)
         # 长按 / 空域的每个判定区间也全部 EXACT
         chart2 = make_chart([LaneNote("H1", 0, 0, 0.0, 3.0), MouseRegion("R1", 0.0, 3.0)])
         judge2 = Judge(chart2, autoplay=True)
@@ -203,23 +203,28 @@ class ScoreTests(unittest.TestCase):
         self.assertEqual(judge2.counts[BREAK], 0)
 
     def test_score_scales_with_rate_to_the_1_5(self) -> None:
-        """分数 = 基础计分 × 倍速^1.5（1.0x 不变，0.5x 约 0.354 倍）。"""
+        """分数 = 准度部分 × 倍速^1.5 + 附加分（附加分不吃倍率）。"""
         chart = make_chart([LaneNote("L1", 0, 0, 1.0)])
         judge = Judge(chart)
         judge.on_press(chart.timing.beat_to_song_ms(1.0), lane=0)     # EXACT
-        base = judge.base_score
+        accuracy_part = judge.accuracy_score
+        bonus = judge.exact_bonus
+        self.assertEqual(bonus, 1)
+        self.assertEqual(judge.base_score, accuracy_part + bonus)
         self.assertEqual(judge.rate, 1.0)
-        self.assertEqual(judge.score, base)
-        judge.rate = 0.5
-        self.assertEqual(judge.score, round(base * (0.5 ** 1.5)))
-        judge.rate = 0.1
-        self.assertEqual(judge.score, round(base * (0.1 ** 1.5)))
+        self.assertEqual(judge.score, accuracy_part + bonus)
+        for rate in (0.5, 0.1, 3.0):
+            judge.rate = rate
+            self.assertEqual(
+                judge.score,
+                round(accuracy_part * (rate ** 1.5)) + bonus,
+                msg="附加分不受倍率影响",
+            )
+            self.assertEqual(judge.scaled_score, round(accuracy_part * (rate ** 1.5)))
         # 倍速被夹在 0.1 ~ 3.0（上限 3 倍）
         self.assertEqual(Judge(chart, rate=3.0).rate, 3.0)
         self.assertEqual(Judge(chart, rate=9.0).rate, 3.0)
         self.assertEqual(Judge(chart, rate=0.01).rate, 0.1)
-        judge.rate = 3.0
-        self.assertEqual(judge.score, round(base * (3.0 ** 1.5)))
 
     def test_earliest_judge_time_wins_when_several_are_hittable(self) -> None:
         """同时可判多个物件时，取**判定时刻最靠前**的那个。"""

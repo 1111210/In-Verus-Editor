@@ -1899,13 +1899,7 @@ class PlayerApp:
         )
         for index, line in enumerate(left_lines):
             self.text(line, (24, 16 + index * 26), self.f_small, WHITE if index == 0 else DIM)
-        counts = self.judge.counts
-        right_lines = (
-            f"准度 {self.judge.accuracy * 100:.3f}% · 倍速 {self.settings.rate:.1f}x",
-            f"分数 {self.judge.score}（×{self.judge.score_multiplier:.2f}）",
-            f"连击 {self.judge.combo}（最大 {self.judge.max_combo}）",
-            "  ".join(f"{grade} {counts[grade]}" for grade in GRADES),
-        )
+        right_lines = self._hud_right_lines()
         for index, line in enumerate(right_lines):
             surface = self.f_small.render(line, True, WHITE if index == 0 else DIM)
             self.screen.blit(surface, (self.w - surface.get_width() - 24, 16 + index * 26))
@@ -1913,6 +1907,20 @@ class PlayerApp:
         if self.judge.combo >= 5:
             base_y = self.scene.judgment_lines(self.w, self.h)["mouse"]
             self.center_text(f"{self.judge.combo}", base_y - 170, self.f_big, (255, 226, 120))
+
+    def _hud_right_lines(self) -> Tuple[str, ...]:
+        """HUD 右上角四行：准度/倍速、分数、连击、各判定数量。
+
+        游戏内的分数**还是总分**（附加分不单独拆出来），拆分只在结算页展示。
+        """
+        assert self.judge is not None
+        counts = self.judge.counts
+        return (
+            f"准度 {self.judge.accuracy * 100:.3f}% · 倍速 {self.settings.rate:.1f}x",
+            f"分数 {self.judge.score}（×{self.judge.score_multiplier:.2f}）",
+            f"连击 {self.judge.combo}（最大 {self.judge.max_combo}）",
+            "  ".join(f"{grade} {counts[grade]}" for grade in GRADES),
+        )
 
     def _draw_result(self) -> None:
         assert self.chart is not None and self.judge is not None
@@ -1977,9 +1985,9 @@ class PlayerApp:
         return int(self.w / 3)
 
     def _result_score_line(self) -> str:
-        """结算页分数行（**不显示倍速和倍率**）。"""
+        """结算页分数行：**不计附加分**，写成「分数 + 附加分」（附加分不吃倍率）。"""
         assert self.judge is not None
-        return f"分数：{self.judge.score}"
+        return f"分数：{self.judge.scaled_score} + {self.judge.exact_bonus}"
 
     def _result_combo_line(self) -> str:
         """最大连击按“最大连击 / 总判定数”显示。"""

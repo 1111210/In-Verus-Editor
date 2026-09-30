@@ -261,16 +261,30 @@ class Judge:
         return sum(r.accuracy for r in self.results) / len(self.results)
 
     @property
-    def base_score(self) -> int:
-        """基础计分 = 已取得准度 / 总物件数 × 1e8，四舍五入，再加 EXACT 数。"""
+    def accuracy_score(self) -> int:
+        """由准度决定的那部分：已取得准度 / 总物件数 × 1e8，四舍五入。"""
         total = max(1, self.total_notes)
-        base = sum(r.accuracy for r in self.results) / total * 100_000_000
-        return int(round(base)) + self._counts[EXACT]
+        return int(round(sum(r.accuracy for r in self.results) / total * 100_000_000))
+
+    @property
+    def exact_bonus(self) -> int:
+        """附加分：每个 EXACT 额外 +1，**不受倍速 / 分数倍率影响**。"""
+        return self._counts[EXACT]
+
+    @property
+    def base_score(self) -> int:
+        """基础计分 = 准度部分 + 附加分（不加倍率）。"""
+        return self.accuracy_score + self.exact_bonus
+
+    @property
+    def scaled_score(self) -> int:
+        """结算页展示用：只把准度部分乘倍率（附加分单独写出来）。"""
+        return int(round(self.accuracy_score * self.score_multiplier))
 
     @property
     def score(self) -> int:
-        """最终分数 = 基础计分 × 分数倍率（自动播放为 -1 倍）。"""
-        return int(round(self.base_score * self.score_multiplier))
+        """最终分数 = 准度部分 × 分数倍率 + 附加分（附加分不吃倍率）。"""
+        return self.scaled_score + self.exact_bonus
 
     @property
     def score_multiplier(self) -> float:

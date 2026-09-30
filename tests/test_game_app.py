@@ -128,7 +128,10 @@ class PlayerAppSmokeTests(unittest.TestCase):
         app._start_play()
         self.assertAlmostEqual(app.judge.rate, 0.9, places=6)
         app.judge._judge_result("X", "EXACT", 0.0)
-        self.assertEqual(app.judge.score, round(app.judge.base_score * (0.9 ** 1.5)))
+        self.assertEqual(
+            app.judge.score,
+            round(app.judge.accuracy_score * (0.9 ** 1.5)) + app.judge.exact_bonus,
+        )
         app._adjust_rate(-1)
         self.assertAlmostEqual(app.settings.rate, 0.8, places=6)
         self.assertTrue(app.paused, "改倍速会自动暂停")
@@ -374,7 +377,10 @@ class PlayerAppSmokeTests(unittest.TestCase):
         # 分数倍率 = -倍速^1.5
         expected_multiplier = -(app.settings.rate ** 1.5)
         self.assertAlmostEqual(app.judge.score_multiplier, expected_multiplier)
-        self.assertEqual(app.judge.score, round(app.judge.base_score * expected_multiplier))
+        self.assertEqual(
+            app.judge.score,
+            round(app.judge.accuracy_score * expected_multiplier) + app.judge.exact_bonus,
+        )
         app.settings.rate = 2.0
         app.judge.rate = 2.0
         self.assertAlmostEqual(app.judge.score_multiplier, -(2.0 ** 1.5), places=6)
@@ -393,6 +399,34 @@ class PlayerAppSmokeTests(unittest.TestCase):
         self.assertEqual(labels[3], "倍速")
         app._draw()
         app.settings.autoplay = False
+        app.settings.rate = 1.0
+
+    def test_result_score_splits_bonus_but_hud_does_not(self) -> None:
+        """结算页分数 = 「准度部分 + 附加分」（附加分不吃倍率）；游戏内 HUD 仍是总分。"""
+        from rhythm_editor.game.app import WHITE
+
+        app = self.app
+        app.settings.rate = 2.0
+        app._enter_loading()
+        app._start_play()
+        app.judge._judge_result("X", "EXACT", 0.0)
+        app.judge._judge_result("Y", "Near", 1.0)
+        self.assertEqual(app.judge.exact_bonus, 1)
+        self.assertEqual(
+            app.judge.scaled_score,
+            round(app.judge.accuracy_score * (2.0 ** 1.5)),
+            "结算展示的分数只把准度部分乘倍率",
+        )
+        self.assertEqual(app.judge.score, app.judge.scaled_score + 1, "附加分不吃倍率")
+        line = app._result_score_line()
+        self.assertRegex(line, r"^分数：-?\d+ \+ \d+$")
+        # 游戏内 HUD 不受影响：仍然显示总分，不做拆分
+        hud_score = [line for line in app._hud_right_lines() if line.startswith("分数")][0]
+        self.assertIn(str(app.judge.score), hud_score)
+        self.assertNotIn(" + ", hud_score)
+        app._draw_hud(0.0)          # 画得出来
+        app._finish()
+        app._draw()
         app.settings.rate = 1.0
 
     def test_prompt_accepts_text_input_and_key_capture(self) -> None:
@@ -585,7 +619,10 @@ class PlayerAppSmokeTests(unittest.TestCase):
         app._start_play()
         self.assertAlmostEqual(app.judge.rate, 3.0)
         app.judge._judge_result("X", "EXACT", 0.0)
-        self.assertEqual(app.judge.score, round(app.judge.base_score * (3.0 ** 1.5)))
+        self.assertEqual(
+            app.judge.score,
+            round(app.judge.accuracy_score * (3.0 ** 1.5)) + app.judge.exact_bonus,
+        )
         app._adjust_rate(-1)
         self.assertAlmostEqual(app.settings.rate, 2.9)
         for _ in range(60):
