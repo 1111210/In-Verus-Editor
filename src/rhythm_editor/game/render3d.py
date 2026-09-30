@@ -105,39 +105,32 @@ class Scene3D:
 
     # ------------------------------------------------------------------ 设置
     def _make_buffer(self, width: int, height: int) -> None:
-        props = FrameBufferProperties()
-        props.setRgbaBits(8, 8, 8, 8)
-        props.setDepthBits(24)
-        win_props = WindowProperties.size(width, height)
-        self.buffer = self.base.graphicsEngine.make_output(
-            self.base.pipe, "verus-3d", -1, props, win_props,
-            GraphicsPipe.BFRefuseWindow, self.base.win.getGsg(), self.base.win,
-        )
+        """按官方手册的做法创建离屏缓冲。
+
+        文档（Low-Level Render-To-Texture）给的配方是：
+        `mybuffer = base.win.makeTextureBuffer(...)` → `mybuffer.setSort(-100)`
+        → `mycamera = base.makeCamera(mybuffer)` → 相机挂到自己的场景根。
+        之前用 `graphicsEngine.make_output(...)` 拿到的其实是主窗口那一层
+        （用 `base.cam` 的默认镜头），所以“镜头怎么调都对不上”。
+        """
+        self.buffer = self.base.win.makeTextureBuffer("verus-3d", width, height)
         if self.buffer is None:  # pragma: no cover - 依赖驱动
             raise RuntimeError("Panda3D 离屏缓冲创建失败")
-        # make_output 会自带一个**没有相机**的 display region，它会盖住我们自己相机的渲染，
-        # 于是“镜头怎么调都对不上”。按文档把无相机的 region 停用，只留我们的。
-        for index in range(self.buffer.get_num_display_regions()):
-            region = self.buffer.get_display_region(index)
-            if region.get_camera() is None:
-                region.set_active(False)
-                region.set_clear_color_active(False)
-                region.set_clear_depth_active(False)
+        self.buffer.setSort(-100)                      # 文档：先渲染离屏缓冲
         self.frame_texture = Texture("verus-frame")
         self.frame_texture.setFormat(Texture.FRgba8)
-        self.buffer.setClearColor((0.04, 0.04, 0.055, 1.0))
+        # 再加一张“拷回内存”的纹理，方便每帧读像素（getRamImageAs）
         self.buffer.add_render_texture(self.frame_texture, GraphicsOutput.RTMCopyRam)
+        self.buffer.setClearColor((0.04, 0.04, 0.055, 1.0))
 
     def _make_camera(self) -> None:
+        # 文档配方：相机由 base.makeCamera(buffer) 创建，并挂到自己的场景根
         self.camera = self.base.makeCamera(self.buffer)
-        self.camera.setPos(0.0, -self.camera_back, self.camera_height)
-        self.camera.setP(-self.pitch)
-        # Panda 的 setFov 是**水平** FOV；我们按竖直 FOV 换算，画面比例才和软件渲染一致
-        aspect = max(0.2, float(self.width) / float(self.height))
-        vertical = math.radians(self.fov)
-        horizontal = 2.0 * math.atan(math.tan(vertical / 2.0) * aspect)
+        self.root = self.base.render.attachNewNode("world")
+        self.camera.reparentTo(self.root)
+        self.static_root = self.root.attachNewNode("static")
+        self.dynamic_root = self.root.attachNewNode("dynamic")
         self.set_camera()
-        self.base.setBackgroundColor(0.04, 0.04, 0.055, 1.0)
 
     def set_camera(self, pitch: float = None, fov: float = None,
                    height: float = None, back: float = None) -> None:
