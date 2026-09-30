@@ -2018,7 +2018,7 @@ class PlayerApp:
                     tail = self._note_z(timing.beat_to_song_ms(note.tail_beat), now_ms)
                     body_center = (max(0.0, head) + max(0.0, tail)) / 2.0
                     scene.quad(f"hold_body_{lane}", center_x, body_center, x1 - x0,
-                               max(0.2, abs(tail - head)), 0.004, (1, 1, 1, 0.75),
+                               max(0.2, abs(tail - head)), 0.004, (1, 1, 1, 1.0),
                                layer=layer)
                     head_size = max(0.25, self.settings.note_thickness)
                     scene.quad(f"hold_head_{lane}", center_x, max(0.0, head) + head_size / 2.0,

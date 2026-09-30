@@ -9,10 +9,11 @@
 * 单键 6 张（1~6 轨）：最下端白色，向上渐变为亮蓝色并变为适中透明，形成尾焰；
   两端的透明速度比中间慢。
 * 长按 12 张：开头 6 张（同单键但不透明、中部纯白竖线）+ 主体 6 张
-  （中间纯白竖线、两侧纯淡蓝、无渐变）。
+  （中间纯白竖线、两侧纯淡蓝、无渐变、**完全不透明**）。
 * 空域：边界 / 填充 / 判定线各一张单像素图，另有一张带横向条纹的大图（区域底）。
 * 滑键：左右各一张箭头图（当前为全透明，保留接口）与一张主体图
-  （上半为渐变的直角三角形，下半全透明）。
+  （上半为渐变的直角三角形：两个顶点在左右边**中点**、**直角顶点朝前进方向**，
+  下半全透明）。
 * 鼠标点击：位置标识菱形、范围标识（中间红线、上下透明）、左边界标识。
 * 轨道：每条轨道默认图 / 按下图，另有 4 张边界高亮图。
 """
@@ -103,23 +104,22 @@ def hold_head_lane(width: int = 96, height: int = 96) -> np.ndarray:
 
 
 def hold_body_lane(width: int = 32, height: int = 128) -> np.ndarray:
-    """长按主体：中间纯白竖线，两侧纯淡蓝背景，无渐变。"""
+    """长按主体：中间纯白竖线，两侧纯淡蓝背景，无渐变，**背景也完全不透明**。"""
     xs = np.linspace(0.0, 1.0, width, dtype=np.float32)[None, :]
     rgba = np.zeros((height, width, 4), dtype=np.float32)
     rgba[..., :3] = PALE_BLUE[None, None, :]
-    rgba[..., 3] = 90.0
+    rgba[..., 3] = 255.0                      # 主体背景不透明（用户要求）
     center = np.abs(xs - 0.5) < (0.5 / max(1.0, width / 6.0))
     rgba[:, center[0], :3] = WHITE
-    rgba[:, center[0], 3] = 255.0
     return rgba.astype(np.uint8)
 
 
 def region_area(width: int = 256, height: int = 256) -> np.ndarray:
-    """空域底图：底边略不透明淡蓝，越往上越透明，带横向条纹。"""
+    """空域底图：底边略不透明淡蓝，越往上越透明；横纹很淡（重了远处会出现摩尔纹）。"""
     top = np.linspace(1.0, 0.0, height, dtype=np.float32)[:, None]     # 1 = 图顶
     bottom = 1.0 - top
     alpha = (bottom ** 1.15) * 0.5
-    stripe = 1.0 + 0.35 * np.sin(bottom * np.pi * 12.0)
+    stripe = 1.0 + 0.08 * np.sin(bottom * np.pi * 6.0)
     alpha = np.clip(alpha * stripe, 0.0, 1.0)
     color = np.broadcast_to(np.array([90, 150, 235], dtype=np.float32), (height, 1, 3))
     rgba = np.zeros((height, width, 4), dtype=np.float32)
@@ -129,14 +129,19 @@ def region_area(width: int = 256, height: int = 256) -> np.ndarray:
 
 
 def slide_body(direction: int, width: int = 256, height: int = 128) -> np.ndarray:
-    """滑键主体：上半为渐变的直角三角形，下半全透明（direction=+1 右滑）。"""
+    """滑键主体：上半为渐变的直角三角形，下半全透明（direction=+1 右滑）。
+
+    直角三角形的两个顶点落在左右边的**中点**，**直角顶点在滑动方向那一侧**：
+    右滑时直角顶点在右边中点（两条直角边沿中线和右边），左滑镜像。
+    """
     xs = np.linspace(0.0, 1.0, width, dtype=np.float32)[None, :]
     top = np.linspace(1.0, 0.0, height, dtype=np.float32)[:, None]      # 1 = 图顶
     thick = xs if direction >= 0 else 1.0 - xs                          # 朝向侧 = 1
-    edge = 1.0 - thick * 0.5                                            # 该列填充到的最下沿
-    inside = top >= edge
-    span = np.maximum(thick * 0.5, 1e-3)
-    alpha = np.where(inside, (top - edge) / span, 0.0)                   # 越靠顶越实
+    base = 0.5                                                          # 中线 = 两个顶点的 y
+    apex = base + base * thick                                          # 该列的上边界（朝向侧最高）
+    inside = (top >= base) & (top <= apex)
+    span = np.maximum(apex - base, 1e-3)
+    alpha = np.where(inside, (top - base) / span, 0.0)                   # 越靠斜边越实
     alpha = np.clip(alpha * (0.35 + 0.65 * thick), 0.0, 1.0)             # 朝向侧更实
     color = np.broadcast_to(
         (np.array([110, 230, 160], dtype=np.float32) if direction >= 0
