@@ -250,6 +250,7 @@ class PlayerApp:
         height: int,
         verify: bool = True,
         mode: str = "windowed",
+        fit: bool = True,
     ):
         """按设置创建显示：opengl 成功**且自检通过**才用 GL，否则回退软件渲染。
 
@@ -260,7 +261,7 @@ class PlayerApp:
                 width, height = pygame.display.get_desktop_sizes()[0]
             except Exception:                          # pragma: no cover - 依赖驱动
                 pass
-        else:
+        elif fit:
             width, height = self._fit_to_desktop(width, height)
         if mode == "borderless":
             window_flags = pygame.NOFRAME
@@ -395,11 +396,16 @@ class PlayerApp:
         target = order[(order.index(current) + 1) % len(order)]
         self.settings.renderer = target
         psettings.save_settings(self.settings)
+        # 只有 OpenGL 需要带 GL 上下文的窗口：切到/切出 OpenGL 时才重建显示，
+        # 其它情况沿用当前窗口（否则用户刚最大化好的窗口会被打回默认尺寸）
+        rebuild = "opengl" in (current, target)
         self.gl_presenter = None
         self.gl_frames = 0
         self.gl_cost = 0.0
-        self.scene3d = None
-        self.screen = self._make_display(self.w, self.h)
+        self._drop_scene3d()
+        if rebuild:
+            # 保持当前窗口尺寸（不要再按桌面重算，免得把最大化 / 拉大的窗口缩回去）
+            self.screen = self._make_display(self.w, self.h, fit=False)
         if target == "panda3d":
             self._ensure_scene3d()
         self.renderer_name = (
@@ -588,13 +594,26 @@ class PlayerApp:
         self.renderer_name = "panda3d"
         return True
 
+    def _drop_scene3d(self) -> None:
+        """丢掉 Panda3D 场景时**必须**先 close()：否则 ShowBase 实例还活着，
+        下次再切回 Panda3D 会直接报 "Attempt to spawn multiple ShowBase instances!"。"""
+        if self.scene3d is not None:
+            try:
+                self.scene3d.close()
+            except Exception:                      # pragma: no cover - 依赖驱动
+                pass
+            self.scene3d = None
+
     def _fallback_renderer(self, why: str) -> None:
         """Panda3D 不可用 -> OpenGL；OpenGL 也不可用 -> 软件（用户要求的回退链）。"""
         target = "opengl" if glview.available() else "software"
         self.settings.renderer = target
         psettings.save_settings(self.settings)
-        self.scene3d = None
-        self.screen = self._make_display(self.w, self.h)
+        self._drop_scene3d()
+        if target == "opengl":
+            # 只有 OpenGL 需要重建带 GL 上下文的窗口；软件渲染沿用当前窗口，
+            # 不要把用户调好的窗口尺寸 / 最大化状态打回去
+            self.screen = self._make_display(self.w, self.h)
         self.renderer_name = "opengl" if self.gl_presenter is not None else "software"
         self.message = (
             f"{why}，已回退到{'OpenGL' if self.renderer_name == 'opengl' else '软件'}渲染"
@@ -901,8 +920,8 @@ class PlayerApp:
             return {"panda3d": "Panda3D（3D 场景）", "opengl": "OpenGL（软件画面经 GL 呈现）",
                     "software": "软件"}[s.renderer]
         if key == "autoplay":
-            return "开（判定全 EXACT · 分数倍率 ×-倍速^1.5）" if s.autoplay else "关"
-        return f"{_fmt_num(s.rate)}x（得分 ×{s.rate ** 1.5:.2f}）"
+            return "开（判定全 EXACT · 分数倍率 ×-倍速^0.6）" if s.autoplay else "关"
+        return f"{_fmt_num(s.rate)}x（得分 ×{s.rate ** 0.6:.2f}）"
 
     def _event_settings(self, event) -> None:
         if event.type == pygame.MOUSEWHEEL:
@@ -1413,7 +1432,7 @@ class PlayerApp:
         if not self.paused:
             self._toggle_pause()
         self.status_hint = (
-            f"倍速 {self.settings.rate:.1f}x（得分 ×{self.settings.rate ** 1.5:.2f}）"
+            f"倍速 {self.settings.rate:.1f}x（得分 ×{self.settings.rate ** 0.6:.2f}）"
             f" · 已自动暂停，按空格继续"
         )
 
@@ -2625,7 +2644,7 @@ class PlayerApp:
         return f"最大连击：{self.judge.max_combo} / {self.judge.total_notes}"
 
     def _result_rate_line(self) -> str:
-        """倍速（自动播放时注明分数倍率 = -倍速^1.5）—— 放在最后一行。"""
+        """倍速（自动播放时注明分数倍率 = -倍速^0.6）—— 放在最后一行。"""
         if self.settings.autoplay:
             assert self.judge is not None
             return (

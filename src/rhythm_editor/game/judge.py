@@ -119,7 +119,7 @@ class Judge:
     ) -> None:
         self.chart = chart
         self.timing = chart.timing
-        # 倍速：只影响分数倍率（分数 = 当前计分 × 倍速^1.5），不影响判定窗口
+    # 倍速：只影响分数倍率（分数 = 当前计分 × 倍速^0.6），不影响判定窗口
         self.rate = min(RATE_MAX, max(RATE_MIN, float(rate)))
         # 自动播放：不吃输入，物件 / 判定区间完全过线时自动判 EXACT；分数倍率固定 -1
         self.autoplay = bool(autoplay)
@@ -297,8 +297,8 @@ class Judge:
 
     @property
     def score_multiplier(self) -> float:
-        """分数倍率：正常是倍速^1.5；**自动播放取它的相反数（-倍速^1.5）**。"""
-        base = self.rate ** 1.5
+        """分数倍率：正常是倍速^0.6；**自动播放取它的相反数（-倍速^0.6）**。"""
+        base = self.rate ** 0.6
         return -base if self.autoplay else base
 
     @property

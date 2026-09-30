@@ -180,13 +180,13 @@ class RegionJudgeTests(unittest.TestCase):
 
 class ScoreTests(unittest.TestCase):
     def test_autoplay_scores_negative_and_judges_exact(self) -> None:
-        """自动播放：完全过线即 EXACT（含区间），分数倍率 = -倍速^1.5。"""
+        """自动播放：完全过线即 EXACT（含区间），分数倍率 = -倍速^0.6。"""
         chart = make_chart([LaneNote("L1", 0, 0, 2.0), MouseClick("M1", 2.0, 0.5, 0.1)])
         judge = Judge(chart, autoplay=True)
         self.assertTrue(judge.autoplay)
         self.assertAlmostEqual(judge.score_multiplier, -1.0)          # 1.0x -> -1
         judge.rate = 2.0
-        self.assertAlmostEqual(judge.score_multiplier, -(2.0 ** 1.5), places=6)
+        self.assertAlmostEqual(judge.score_multiplier, -(2.0 ** 0.6), places=6)
         judge.rate = 1.0
         hit_ms = chart.timing.beat_to_song_ms(2.0)
         judge.update(0.0)
@@ -203,7 +203,7 @@ class ScoreTests(unittest.TestCase):
         self.assertEqual(judge2.counts[BREAK], 0)
 
     def test_score_scales_with_rate_to_the_1_5(self) -> None:
-        """分数 = 准度部分 × 倍速^1.5 + 附加分（附加分不吃倍率）。"""
+        """分数 = 准度部分 × 倍速^0.6 + 附加分（附加分不吃倍率）。"""
         chart = make_chart([LaneNote("L1", 0, 0, 1.0)])
         judge = Judge(chart)
         judge.on_press(chart.timing.beat_to_song_ms(1.0), lane=0)     # EXACT
@@ -217,10 +217,10 @@ class ScoreTests(unittest.TestCase):
             judge.rate = rate
             self.assertEqual(
                 judge.score,
-                round(accuracy_part * (rate ** 1.5)) + bonus,
+                round(accuracy_part * (rate ** 0.6)) + bonus,
                 msg="附加分不受倍率影响",
             )
-            self.assertEqual(judge.scaled_score, round(accuracy_part * (rate ** 1.5)))
+            self.assertEqual(judge.scaled_score, round(accuracy_part * (rate ** 0.6)))
         # 倍速被夹在 0.1 ~ 3.0（上限 3 倍）
         self.assertEqual(Judge(chart, rate=1.5).rate, 1.5)
         self.assertEqual(Judge(chart, rate=9.0).rate, 1.5)

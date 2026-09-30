@@ -106,6 +106,18 @@ class Scene3D:
         loadPrcFileData("", "audio-library-name null")
         loadPrcFileData("", "notify-level-display error")
         self.base = ShowBase()
+        try:
+            self._setup(width, height, texture_dir, lane_count, lane_width, start_z,
+                        camera_height, camera_back, pitch, fov, decorations)
+        except Exception:
+            # 构造中途失败也要把 ShowBase 关掉，否则下次再建会报
+            # "Attempt to spawn multiple ShowBase instances!"
+            self.close()
+            raise
+
+    def _setup(self, width: int, height: int, texture_dir: str, lane_count: int,
+               lane_width: float, start_z: float, camera_height: float,
+               camera_back: float, pitch: float, fov: float, decorations: bool) -> None:
         self.texture_dir = texture_dir
         self.lane_count = lane_count
         self.lane_width = lane_width
@@ -125,6 +137,14 @@ class Scene3D:
         self.card = CardMaker("quad")
         self.card.setFrame(-0.5, 0.5, -0.5, 0.5)          # 单位卡片，缩放即尺寸
         self._make_buffer(width, height)
+        # ShowBase 会顺手开一个"主窗口"（离屏时也是隐藏窗口），我们根本不用它：
+        # 留着它只会在某些机器上影响前台窗口 / 尺寸。直接关掉，只留自己的离屏缓冲。
+        default_win = getattr(self.base, "win", None)
+        if default_win is not None:
+            try:
+                self.base.closeWindow(default_win)
+            except Exception:                  # pragma: no cover - 依赖驱动
+                pass
         self.root = self.base.render.attachNewNode("world")
         # 每层一个父节点：父节点的创建顺序就是绘制顺序（见 LAYER_SEQUENCE）
         self.layers: Dict[str, "NodePath"] = {

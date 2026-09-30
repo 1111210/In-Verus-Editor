@@ -130,7 +130,7 @@ class PlayerAppSmokeTests(unittest.TestCase):
         app.judge._judge_result("X", "EXACT", 0.0)
         self.assertEqual(
             app.judge.score,
-            round(app.judge.accuracy_score * (0.9 ** 1.5)) + app.judge.exact_bonus,
+            round(app.judge.accuracy_score * (0.9 ** 0.6)) + app.judge.exact_bonus,
         )
         app._adjust_rate(-1)
         self.assertAlmostEqual(app.settings.rate, 0.8, places=6)
@@ -378,8 +378,8 @@ class PlayerAppSmokeTests(unittest.TestCase):
         app._update(1 / 120)
         self.assertEqual(app.judge.counts["Break"], 0)
         self.assertEqual(app.judge.counts["EXACT"], app.judge.total_notes)
-        # 分数倍率 = -倍速^1.5
-        expected_multiplier = -(app.settings.rate ** 1.5)
+        # 分数倍率 = -倍速^0.6
+        expected_multiplier = -(app.settings.rate ** 0.6)
         self.assertAlmostEqual(app.judge.score_multiplier, expected_multiplier)
         self.assertEqual(
             app.judge.score,
@@ -390,7 +390,7 @@ class PlayerAppSmokeTests(unittest.TestCase):
         self.assertRegex(app._result_score_line(), r"^分数：-\d+ - \d+$", "负倍率写成额外扣分")
         app.settings.rate = 1.5
         app.judge.rate = 1.5
-        self.assertAlmostEqual(app.judge.score_multiplier, -(1.5 ** 1.5), places=6)
+        self.assertAlmostEqual(app.judge.score_multiplier, -(1.5 ** 0.6), places=6)
         # 结算页：倍速行注明 -1x，判定数换成准度
         app._finish()
         self.assertIn("Autoplay", app._result_rate_line())
@@ -421,7 +421,7 @@ class PlayerAppSmokeTests(unittest.TestCase):
         self.assertEqual(app.judge.exact_bonus, 1)
         self.assertEqual(
             app.judge.scaled_score,
-            round(app.judge.accuracy_score * (1.5 ** 1.5)),
+            round(app.judge.accuracy_score * (1.5 ** 0.6)),
             "结算展示的分数只把准度部分乘倍率",
         )
         self.assertEqual(app.judge.score, app.judge.scaled_score + 1, "附加分不吃倍率")
@@ -649,7 +649,7 @@ class PlayerAppSmokeTests(unittest.TestCase):
         self.assertTrue(app.settings.side_lane_highlight, "点已选中的行 = 切换开关")
 
     def test_rate_can_go_up_to_1_5(self) -> None:
-        """倍速上限 1.5x（+/ - 步长 0.1），分数 = 准度部分 × 倍速^1.5 + 附加分。"""
+        """倍速上限 1.5x（+/ - 步长 0.1），分数 = 准度部分 × 倍速^0.6 + 附加分。"""
         app = self.app
         app.settings_row = app._row_index("rate")
         for _ in range(60):
@@ -661,7 +661,7 @@ class PlayerAppSmokeTests(unittest.TestCase):
         app.judge._judge_result("X", "EXACT", 0.0)
         self.assertEqual(
             app.judge.score,
-            round(app.judge.accuracy_score * (1.5 ** 1.5)) + app.judge.exact_bonus,
+            round(app.judge.accuracy_score * (1.5 ** 0.6)) + app.judge.exact_bonus,
         )
         app._adjust_rate(-1)
         self.assertAlmostEqual(app.settings.rate, 1.4)
