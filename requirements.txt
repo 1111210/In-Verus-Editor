@@ -16,3 +16,5 @@ pygame-ce>=2.5.0
 numpy>=1.26
 # 游玩器（3D）后续做特效 / 追求性能时使用；当前软件渲染不需要它
 PyOpenGL>=3.1
+# 游玩器渲染层：Panda3D（1.10.16 起有 Python 3.14 的 Windows wheel）
+panda3d>=1.10.16
