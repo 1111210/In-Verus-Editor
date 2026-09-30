@@ -1994,9 +1994,11 @@ class PlayerApp:
         return int(self.w / 3)
 
     def _result_score_line(self) -> str:
-        """结算页分数行：**不计附加分**，写成「分数 + 附加分」（附加分不吃倍率）。"""
+        """结算页分数行：「准度部分 × 倍率」 ＋/－ 附加分（倍率为负时是额外扣分）。"""
         assert self.judge is not None
-        return f"分数：{self.judge.scaled_score} + {self.judge.exact_bonus}"
+        adjustment = self.judge.exact_adjustment
+        sign = "+" if adjustment >= 0 else "-"      # 负倍率：额外扣分
+        return f"分数：{self.judge.scaled_score} {sign} {abs(adjustment)}"
 
     def _result_combo_line(self) -> str:
         """最大连击按“最大连击 / 总判定数”显示。"""

@@ -268,8 +268,17 @@ class Judge:
 
     @property
     def exact_bonus(self) -> int:
-        """附加分：每个 EXACT 额外 +1，**不受倍速 / 分数倍率影响**。"""
+        """EXACT 数（附加分 / 额外扣分的基础值）。"""
         return self._counts[EXACT]
+
+    @property
+    def exact_adjustment(self) -> int:
+        """附加调整：倍率为正时每个 EXACT 额外 +1；**倍率为负时改为额外扣分（-1）**。
+
+        两种情况都**不受倍速大小影响**（不吃倍率），只跟随倍率的正负号。
+        """
+        bonus = self.exact_bonus
+        return -bonus if self.score_multiplier < 0 else bonus
 
     @property
     def base_score(self) -> int:
@@ -283,8 +292,8 @@ class Judge:
 
     @property
     def score(self) -> int:
-        """最终分数 = 准度部分 × 分数倍率 + 附加分（附加分不吃倍率）。"""
-        return self.scaled_score + self.exact_bonus
+        """最终分数 = 准度部分 × 分数倍率 + 附加调整（倍率为负时是扣分）。"""
+        return self.scaled_score + self.exact_adjustment
 
     @property
     def score_multiplier(self) -> float:

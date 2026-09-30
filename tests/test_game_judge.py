@@ -194,7 +194,7 @@ class ScoreTests(unittest.TestCase):
         judge.update(hit_ms)
         self.assertEqual(judge.counts[EXACT], 2, "物件过线即 EXACT（不需要输入）")
         self.assertEqual(judge.counts[BREAK], 0)
-        self.assertEqual(judge.score, -judge.accuracy_score + judge.exact_bonus)
+        self.assertEqual(judge.score, -judge.accuracy_score - judge.exact_bonus, "负倍率时附加分变扣分")
         # 长按 / 空域的每个判定区间也全部 EXACT
         chart2 = make_chart([LaneNote("H1", 0, 0, 0.0, 3.0), MouseRegion("R1", 0.0, 3.0)])
         judge2 = Judge(chart2, autoplay=True)

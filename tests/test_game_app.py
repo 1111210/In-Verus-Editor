@@ -379,8 +379,11 @@ class PlayerAppSmokeTests(unittest.TestCase):
         self.assertAlmostEqual(app.judge.score_multiplier, expected_multiplier)
         self.assertEqual(
             app.judge.score,
-            round(app.judge.accuracy_score * expected_multiplier) + app.judge.exact_bonus,
+            round(app.judge.accuracy_score * expected_multiplier) - app.judge.exact_bonus,
+            "负倍率时附加分变扣分",
         )
+        self.assertEqual(app.judge.exact_adjustment, -app.judge.exact_bonus)
+        self.assertRegex(app._result_score_line(), r"^分数：-\d+ - \d+$", "负倍率写成额外扣分")
         app.settings.rate = 1.5
         app.judge.rate = 1.5
         self.assertAlmostEqual(app.judge.score_multiplier, -(1.5 ** 1.5), places=6)
