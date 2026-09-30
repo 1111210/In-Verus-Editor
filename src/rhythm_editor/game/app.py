@@ -2422,8 +2422,8 @@ class PlayerApp:
     def _mouse_marker_points(self, norm_x: float):
         """指针三角形的三个点（躺在鼠标平面内、矮胖）。"""
         x = MOUSE_LEFT + norm_x * MOUSE_LEGAL_WIDTH
-        length = 0.26                      # 沿 z 的长度（矮）
-        half_w = 0.07                      # 横向半宽（胖）
+        length = 0.16                      # 沿 z 的长度（矮）
+        half_w = 0.13                      # 横向半宽（胖，是长度的 1.6 倍）
         return (
             self._proj(x, MOUSE_PLANE_HEIGHT, length),
             self._proj(x - half_w, MOUSE_PLANE_HEIGHT, 0.0),

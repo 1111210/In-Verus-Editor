@@ -296,9 +296,9 @@ class Scene3D:
         `outline_x` 给定时，额外用边线画一个“实际位置”的指针（关闭无界鼠标且出界时）。
         """
         from .scene import MOUSE_LEFT, MOUSE_LEGAL_WIDTH
-        half_w = 0.07
-        length = 0.26
-        width = MOUSE_LEGAL_WIDTH * 0.14
+        # 比例实测：0.26 宽 × 0.16 长 时在取景下读起来才是清晰的正三角形
+        length = 0.16
+        width = MOUSE_LEGAL_WIDTH * 0.26
         x = MOUSE_LEFT + norm_x * MOUSE_LEGAL_WIDTH
         # 贴图“上”= 顶点；卡片铺在水平面里、绕法线转 180° 让顶点指向远处（屏幕上方）。
         # 只抬 0.004 单位：既仍算“在物件运动的水平面内”，又避免和平面共面闪烁。
