@@ -2295,25 +2295,58 @@ class PlayerApp:
         self._line(k6_right, m_right, (60, 62, 74), 1)
 
     def _draw_mouse_plane_gradient(self) -> None:
-        """鼠标平面的蓝底渐变（靠近判定线略蓝 → 轨道尽头完全透明）。"""
+        """鼠标平面的蓝底渐变（靠近判定线略蓝 → 轨道尽头完全透明）。
+
+        以前切成 48 条四边形逐条画，条与条之间的接缝就是屏幕上那一道道**横线条纹**。
+        现在按"屏幕行"烘一张一维渐变，再用梯形掩码裁形，一次性贴上去：既没有接缝，
+        也不用每帧重画几十个多边形（同一窗口尺寸只烘一次，之后每帧一次 blit）。
+        """
+        overlay = self._mouse_plane_overlay
+        if overlay is None:
+            return
+        surface, rect = overlay
+        self.screen.blit(surface, rect)
+
+    @property
+    def _mouse_plane_overlay(self):
+        """烘好的鼠标平面蓝底（含梯形掩码）；窗口尺寸不变时复用。"""
         width = LANE_COUNT * LANE_WIDTH
-        boundaries = self._mouse_plane_strip_z(48)
-        steps = len(boundaries) - 1
-        for index in range(steps):
-            z_near, z_far = boundaries[index], boundaries[index + 1]
-            alpha = int(round(96 * (1.0 - (index + 0.5) / steps)))
-            if alpha <= 0:
-                continue
-            self._alpha_quad(
-                [
-                    self._proj(K6_LEFT, MOUSE_PLANE_HEIGHT, z_far),
-                    self._proj(K6_LEFT + width, MOUSE_PLANE_HEIGHT, z_far),
-                    self._proj(K6_LEFT + width, MOUSE_PLANE_HEIGHT, z_near),
-                    self._proj(K6_LEFT, MOUSE_PLANE_HEIGHT, z_near),
-                ],
-                (58, 108, 200),
-                alpha,
-            )
+        left_far = self._proj(K6_LEFT, MOUSE_PLANE_HEIGHT, START_Z)
+        right_far = self._proj(K6_LEFT + width, MOUSE_PLANE_HEIGHT, START_Z)
+        left_near = self._proj(K6_LEFT, MOUSE_PLANE_HEIGHT, 0.0)
+        right_near = self._proj(K6_LEFT + width, MOUSE_PLANE_HEIGHT, 0.0)
+        xs = (left_far[0], right_far[0], left_near[0], right_near[0])
+        ys = (left_far[1], right_far[1], left_near[1], right_near[1])
+        left = max(0, int(min(xs)) - 2)
+        top = max(0, int(min(ys)) - 2)
+        right = min(self.w, int(max(xs)) + 3)
+        bottom = min(self.h, int(max(ys)) + 3)
+        if right - left < 2 or bottom - top < 2:
+            return None
+        key = (self.w, self.h, left, top, right, bottom)
+        if getattr(self, "_mouse_plane_key", None) == key:
+            return getattr(self, "_mouse_plane_value", None)
+        rect = pygame.Rect(left, top, right - left, bottom - top)
+        # 一维渐变（按屏幕行）：底部 = 判定线一侧最实，向上到轨道尽头渐隐
+        column = pygame.Surface((1, rect.height), pygame.SRCALPHA)
+        span = max(1, rect.height - 1)
+        for row in range(rect.height):
+            from_bottom = (span - row) / span                 # 0 = 判定线，1 = 尽头
+            alpha = int(round(96 * (1.0 - from_bottom)))
+            column.set_at((0, row), (58, 108, 200, max(0, alpha)))
+        surface = pygame.transform.smoothscale(column, (rect.width, rect.height))
+        mask = pygame.Surface((rect.width, rect.height), pygame.SRCALPHA)
+        mask.fill((255, 255, 255, 0))
+        pygame.draw.polygon(mask, (255, 255, 255, 255), [
+            (left_near[0] - left, left_near[1] - top),
+            (right_near[0] - left, right_near[1] - top),
+            (right_far[0] - left, right_far[1] - top),
+            (left_far[0] - left, left_far[1] - top),
+        ])
+        surface.blit(mask, (0, 0), special_flags=pygame.BLEND_RGBA_MULT)
+        self._mouse_plane_key = key
+        self._mouse_plane_value = (surface, rect)
+        return self._mouse_plane_value
 
     @staticmethod
     def _layer_of(note: Note) -> int:
@@ -2612,54 +2645,45 @@ class PlayerApp:
         return True
 
     def _draw_region(self, note: MouseRegion, now_ms: float) -> None:
-        """空域：画在鼠标物件运动的水平面内（半透明蓝底 + 左右两条边线）。"""
+        """空域：画在鼠标物件运动的水平面内（**同一种颜色**的半透明底 + 左右两条边线）。
+
+        只采样**看得见的那一段**：以前按 beat 全段采样、z 用 ``note_z`` 夹到
+        ``[0, START_Z]``，远端的采样点会全挤在 ``z = START_Z`` 上——画出来就是
+        "不该出现的空域堆积在平面远端"。
+        """
         assert self.chart is not None
         timing = self.chart.timing
-        if self._note_z(timing.beat_to_song_ms(note.beat_start), now_ms) > START_Z:
+        head_ms = timing.beat_to_song_ms(note.beat_start)
+        tail_ms = timing.beat_to_song_ms(note.beat_end)
+        near_ms = max(head_ms, now_ms)                              # 判定线这一端
+        far_ms = min(tail_ms, now_ms + self._visible_span_ms())     # 轨道尽头这一端
+        if far_ms - near_ms <= 1e-6:
             return
         samples = 28
         left_points: List[Tuple[float, float, float]] = []
         right_points: List[Tuple[float, float, float]] = []
         for index in range(samples + 1):
-            beat = note.beat_start + (note.beat_end - note.beat_start) * index / samples
-            z = self._note_z(timing.beat_to_song_ms(beat), now_ms)
-            if z > START_Z or z < -0.4:
-                continue
-            z = max(0.0, z)
+            song_ms = near_ms + (far_ms - near_ms) * index / samples
+            beat = timing.song_ms_to_beat(song_ms)
+            z = min(START_Z, max(0.0, self._note_z(song_ms, now_ms)))
             left_x = MOUSE_LEFT + note.left_at(beat) * MOUSE_LEGAL_WIDTH
             right_x = MOUSE_LEFT + note.right_at(beat) * MOUSE_LEGAL_WIDTH
             left_points.append(self._proj(left_x, MOUSE_PLANE_HEIGHT, z))
             right_points.append(self._proj(right_x, MOUSE_PLANE_HEIGHT, z))
         if len(left_points) < 2:
             return
-        # 底图：一整张带横向条纹的淡蓝图（底边贴着判定线，越往上越透明）
+        # 底图：整片**同一种颜色**的半透明淡蓝（不再画横向条纹，避免一条条接缝）
         area_color = self.texture_avg.get("region_area")
         if area_color is None:
             surface = self._tex("region_area")
             if surface is not None:
                 area_color = textures.average_color(surface)
         if area_color is not None:
-            # 半透明底：长条用透视正确的多边形填（逐片贴图会出台阶）
             self._alpha_quad(
                 left_points + list(reversed(right_points)),
                 area_color[:3],
                 min(255, area_color[3] + 40),
             )
-            for index in range(0, len(left_points) - 1, 2):     # 横向细条纹（近似贴图里的横纹）
-                a_l, a_r = left_points[index], right_points[index]
-                b_l, b_r = left_points[index + 1], right_points[index + 1]
-                mid_l = ((a_l[0] + b_l[0]) / 2.0, (a_l[1] + b_l[1]) / 2.0)
-                mid_r = ((a_r[0] + b_r[0]) / 2.0, (a_r[1] + b_r[1]) / 2.0)
-                self._alpha_quad(
-                    [
-                        (mid_l[0], mid_l[1] - 1.0),
-                        (mid_r[0], mid_r[1] - 1.0),
-                        (mid_r[0], mid_r[1] + 1.0),
-                        (mid_l[0], mid_l[1] + 1.0),
-                    ],
-                    area_color[:3],
-                    min(255, area_color[3] + 70),
-                )
         else:
             # 半透明：空域在鼠标平面上，挡住下面的 6K 物件就没法看谱了
             self._alpha_quad(left_points + list(reversed(right_points)), (60, 110, 200), 104)

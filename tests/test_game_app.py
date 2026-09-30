@@ -1066,6 +1066,39 @@ class PlayerAppSmokeTests(unittest.TestCase):
         )
         self.assertEqual(app.judge.judged_notes, 0, "滚轮不该判定")
 
+    def test_software_region_is_flat_and_clipped_to_visible_span(self) -> None:
+        """软件渲染的空域：只画可见段（不会堆在平面远端），而且是同一种颜色（无横条纹）。"""
+        from rhythm_editor.game.app import MOUSE_PLANE_HEIGHT
+        from rhythm_editor.game.scene import START_Z
+        from rhythm_editor.model.notes import BoundaryCurve, MouseRegion
+
+        app = self.app
+        app._enter_loading()
+        app._start_play()
+        app.settings.rate = 0.4
+        app.settings.speed = 2.6
+        region = MouseRegion("R1", 0.0, 8.0, BoundaryCurve(0.1, 0.4),
+                             BoundaryCurve(0.9, 0.6))
+        app.chart.mouse_notes = [region]
+        app.chart.invalidate_order()
+        fills = []
+        original = app._alpha_quad
+        app._alpha_quad = lambda points, color, alpha: fills.append(
+            (list(points), color, alpha))
+        try:
+            app._draw_region(region, app.chart.timing.beat_to_song_ms(4.0))
+        finally:
+            app._alpha_quad = original
+        area = [entry for entry in fills if tuple(entry[1]) == (90, 150, 235)]
+        self.assertEqual(len(area), 1, "空域底只铺一次：不再画一条条横向条纹")
+        points, _color, _alpha = area[0]
+        ys = [point[1] for point in points]
+        near_y = app._proj(0.0, MOUSE_PLANE_HEIGHT, 0.0)[1]
+        far_y = app._proj(0.0, MOUSE_PLANE_HEIGHT, START_Z)[1]
+        self.assertAlmostEqual(max(ys), near_y, delta=6.0, msg="最近的边贴在判定线一侧")
+        self.assertLessEqual(min(ys), far_y + 8.0,
+                             msg="最远的边就在轨道尽头，不会堆到平面外")
+
     def test_mouse_plane_has_blue_gradient_and_no_side_lines(self) -> None:
         """鼠标平面：不画边线；靠近判定线略蓝，向轨道尽头渐变为完全透明。"""
         from rhythm_editor.game.app import MOUSE_PLANE_HEIGHT
@@ -1090,30 +1123,23 @@ class PlayerAppSmokeTests(unittest.TestCase):
             app._alpha_quad = original_alpha
         mouse_lines = [entry for entry in lines if entry[2] == (90, 220, 255)]
         # 原来的 6K 平面边线也算同色，这里只要求鼠标平面“从起点到判定线”的那两条消失
-        self.assertTrue(fills, "鼠标平面要有一层渐变蓝底")
-        self.assertGreater(len(fills), 8, "渐变要足够细腻")
-        # 只统计鼠标平面蓝底渐变（边界窄条也是 _alpha_quad，颜色不同）
-        fills = [entry for entry in fills if entry[2] == (58, 108, 200)]
-        alphas = [alpha for _points, alpha, _color in fills]
-        self.assertGreater(alphas[0], alphas[-1], "靠近判定线更实、远处更透")
-        self.assertLessEqual(alphas[0], 100, "只是『略微不透明』")
-        self.assertGreaterEqual(alphas[-1], 0)
-        self.assertLess(alphas[-1], 12, "轨道尽头接近完全透明")
-        # 第一条紧贴判定线（屏幕 y 就在鼠标判定线处），最后一条已经靠近轨道尽头
+        # 蓝底渐变现在是「一维渐变 + 梯形掩码」烘好的一整张，直接量它的 alpha 坡
+        overlay = app._mouse_plane_overlay
+        self.assertIsNotNone(overlay, "鼠标平面要有一层渐变蓝底")
+        surface, rect = overlay
+        middle_x = rect.width // 2
+        near = surface.get_at((middle_x, rect.height - 3))
+        middle = surface.get_at((middle_x, rect.height // 2))
+        far = surface.get_at((middle_x, 2))
+        self.assertEqual(tuple(near)[:3], (58, 108, 200))
+        self.assertGreater(near[3], middle[3], "靠近判定线更实、远处更透")
+        self.assertGreater(middle[3], far[3], "越远越透")
+        self.assertLessEqual(near[3], 100, "只是『略微不透明』")
+        self.assertLess(far[3], 12, "轨道尽头接近完全透明")
+        # 贴着判定线的那一端就在判定线上，另一端一路铺到轨道尽头
         mouse_line_y = app._proj(0.0, MOUSE_PLANE_HEIGHT, 0.0)[1]
-        first_points = fills[0][0]
-        self.assertAlmostEqual(
-            max(p[1] for p in first_points), mouse_line_y, delta=3.0, msg="最蓝的一条贴着判定线"
-        )
-        self.assertLess(
-            min(p[1] for p in first_points), mouse_line_y - 5, "这条要从判定线往上铺开"
-        )
-        last_points = fills[-1][0]
-        self.assertLess(
-            min(p[1] for p in last_points),
-            min(p[1] for p in first_points) - 100,
-            "渐变一路铺到远处（屏幕更靠上）",
-        )
+        self.assertAlmostEqual(rect.bottom, mouse_line_y, delta=4.0, msg="渐变贴着判定线")
+        self.assertLess(rect.top, mouse_line_y - 100, "渐变一路铺到远处")
         self.assertAlmostEqual(START_Z, 12.0, places=6)
         # 6K 平面底色仍然只有一个四边形
         # 贴图版轨道不再画底色四边形（缺贴图时才会退回程序绘制）
@@ -1137,17 +1163,20 @@ class PlayerAppSmokeTests(unittest.TestCase):
         app.pressed_lanes = {2}
         order = []
         original_quad, original_alpha = app._quad, app._alpha_quad
+        original_gradient = app._draw_mouse_plane_gradient
         app._quad = lambda points, color: order.append(("quad", color))
         app._alpha_quad = lambda points, color, alpha: order.append(("gradient", color))
+        app._draw_mouse_plane_gradient = lambda: order.append(("mouse_plane", None))
         try:
             app._draw_planes(0.0)
         finally:
             app._quad, app._alpha_quad = original_quad, original_alpha
+            app._draw_mouse_plane_gradient = original_gradient
         # 只认鼠标平面那层蓝底渐变（轨道贴图填充也是 _alpha_quad，颜色不同）
         first_gradient = next(
             index
             for index, entry in enumerate(order)
-            if entry[1] == (58, 108, 200)
+            if entry[0] == "mouse_plane"
         )
         highlight_indexes = [
             index
