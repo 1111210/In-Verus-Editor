@@ -89,8 +89,8 @@ class Scene3D:
         self.height = height
         self.decorations = decorations
         # 投影公式按渲染实测校准的线性系数（见 project() 的说明）
-        self.row_scale = 0.604
-        self.row_offset = 140.9
+        self.row_scale = 0.9215
+        self.row_offset = 60.3
         self._textures: Dict[str, "Texture"] = {}
         self._pool: List["NodePath"] = []
         self._used = 0
@@ -104,7 +104,7 @@ class Scene3D:
         self.build_static()
         # 取景标定：以**构图贴近软件版**为目标（两个平面的 8 个角点平均误差 31px），
         # 由 tools/fit_panda_composition.py 搜索得到。
-        self.set_camera(pitch=19.0, fov=32.0, back=1.7, height=1.5)
+        self.set_camera(pitch=18.0, fov=36.0, back=1.8, height=1.15)
 
     # ------------------------------------------------------------------ 设置
     def _make_buffer(self, width: int, height: int) -> None:
@@ -219,6 +219,8 @@ class Scene3D:
         node.setTransparency(TransparencyAttrib.MAlpha)
         node.setPos(x, z, y)
         node.setScale(sx, sz, 1.0)
+        # 实测：CardMaker 的卡片默认立在 XZ 平面（竖着），P=-90 才躺进水平面
+        node.setHpr(0.0, -90.0, 0.0)
         node.setColor(*color)
         if texture is not None:
             node.setTexture(texture)
@@ -271,7 +273,8 @@ class Scene3D:
         node.setTransparency(TransparencyAttrib.MAlpha)
         node.setColor(*color)
         node.setPos(x, z, y)
-        node.setHpr(0.0, 90.0 if vertical else 0.0, angle)
+        # 水平面（轨道/平面/长条）= P -90；平行判定平面（滑键/点击）= P 0
+        node.setHpr(0.0, 0.0 if vertical else -90.0, angle)
         node.setScale(sx, sz, 1.0)
         node.show()
 
