@@ -371,16 +371,29 @@ class PlayerAppSmokeTests(unittest.TestCase):
         app._update(1 / 120)
         self.assertEqual(app.judge.counts["Break"], 0)
         self.assertEqual(app.judge.counts["EXACT"], app.judge.total_notes)
-        self.assertEqual(app.judge.score, -app.judge.base_score)
-        self.assertAlmostEqual(app.judge.score_multiplier, -1.0)
+        # 分数倍率 = -倍速^1.5
+        expected_multiplier = -(app.settings.rate ** 1.5)
+        self.assertAlmostEqual(app.judge.score_multiplier, expected_multiplier)
+        self.assertEqual(app.judge.score, round(app.judge.base_score * expected_multiplier))
+        app.settings.rate = 2.0
+        app.judge.rate = 2.0
+        self.assertAlmostEqual(app.judge.score_multiplier, -(2.0 ** 1.5), places=6)
         # 结算页：倍速行注明 -1x，判定数换成准度
         app._finish()
-        self.assertIn("-1x", app._result_rate_line())
+        self.assertIn("Autoplay", app._result_rate_line())
+        self.assertIn(f"{app.judge.score_multiplier:.2f}", app._result_rate_line())
         self.assertIn("准度", app._result_accuracy_line())
         self.assertRegex(app._result_accuracy_line(), r"准度：\d+\.\d{3}%", "准度保留三位小数")
         self.assertEqual(app._player_label(), "Autoplay")
+        # 结算右栏顺序：分数 -> 准度 -> 最大连击 -> 倍速
+        labels = [line.split("：")[0] for line, _is_score in app._result_lines()]
+        self.assertEqual(labels[0], "分数")
+        self.assertEqual(labels[1], "准度")
+        self.assertEqual(labels[2], "最大连击")
+        self.assertEqual(labels[3], "倍速")
         app._draw()
         app.settings.autoplay = False
+        app.settings.rate = 1.0
 
     def test_prompt_accepts_text_input_and_key_capture(self) -> None:
         """文字输入走 TEXTINPUT（中文可输入）；键位改为“按下想设的键”。"""

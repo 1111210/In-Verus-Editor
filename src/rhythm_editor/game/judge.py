@@ -274,8 +274,9 @@ class Judge:
 
     @property
     def score_multiplier(self) -> float:
-        """分数倍率：正常是倍速^1.5；**自动播放固定 -1 倍**。"""
-        return -1.0 if self.autoplay else (self.rate ** 1.5)
+        """分数倍率：正常是倍速^1.5；**自动播放取它的相反数（-倍速^1.5）**。"""
+        base = self.rate ** 1.5
+        return -base if self.autoplay else base
 
     @property
     def break_count(self) -> int:

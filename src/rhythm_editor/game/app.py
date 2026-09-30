@@ -726,7 +726,7 @@ class PlayerApp:
         if key == "renderer":
             return "OpenGL（切换即生效）" if s.renderer == "opengl" else "软件"
         if key == "autoplay":
-            return "开（判定全 EXACT · 分数 ×-1）" if s.autoplay else "关"
+            return "开（判定全 EXACT · 分数倍率 ×-倍速^1.5）" if s.autoplay else "关"
         return f"{s.rate:.1f}x（得分 ×{s.rate ** 1.5:.2f}）"
 
     def _event_settings(self, event) -> None:
@@ -1934,39 +1934,25 @@ class PlayerApp:
         for index, line in enumerate(left_lines):
             self.text(line, (40, 140 + index * 34), self.f_mid, WHITE if index == 0 else DIM)
         counts = self.judge.counts
-        self.text(
-            self._result_score_line(),
-            (split + 40, 140),
-            self.f_big,
-            (255, 226, 120),
-        )
         total = max(1, self.judge.total_notes)
-        self.text(
-            self._result_combo_line(),
-            (split + 40, 196),
-            self.f_mid,
-            WHITE,
-        )
-        # 得分倍率（倍速^1.5）放在最大连击之后
-        self.text(
-            self._result_rate_line(),
-            (split + 40, 226),
-            self.f_mid,
-            ACCENT,
-        )
-        self.text(
-            self._result_accuracy_line(),
-            (split + 40, 258),
-            self.f_small,
-            DIM,
-        )
+        # 顺序：分数 -> 准度 -> 最大连击 / 总判定数 -> 倍速
+        y = 140
+        for index, (line, is_score) in enumerate(self._result_lines()):
+            self.text(
+                line,
+                (split + 40, y),
+                self.f_big if is_score else self.f_mid,
+                (255, 226, 120) if is_score else (WHITE if index == 2 else ACCENT),
+            )
+            y += 46 if is_score else 30       # 分数那行是大字，多留一点
         # 判定明细横着排（右栏更宽，够放下 4 列）
         column_w = max(120, (self.w - split - 80) // 4)
+        grades_y = y + 14
         for index, grade in enumerate(GRADES):
             share = counts[grade] / total * 100.0
             self.text(
                 f"{grade}：{counts[grade]}（{share:.1f}%）",
-                (split + 40 + index % 2 * (column_w * 2), 292 + index // 2 * 40),
+                (split + 40 + index % 2 * (column_w * 2), grades_y + index // 2 * 40),
                 self.f_mid,
                 GRADE_COLORS[grade],
             )
@@ -2001,15 +1987,28 @@ class PlayerApp:
         return f"最大连击：{self.judge.max_combo} / {self.judge.total_notes}"
 
     def _result_rate_line(self) -> str:
-        """倍速（自动播放时注明分数倍率 -1x）—— 放在最大连击后面。"""
+        """倍速（自动播放时注明分数倍率 = -倍速^1.5）—— 放在最后一行。"""
         if self.settings.autoplay:
-            return f"倍速：{self.settings.rate:.1f}x（Autoplay · 分数倍率 -1x）"
+            assert self.judge is not None
+            return (
+                f"倍速：{self.settings.rate:.1f}x"
+                f"（Autoplay · 分数倍率 ×{self.judge.score_multiplier:.2f}）"
+            )
         return f"倍速：{self.settings.rate:.1f}x"
 
     def _result_accuracy_line(self) -> str:
         """准度（取代原来的“判定数 a / 总数”）。"""
         assert self.judge is not None
         return f"准度：{self.judge.accuracy * 100:.3f}%"
+
+    def _result_lines(self) -> List[Tuple[str, bool]]:
+        """结算页右栏的行（顺序：分数 → 准度 → 最大连击/总判定数 → 倍速）。"""
+        return [
+            (self._result_score_line(), True),
+            (self._result_accuracy_line(), False),
+            (self._result_combo_line(), False),
+            (self._result_rate_line(), False),
+        ]
 
     def _event_result(self, event) -> None:
         if event.type == pygame.MOUSEMOTION:

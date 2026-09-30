@@ -180,11 +180,14 @@ class RegionJudgeTests(unittest.TestCase):
 
 class ScoreTests(unittest.TestCase):
     def test_autoplay_scores_negative_and_judges_exact(self) -> None:
-        """自动播放：完全过线即 EXACT（含区间），分数倍率固定 -1x。"""
+        """自动播放：完全过线即 EXACT（含区间），分数倍率 = -倍速^1.5。"""
         chart = make_chart([LaneNote("L1", 0, 0, 2.0), MouseClick("M1", 2.0, 0.5, 0.1)])
         judge = Judge(chart, autoplay=True)
         self.assertTrue(judge.autoplay)
-        self.assertAlmostEqual(judge.score_multiplier, -1.0)
+        self.assertAlmostEqual(judge.score_multiplier, -1.0)          # 1.0x -> -1
+        judge.rate = 2.0
+        self.assertAlmostEqual(judge.score_multiplier, -(2.0 ** 1.5), places=6)
+        judge.rate = 1.0
         hit_ms = chart.timing.beat_to_song_ms(2.0)
         judge.update(0.0)
         self.assertEqual(judge.judged_notes, 0, "还没到判定时间不该提前判")
