@@ -222,14 +222,16 @@ def transparent(size: int = 48) -> np.ndarray:
 
 
 def mouse_marker(filled: bool, size: int = 96) -> np.ndarray:
-    """鼠标指针（场景内元素）：躺在鼠标平面里的矮胖三角形，可实心 / 只画边线。"""
+    """鼠标指针（场景内元素）：躺在鼠标平面里的矮胖三角形，可实心 / 只画边线。
+
+    形状**只有三角形**：以前多了一条贯穿整幅的横杠（``ys >= 0.9`` 那一项），
+    渲染出来就是指针上方多一根横线，这里去掉。
+    """
     xs = np.linspace(-1.0, 1.0, size, dtype=np.float32)[None, :]
     ys = np.linspace(-1.0, 1.0, size, dtype=np.float32)[:, None]   # -1 = 图顶（远处）
-    # 三角形：底边在下方（y=+0.9），顶点在上方（y=-0.9）
-    inside = (ys >= 0.9) | (np.abs(xs) <= (0.9 - ys) / 1.8)
-    edge = inside & ~(
-        (ys > 0.86) | (np.abs(xs) < (0.88 - ys) / 1.8 - 0.06)
-    )
+    # 三角形：底边贴着图顶（最宽），顶点在图底中点（渲染时卡片转 180°，顶点朝远处）
+    inside = np.abs(xs) <= (0.9 - ys) / 1.8
+    edge = inside & ~(np.abs(xs) < (0.88 - ys) / 1.8 - 0.06)
     rgba = np.zeros((size, size, 4), dtype=np.float32)
     rgba[..., 0], rgba[..., 1], rgba[..., 2] = 90, 220, 255
     if filled:

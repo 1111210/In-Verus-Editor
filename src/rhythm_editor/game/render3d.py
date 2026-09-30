@@ -60,13 +60,19 @@ def import_error() -> str:
 
 
 def make_gradient_texture(direction: str = "area") -> "Texture":  # pragma: no cover - 需要 GL
-    """生成鼠标平面 / 空域用的渐变贴图（贴图版不好表达，直接给一张）。"""
+    """生成鼠标平面用的渐变贴图：**靠判定线那一侧最不透明**。
+
+    注意缓冲区行序：``setRamImageAs`` 的数据**第一行对应 v=0**，而水平卡片上 v=0 就是
+    z=0（判定线 / 近端）那一侧。所以第 0 行要给最大 alpha，越往后（越远）越透明。
+    （PNG 加载的贴图是另一套约定：文件最后一行 = v=0，别混。）
+    """
     import numpy as np
 
     height, width = 256, 256
     top = np.linspace(1.0, 0.0, height, dtype=np.float32)[:, None]
     bottom = 1.0 - top
-    alpha = np.clip(bottom ** 1.15 * 0.42 if direction == "area" else (bottom ** 1.6) * 0.55, 0, 1)
+    # row 0 = 判定线一侧 -> 用 top（1 → 0）做衰减；峰值对齐软件渲染器（≈0.38）
+    alpha = np.clip(top ** 1.15 * 0.32 if direction == "area" else (top ** 1.6) * 0.38, 0, 1)
     rgba = np.zeros((height, width, 4), dtype=np.uint8)
     rgba[..., 0], rgba[..., 1], rgba[..., 2] = 70, 130, 225
     rgba[..., 3] = (alpha * 255).astype(np.uint8)
