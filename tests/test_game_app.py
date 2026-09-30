@@ -308,7 +308,7 @@ class PlayerAppSmokeTests(unittest.TestCase):
         app._enter_loading()
         chart = app.chart
         offset = chart.timing.beat_to_song_ms(0.0)
-        for rate in (0.5, 1.0, 2.0, 3.0):
+        for rate in (0.5, 1.0, 1.5):
             app.settings.rate = rate
             clock = [1000.0]
             original_perf = app_module.time.perf_counter
@@ -381,9 +381,9 @@ class PlayerAppSmokeTests(unittest.TestCase):
             app.judge.score,
             round(app.judge.accuracy_score * expected_multiplier) + app.judge.exact_bonus,
         )
-        app.settings.rate = 2.0
-        app.judge.rate = 2.0
-        self.assertAlmostEqual(app.judge.score_multiplier, -(2.0 ** 1.5), places=6)
+        app.settings.rate = 1.5
+        app.judge.rate = 1.5
+        self.assertAlmostEqual(app.judge.score_multiplier, -(1.5 ** 1.5), places=6)
         # 结算页：倍速行注明 -1x，判定数换成准度
         app._finish()
         self.assertIn("Autoplay", app._result_rate_line())
@@ -406,7 +406,7 @@ class PlayerAppSmokeTests(unittest.TestCase):
         from rhythm_editor.game.app import WHITE
 
         app = self.app
-        app.settings.rate = 2.0
+        app.settings.rate = 1.5
         app._enter_loading()
         app._start_play()
         app.judge._judge_result("X", "EXACT", 0.0)
@@ -414,7 +414,7 @@ class PlayerAppSmokeTests(unittest.TestCase):
         self.assertEqual(app.judge.exact_bonus, 1)
         self.assertEqual(
             app.judge.scaled_score,
-            round(app.judge.accuracy_score * (2.0 ** 1.5)),
+            round(app.judge.accuracy_score * (1.5 ** 1.5)),
             "结算展示的分数只把准度部分乘倍率",
         )
         self.assertEqual(app.judge.score, app.judge.scaled_score + 1, "附加分不吃倍率")
@@ -428,6 +428,39 @@ class PlayerAppSmokeTests(unittest.TestCase):
         app._finish()
         app._draw()
         app.settings.rate = 1.0
+
+    def test_custom_input_ignores_the_step_grid(self) -> None:
+        """手输的数值不受档位影响（只做范围夹取）；步长只决定 − / + 每次动多少。"""
+        app = self.app
+        pygame = self.pygame
+        original = pygame.event.get
+
+        def type_number(text: str) -> None:
+            queue = [
+                [pygame.event.Event(pygame.TEXTINPUT, text=text)],
+                [pygame.event.Event(pygame.KEYDOWN, key=pygame.K_RETURN)],
+            ]
+            pygame.event.get = lambda *a, **k: queue.pop(0) if queue else []
+            app._prompt_number(app._row_key())
+
+        try:
+            # 倍速：1.37 不在 0.1 的档位上，也要原样保留
+            app.settings_row = app._row_index("rate")
+            app.settings.rate = 1.0
+            type_number("1.37")
+            self.assertAlmostEqual(app.settings.rate, 1.37, places=6)
+            # 超出范围仍然夹到上限 1.5
+            type_number("9.9")
+            self.assertAlmostEqual(app.settings.rate, 1.5, places=6)
+            # 其它数字项同理：单键厚度 0.37 不该被吸到 0.35 / 0.40
+            app.settings_row = app._row_index("note_thickness")
+            type_number("0.37")
+            self.assertAlmostEqual(app.settings.note_thickness, 0.37, places=6)
+            # 而 − / + 仍然按步长走
+            app._adjust_setting(1)
+            self.assertAlmostEqual(app.settings.note_thickness, 0.42, places=6)
+        finally:
+            pygame.event.get = original
 
     def test_prompt_accepts_text_input_and_key_capture(self) -> None:
         """文字输入走 TEXTINPUT（中文可输入）；键位改为“按下想设的键”。"""
@@ -608,23 +641,23 @@ class PlayerAppSmokeTests(unittest.TestCase):
         app._event_settings(pygame.event.Event(pygame.MOUSEBUTTONDOWN, button=1, pos=row.center))
         self.assertTrue(app.settings.side_lane_highlight, "点已选中的行 = 切换开关")
 
-    def test_rate_can_go_up_to_three(self) -> None:
-        """倍速上限扩大到 3x（0.1 一档），分数 = 基础分 × 倍速^1.5。"""
+    def test_rate_can_go_up_to_1_5(self) -> None:
+        """倍速上限 1.5x（+/ - 步长 0.1），分数 = 准度部分 × 倍速^1.5 + 附加分。"""
         app = self.app
         app.settings_row = app._row_index("rate")
         for _ in range(60):
             app._adjust_setting(1)
-        self.assertAlmostEqual(app.settings.rate, 3.0)
+        self.assertAlmostEqual(app.settings.rate, 1.5)
         app._enter_loading()
         app._start_play()
-        self.assertAlmostEqual(app.judge.rate, 3.0)
+        self.assertAlmostEqual(app.judge.rate, 1.5)
         app.judge._judge_result("X", "EXACT", 0.0)
         self.assertEqual(
             app.judge.score,
-            round(app.judge.accuracy_score * (3.0 ** 1.5)) + app.judge.exact_bonus,
+            round(app.judge.accuracy_score * (1.5 ** 1.5)) + app.judge.exact_bonus,
         )
         app._adjust_rate(-1)
-        self.assertAlmostEqual(app.settings.rate, 2.9)
+        self.assertAlmostEqual(app.settings.rate, 1.4)
         for _ in range(60):
             app._adjust_setting(-1)
         self.assertAlmostEqual(app.settings.rate, 0.1)
@@ -901,7 +934,7 @@ class PlayerAppSmokeTests(unittest.TestCase):
     def test_result_page_shows_combo_ratio_and_multiplier(self) -> None:
         """结算：最大连击写成 x / 总判定数，倍速放在它后面。"""
         app = self.app
-        app.settings.rate = 2.0
+        app.settings.rate = 1.5
         app._enter_loading()
         app._start_play()
         app.judge._judge_result("X", "EXACT", 0.0)
@@ -911,7 +944,7 @@ class PlayerAppSmokeTests(unittest.TestCase):
         self.assertIn(str(app.judge.total_notes), combo_line)
         rate_line = app._result_rate_line()
         self.assertIn("倍速", rate_line)
-        self.assertIn("2.0x", rate_line)
+        self.assertIn("1.5x", rate_line)
         self.assertNotIn("×", rate_line)
         app._draw()
 

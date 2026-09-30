@@ -18,8 +18,8 @@ SPEED_MIN = 1.0
 SPEED_MAX = 10.0
 SPEED_STEP = 0.1
 BASE_SCROLL_MS = 1500.0        # 流速 1.0 对应的可视毫秒；n 流速 = 1500 / n 毫秒
-RATE_MIN = 0.1                 # 游玩倍速：0.1 ~ 3.0（0.1 一档）
-RATE_MAX = 3.0
+RATE_MIN = 0.1                 # 游玩倍速：0.1 ~ 1.5（+/- 号步长 0.1；手输不受步长影响）
+RATE_MAX = 1.5
 RATE_STEP = 0.1
 
 
@@ -40,7 +40,7 @@ class PlayerSettings:
     mouse_sensitivity: float = 1.0        # 0.1 ~ 10
     unbounded_mouse: bool = False         # 无界鼠标：实际位置即判定位置
     renderer: str = "software"            # software / opengl
-    rate: float = 1.0                     # 游玩倍速 0.1 ~ 3.0x（每 0.1 一档）
+    rate: float = 1.0                     # 游玩倍速 0.1 ~ 1.5x（+/- 号 0.1 一档）
     autoplay: bool = False                # 自动播放（判定全 EXACT，分数倍率 -1x）
     music_volume: float = 1.0
     hit_volume: float = 0.6
@@ -60,7 +60,7 @@ class PlayerSettings:
         self.audio_latency_ms = min(5000.0, max(-5000.0, float(self.audio_latency_ms)))
         self.speed = round(min(SPEED_MAX, max(SPEED_MIN, float(self.speed))), 1)
         self.mouse_sensitivity = min(10.0, max(0.1, float(self.mouse_sensitivity)))
-        self.rate = round(min(RATE_MAX, max(RATE_MIN, float(self.rate))), 1)
+        self.rate = round(min(RATE_MAX, max(RATE_MIN, float(self.rate))), 3)
         self.music_volume = min(1.0, max(0.0, float(self.music_volume)))
         self.hit_volume = min(1.0, max(0.0, float(self.hit_volume)))
         self.player_name = (self.player_name or "Player")[:24]

@@ -130,6 +130,12 @@ def key_code(name: str) -> int:
     return pygame.K_UNKNOWN
 
 
+def _fmt_num(value: float) -> str:
+    """数字显示：去掉多余的 0（1.0 → ``1``、1.37 → ``1.37``、0.5 → ``0.5``）。"""
+    text = f"{float(value):.3f}".rstrip("0").rstrip(".")
+    return text or "0"
+
+
 class PlayerApp:
     """游玩器主程序（状态机 + 渲染 + 判定）。"""
 
@@ -664,7 +670,7 @@ class PlayerApp:
         ("music_volume", "音乐音量"),
         ("hit_volume", "打击音效音量"),
         ("renderer", "渲染后端（软件 / OpenGL）"),
-        ("rate", "倍速（0.1~3.0x）"),
+        ("rate", "倍速（0.1~1.5x）"),
         ("autoplay", "自动播放（Autoplay）"),
     )
     # 数字类选项（有 − / ● / + 三个按钮；点 ● 可以自定义输入）：字段名 -> (最小, 最大, 步进)
@@ -727,7 +733,7 @@ class PlayerApp:
             return "OpenGL（切换即生效）" if s.renderer == "opengl" else "软件"
         if key == "autoplay":
             return "开（判定全 EXACT · 分数倍率 ×-倍速^1.5）" if s.autoplay else "关"
-        return f"{s.rate:.1f}x（得分 ×{s.rate ** 1.5:.2f}）"
+        return f"{_fmt_num(s.rate)}x（得分 ×{s.rate ** 1.5:.2f}）"
 
     def _event_settings(self, event) -> None:
         if event.type == pygame.MOUSEWHEEL:
@@ -817,11 +823,15 @@ class PlayerApp:
         s.normalize()
 
     def _prompt_number(self, key: str) -> None:
-        """数字类选项的自定义输入（点 ● 或在选中行按回车）。"""
+        """数字类选项的自定义输入（点 ● 或在选中行按回车）。
+
+        **手输的数值不受档位影响**：只做范围夹取，不按步长对齐
+        （步长只决定 − / + 按钮每次动多少）。
+        """
         low, high, step = self.NUMERIC_ROWS[key]
         current = self._setting_number(key)
         entered = self._prompt(
-            f"{self._row_label()}：{low:g} ~ {high:g}（{step:g} 一档）",
+            f"{self._row_label()}：{low:g} ~ {high:g}（− / + 步长 {step:g}）",
             f"{current:g}",
             select_all=True,
         )
@@ -835,8 +845,7 @@ class PlayerApp:
         except ValueError:
             self.message = f"“{entered}”不是数字"
             return
-        value = min(high, max(low, round(value / step) * step))
-        self._set_setting_number(key, round(value, 3))
+        self._set_setting_number(key, round(min(high, max(low, value)), 3))
         self.message = ""
 
     def _adjust_setting(self, step: int) -> None:
@@ -1916,7 +1925,7 @@ class PlayerApp:
         assert self.judge is not None
         counts = self.judge.counts
         return (
-            f"准度 {self.judge.accuracy * 100:.3f}% · 倍速 {self.settings.rate:.1f}x",
+            f"准度 {self.judge.accuracy * 100:.3f}% · 倍速 {_fmt_num(self.settings.rate)}x",
             f"分数 {self.judge.score}（×{self.judge.score_multiplier:.2f}）",
             f"连击 {self.judge.combo}（最大 {self.judge.max_combo}）",
             "  ".join(f"{grade} {counts[grade]}" for grade in GRADES),
@@ -1999,10 +2008,10 @@ class PlayerApp:
         if self.settings.autoplay:
             assert self.judge is not None
             return (
-                f"倍速：{self.settings.rate:.1f}x"
+                f"倍速：{_fmt_num(self.settings.rate)}x"
                 f"（Autoplay · 分数倍率 ×{self.judge.score_multiplier:.2f}）"
             )
-        return f"倍速：{self.settings.rate:.1f}x"
+        return f"倍速：{_fmt_num(self.settings.rate)}x"
 
     def _result_accuracy_line(self) -> str:
         """准度（取代原来的“判定数 a / 总数”）。"""
