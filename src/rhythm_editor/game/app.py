@@ -2084,9 +2084,9 @@ class PlayerApp:
         if len(left) < 2:
             return
         y = MOUSE_PLANE_HEIGHT + 0.002
-        # 底图用 region_area 自带的「底边略不透明 + 越往上越透明 + 横向条纹」，
-        # alpha 再压一点，和软件渲染器的观感（约 0.4）保持一致
-        scene.region_shape(left, right, y, "region_area", (1.0, 1.0, 1.0, 0.9),
+        # 底图：整片**均匀**半透明的淡蓝（region_uniform 由 region_area.png 拉平 alpha 得到）
+        # ——空域的有效范围和它离判定线多远无关，不能画成「开头实、结尾虚」
+        scene.region_shape(left, right, y, "region_uniform", (1.0, 1.0, 1.0, 1.0),
                            layer="region_top")
         edge = self.texture_avg.get("region_edge") or (90, 220, 255, 255)
         for points in (left, right):

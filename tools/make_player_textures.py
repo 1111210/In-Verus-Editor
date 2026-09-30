@@ -12,8 +12,8 @@
   （中间纯白竖线、两侧纯淡蓝、无渐变、**完全不透明**）。
 * 空域：边界 / 填充 / 判定线各一张单像素图，另有一张带横向条纹的大图（区域底）。
 * 滑键：左右各一张箭头图（当前为全透明，保留接口）与一张主体图
-  （上半为渐变的直角三角形：两个顶点在左右边**中点**、**直角顶点朝前进方向**，
-  下半全透明）。
+  （直角三角形：**水平直角边贴着判定线**（贴图底边）且最不透明，直角顶点在前进方向
+  的下角，斜边向上渐隐）。
 * 鼠标点击：位置标识菱形、范围标识（中间红线、上下透明）、左边界标识。
 * 轨道：每条轨道默认图 / 按下图，另有 4 张边界高亮图。
 """
@@ -129,20 +129,19 @@ def region_area(width: int = 256, height: int = 256) -> np.ndarray:
 
 
 def slide_body(direction: int, width: int = 256, height: int = 128) -> np.ndarray:
-    """滑键主体：上半为渐变的直角三角形，下半全透明（direction=+1 右滑）。
+    """滑键主体：直角三角形（direction=+1 右滑）。
 
-    直角三角形的两个顶点落在左右边的**中点**，**直角顶点在滑动方向那一侧**：
-    右滑时直角顶点在右边中点（两条直角边沿中线和右边），左滑镜像。
+    贴图**底边就是判定线**：水平直角边贴着判定线且最不透明，直角顶点在滑动方向的
+    那一侧下角（右滑 = 右下角），斜边朝后上方渐隐；左滑镜像。
     """
     xs = np.linspace(0.0, 1.0, width, dtype=np.float32)[None, :]
-    top = np.linspace(1.0, 0.0, height, dtype=np.float32)[:, None]      # 1 = 图顶
+    top = np.linspace(1.0, 0.0, height, dtype=np.float32)[:, None]      # 1 = 图顶，0 = 判定线
     thick = xs if direction >= 0 else 1.0 - xs                          # 朝向侧 = 1
-    base = 0.5                                                          # 中线 = 两个顶点的 y
-    apex = base + base * thick                                          # 该列的上边界（朝向侧最高）
-    inside = (top >= base) & (top <= apex)
-    span = np.maximum(apex - base, 1e-3)
-    alpha = np.where(inside, (top - base) / span, 0.0)                   # 越靠斜边越实
-    alpha = np.clip(alpha * (0.35 + 0.65 * thick), 0.0, 1.0)             # 朝向侧更实
+    inside = top <= thick                                               # 该列从判定线填到 thick
+    span = np.maximum(thick, 1e-3)
+    # 底边（判定线）最实，斜边最虚；朝向侧整体更实一点
+    alpha = np.where(inside, 1.0 - 0.85 * (top / span), 0.0)
+    alpha = np.clip(alpha, 0.0, 1.0) * (0.85 + 0.15 * thick)
     color = np.broadcast_to(
         (np.array([110, 230, 160], dtype=np.float32) if direction >= 0
          else np.array([235, 210, 110], dtype=np.float32)),

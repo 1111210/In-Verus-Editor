@@ -200,6 +200,10 @@ class Scene3D:
         cached = self._textures.get(name)
         if cached is not None:
             return cached
+        if name == "region_uniform":                 # 空域底：均匀半透明（见下）
+            texture = self._uniform_region_texture()
+            self._textures[name] = texture
+            return texture
         path = os.path.join(self.texture_dir, f"{name}.png")
         if not os.path.isfile(path):
             return None
@@ -219,6 +223,36 @@ class Scene3D:
                 pass
         self._textures[name] = texture
         return texture
+
+    def _uniform_region_texture(self) -> Optional["Texture"]:
+        """空域底图：把 ``region_area.png`` 的「沿长度渐变」拉平。
+
+        原图的 alpha 从底边（判定线一侧）0.47 渐变到顶边 0，画出来就是同一片空域
+        **开头实、结尾虚**——那只是编辑器的画法，玩的时候会让玩家误判空域的有效范围。
+        这里把 alpha 变成整片均匀，只把原图的横纹当作很淡的明暗保留。
+        """
+        path = os.path.join(self.texture_dir, "region_area.png")
+        if not os.path.isfile(path):
+            return None
+        try:                                       # pragma: no cover - 需要 pygame/numpy
+            import numpy as np
+            import pygame
+
+            surface = pygame.image.load(path).convert_alpha()
+            width, height = surface.get_size()
+            color = np.transpose(pygame.surfarray.array3d(surface), (1, 0, 2)).astype(np.float32)
+            alpha = np.transpose(pygame.surfarray.array_alpha(surface), (1, 0)).astype(np.float32)
+            peak = float(alpha.max()) or 1.0
+            shade = (0.86 + 0.14 * (alpha / peak))[..., None]     # 横纹 -> 轻微明暗
+            rgba = np.empty((height, width, 4), dtype=np.uint8)
+            rgba[..., :3] = np.clip(color * shade, 0, 255).astype(np.uint8)
+            rgba[..., 3] = int(round(0.38 * 255.0))               # 整片均匀
+            texture = Texture("region-uniform")
+            texture.setup2dTexture(width, height, Texture.TUnsignedByte, Texture.FRgba)
+            texture.setRamImageAs(bytes(rgba.tobytes()), "RGBA")
+            return texture
+        except Exception:                          # pragma: no cover - 缺依赖/坏文件
+            return None
 
     # ------------------------------------------------------------------ 静态
     def build_static(self) -> None:
