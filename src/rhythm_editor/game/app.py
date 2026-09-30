@@ -29,6 +29,7 @@ from ..metronome import Metronome
 from . import settings as psettings
 from . import glview
 from . import textures
+from . import render3d
 from .judge import BREAK, EXACT, EXACT_MIXED, GRADES, NEAR, Judge
 from .scene import (
     K6_LEFT,
@@ -200,6 +201,7 @@ class PlayerApp:
         self.texture_avg: dict = {}          # 边界等窄条用平均色画正梯形
         self._tex_cache: dict = {}
         self._quad_cache: dict = {}          # 仿射（旋转 + 缩放）贴图缓存
+        self.scene3d = None                  # Panda3D 渲染层（游戏画面）
         self.gl_cost = 0.0                 # OpenGL 呈现耗时（指数平滑，太慢就回退）
         self.gl_frames = 0
         self.display_mode = "windowed"     # windowed / borderless / fullscreen
@@ -555,6 +557,23 @@ class PlayerApp:
             self.textures = {}
         self._tex_cache.clear()
         self._quad_cache.clear()
+
+    def _ensure_scene3d(self) -> bool:
+        """准备 Panda3D 渲染层（离屏 3D；游戏画面由它渲染）。"""
+        if self.scene3d is not None:
+            return True
+        if not render3d.available():
+            self.message = f"缺少 Panda3D 渲染层：{render3d.import_error()}"
+            return False
+        if os.environ.get("SDL_VIDEODRIVER", "").lower() == "dummy":
+            return False                          # 测试环境不建 GL 上下文
+        try:
+            self.scene3d = render3d.Scene3D(self.w, self.h, self.texture_dir)
+        except Exception as exc:                  # pragma: no cover - 依赖驱动
+            self.message = f"Panda3D 初始化失败：{exc}"
+            self.scene3d = None
+            return False
+        return True
         self.texture_avg = {}
         surface = self.textures.get("region_area")
         if surface is not None:
@@ -1647,8 +1666,18 @@ class PlayerApp:
     def _draw_play(self) -> None:
         assert self.chart is not None and self.judge is not None
         now_ms = self._now_ms()
-        self._draw_planes(now_ms)
-        self._draw_notes(now_ms)
+        if self._ensure_scene3d() and self.scene3d is not None:
+            # 3D 场景交给 Panda3D 渲染，UI（HUD / 飘字 / 暂停）再画在它上面
+            self.scene3d.resize(self.w, self.h)
+            frame = self._render_scene3d(now_ms)
+            if frame is not None:
+                self.screen.blit(frame, (0, 0))
+            else:
+                self._draw_planes(now_ms)
+                self._draw_notes(now_ms)
+        else:
+            self._draw_planes(now_ms)
+            self._draw_notes(now_ms)
         self._draw_mouse_marker()
         self._draw_popups()
         self._draw_hud(now_ms)
@@ -1890,6 +1919,73 @@ class PlayerApp:
                 self._draw_pattern(note, now_ms)
             elif isinstance(note, MouseClick):
                 self._draw_pattern(note, now_ms)
+
+    def _render_scene3d(self, now_ms: float):
+        """用 Panda3D 渲染一帧 3D 场景（轨道 / 判定线 / 物件），返回 pygame 画面。"""
+        assert self.chart is not None and self.scene3d is not None
+        scene = self.scene3d
+        scene.begin()
+        timing = self.chart.timing
+        for note in self.chart.all_notes():
+            if not (self._note_ahead(note, now_ms) and self._note_visible(note, now_ms)):
+                continue
+            if isinstance(note, LaneNote):
+                head = self._note_z(self._head_ms(note), now_ms)
+                if head < -0.4:
+                    continue
+                low, high = min(note.lane_start, note.lane_end), max(note.lane_start, note.lane_end)
+                x0 = K6_LEFT + low * LANE_WIDTH + LANE_WIDTH * 0.18
+                x1 = K6_LEFT + (high + 1) * LANE_WIDTH - LANE_WIDTH * 0.18
+                lane = min(LANE_COUNT, max(1, low + 1))
+                center_x = (x0 + x1) / 2.0
+                if note.is_hold:
+                    tail = self._note_z(timing.beat_to_song_ms(note.tail_beat), now_ms)
+                    body_center = (max(0.0, head) + max(0.0, tail)) / 2.0
+                    scene.quad(f"hold_body_{lane}", center_x, body_center, x1 - x0,
+                               max(0.2, abs(tail - head)), 0.0, (1, 1, 1, 0.75))
+                    head_size = max(0.25, self.settings.note_thickness)
+                    scene.quad(f"hold_head_{lane}", center_x, max(0.0, head) + head_size / 2.0,
+                               x1 - x0, head_size, 0.0)
+                else:
+                    thickness = (self.settings.multi_thickness if note.is_multi
+                                 else self.settings.note_thickness)
+                    scene.quad(f"tap_{lane}", center_x, max(0.0, head) + thickness / 2.0,
+                               x1 - x0, thickness, 0.0)
+            elif isinstance(note, MouseRegion):
+                z_head = self._note_z(timing.beat_to_song_ms(note.beat_start), now_ms)
+                z_tail = self._note_z(timing.beat_to_song_ms(note.beat_end), now_ms)
+                center = (max(0.0, z_head) + max(0.0, z_tail)) / 2.0
+                scene.quad("region_area", 0.0, center, MOUSE_LEGAL_WIDTH,
+                           max(0.2, abs(z_tail - z_head)), MOUSE_PLANE_HEIGHT, (1, 1, 1, 0.5))
+            elif isinstance(note, MouseSlide):
+                z = max(0.0, self._note_z(self._head_ms(note), now_ms))
+                direction = 1 if note.direction >= 0 else -1
+                name = "right" if direction > 0 else "left"
+                x_start = MOUSE_LEFT + note.x_start * MOUSE_LEGAL_WIDTH
+                x_end = MOUSE_LEFT + note.x_end * MOUSE_LEGAL_WIDTH
+                thick = self.settings.slide_thickness
+                center_y = MOUSE_PLANE_HEIGHT + thick / 2.0
+                scene.quad(f"slide_body_{name}", (x_start + x_end) / 2.0, z,
+                           abs(x_end - x_start), thick, center_y, (1, 1, 1, 1), vertical=True)
+                scene.quad(f"slide_arrow_{name}", x_end, z, thick, thick, center_y,
+                           (1, 1, 1, 1), vertical=True)
+            elif isinstance(note, MouseClick):
+                z = max(0.0, self._note_z(self._head_ms(note), now_ms))
+                lo, hi = note.x_range()
+                x0 = MOUSE_LEFT + min(lo, hi) * MOUSE_LEGAL_WIDTH
+                x1 = MOUSE_LEFT + max(lo, hi) * MOUSE_LEGAL_WIDTH
+                height = self.settings.click_thickness
+                center_y = MOUSE_PLANE_HEIGHT + height / 2.0
+                scene.quad("click_range", (x0 + x1) / 2.0, z, x1 - x0, height, center_y,
+                           (1, 1, 1, 1), vertical=True)
+                cx = MOUSE_LEFT + note.center * MOUSE_LEGAL_WIDTH
+                scene.quad("click_diamond", cx, z, height, height, center_y,
+                           (1, 1, 1, 1), vertical=True, angle=45.0)
+                scene.quad("click_edge", x0, z, height / 2.0, height, center_y,
+                           (1, 1, 1, 1), vertical=True)
+                scene.quad("click_edge", x1, z, height / 2.0, height, center_y,
+                           (1, 1, 1, 1), vertical=True, angle=180.0)
+        return scene.render()
 
     def _draw_lane_note(self, note: LaneNote, now_ms: float) -> None:
         """6K 单键 / 长按：用预设贴图绘制（贴图**底端**在判定边，到达判定线即判定）。"""
