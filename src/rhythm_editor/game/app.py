@@ -154,10 +154,35 @@ def _fmt_num(value: float) -> str:
     return text or "0"
 
 
+def _make_dpi_aware() -> None:
+    """Windows：**启动时**就把进程固定为 DPI 感知。
+
+    Panda3D 的 WGL 图形管线在建 GL 上下文时会自己把进程设成 DPI 感知；如果窗口已经
+    按"虚拟化像素"建好了（例如 125% 缩放下的 1536x864），这一下切换会让 Windows 把
+    已有窗口重新缩放——表现就是"进入谱面时窗口大小自己变了"。
+    先自己设好，SDL 与 Panda 看到的屏幕尺寸就一致了（都是物理像素）。
+    """
+    if os.name != "nt":
+        return
+    try:
+        import ctypes
+
+        user32 = ctypes.windll.user32
+        # -4 = DPI_AWARENESS_CONTEXT_PER_MONITOR_AWARE_V2（Win10 1703+）
+        if not user32.SetProcessDpiAwarenessContext(ctypes.c_void_p(-4)):
+            user32.SetProcessDPIAware()
+    except Exception:                                  # pragma: no cover - 老系统
+        try:
+            ctypes.windll.user32.SetProcessDPIAware()
+        except Exception:
+            pass
+
+
 class PlayerApp:
     """游玩器主程序（状态机 + 渲染 + 判定）。"""
 
     def __init__(self, paths: Optional[List[str]] = None, renderer: Optional[str] = None) -> None:
+        _make_dpi_aware()          # 必须在建任何窗口之前（否则 Panda 建 GL 时才切感知）
         pygame.init()
         pygame.display.set_caption(f"In Verus 游玩器 · {config.VERSION}")
         self.settings = psettings.load_settings()
@@ -166,12 +191,19 @@ class PlayerApp:
             psettings.save_settings(self.settings)
         self.gl_presenter = None
         self.renderer_name = "software"
-        self.screen = self._make_display(*self._fit_to_desktop(SCREEN_W, SCREEN_H))
+        # 屏幕尺寸 = 一切尺寸的依据：启动时读一次，然后把窗口最大化到屏幕尺寸，
+        # 之后的渲染表面 / 3D 缓冲 / 全屏切换 / 渲染后端切换都用这个尺寸
+        self.screen_size = self._desktop_size()
+        self.screen = self._make_display(*self.screen_size, fit=False)
+        self._maximize_now()
+        self.base_size = (self.w, self.h)          # 最大化后的客户区尺寸（通常 = 屏幕 - 任务栏）
         self.clock = pygame.time.Clock()
+        # 固定成 DPI 感知后，窗口是物理像素；字号按缩放比放大，观感和原来一致
+        self.ui_scale = self._dpi_scale()
         font = "microsoftyaheiui,arial"
-        self.f_big = pygame.font.SysFont(font, 40, bold=True)
-        self.f_mid = pygame.font.SysFont(font, 24, bold=True)
-        self.f_small = pygame.font.SysFont(font, 18)
+        self.f_big = pygame.font.SysFont(font, int(round(40 * self.ui_scale)), bold=True)
+        self.f_mid = pygame.font.SysFont(font, int(round(24 * self.ui_scale)), bold=True)
+        self.f_small = pygame.font.SysFont(font, int(round(18 * self.ui_scale)))
         self.scene = PlayerScene(Camera())
         self.audio = AudioPlayer()
         self.root = ROOT
@@ -221,7 +253,7 @@ class PlayerApp:
         self.gl_frames = 0
         self.display_mode = "windowed"     # windowed / borderless / fullscreen
         self.windowed_size: Optional[Tuple[int, int]] = None
-        self.maximized = False             # F10 最大化状态（非 Windows 下的退路用）
+        self.maximized = True              # 启动即最大化（见 _maximize_now / F10 可切换）
         # 窗口守护：记下"应该保持的样子"，外部（Panda 建 GL 上下文 / 窗口工具）挪动它
         # 就还原；用户自己拉伸/移动（SDL 会发窗口事件）则重新记基准
         self._window_ref: Optional[dict] = None
@@ -251,6 +283,62 @@ class PlayerApp:
         if desktop_w <= 0 or desktop_h <= 0:
             return width, height
         return min(width, max(960, desktop_w - 80)), min(height, max(600, desktop_h - 120))
+
+    def _desktop_size(self) -> Tuple[int, int]:
+        """启动时的屏幕尺寸（SDL 桌面尺寸；取不到就退回窗口默认值）。"""
+        try:
+            size = pygame.display.get_desktop_sizes()[0]
+            if size[0] > 0 and size[1] > 0:
+                return (int(size[0]), int(size[1]))
+        except Exception:                                  # pragma: no cover - 依赖驱动
+            pass
+        try:
+            info = pygame.display.Info()
+            if info.current_w > 0 and info.current_h > 0:
+                return (int(info.current_w), int(info.current_h))
+        except Exception:                                  # pragma: no cover - 依赖驱动
+            pass
+        return (SCREEN_W, SCREEN_H)
+
+    def _maximize_now(self) -> None:
+        """把窗口最大化到屏幕尺寸（Windows 用 SW_MAXIMIZE，其它平台铺满桌面）。"""
+        self.maximized = True
+        if os.name == "nt":
+            try:
+                import ctypes
+
+                hwnd = pygame.display.get_wm_info().get("window")
+                if hwnd:
+                    ctypes.windll.user32.ShowWindow(int(hwnd), 3)      # SW_MAXIMIZE
+                    # 等 SDL 收到 resize（最大化是异步的），再按实际客户区同步尺寸
+                    deadline = time.time() + 0.5
+                    while time.time() < deadline:
+                        pygame.event.pump()
+                        size = pygame.display.get_window_size()
+                        if size[0] > 0 and size != self.screen_size:
+                            break
+                        time.sleep(0.01)
+                    self._sync_display_size()
+                    return
+            except Exception:                              # pragma: no cover - 依赖系统
+                pass
+        self.screen = self._make_display(*self.screen_size, fit=False)
+        self._sync_display_size()
+
+    @staticmethod
+    def _dpi_scale() -> float:
+        """UI 缩放比 = 物理像素 / 逻辑像素（Windows 125% 缩放时是 1.25）。"""
+        if os.name != "nt":
+            return 1.0
+        try:
+            import ctypes
+
+            dpi = int(ctypes.windll.user32.GetDpiForSystem())
+            if dpi > 0:
+                return max(1.0, dpi / 96.0)
+        except Exception:                                  # pragma: no cover - 老系统
+            pass
+        return 1.0
 
     def _gl_self_check(self, surface: pygame.Surface) -> bool:
         """GL 自检帧：中央画白块后回读像素，全黑或 GL 报错就认为 GL 不能正常显示。"""
@@ -486,12 +574,13 @@ class PlayerApp:
         try:
             desktop_w, desktop_h = pygame.display.get_desktop_sizes()[0]
         except Exception:                              # pragma: no cover - 依赖驱动
-            desktop_w, desktop_h = SCREEN_W, SCREEN_H
+            desktop_w, desktop_h = self.base_size
         if self.maximized:
-            self.screen = self._make_display(desktop_w, max(600, desktop_h - 96))
+            self.screen = self._make_display(*self.screen_size, fit=False)
+            self._maximize_now()
             self.message = "已铺满桌面（F10 还原）"
         else:
-            self.screen = self._make_display(*(self.windowed_size or (SCREEN_W, SCREEN_H)))
+            self.screen = self._make_display(*self.base_size, fit=False)
             self.message = "已还原窗口（F10）"
         self._window_user_change = True
 
@@ -504,12 +593,12 @@ class PlayerApp:
             self.windowed_size = (self.w, self.h)
         self.display_mode = order[(order.index(self.display_mode) + 1) % len(order)]
         if self.display_mode == "windowed":
-            width, height = self.windowed_size or (SCREEN_W, SCREEN_H)
-            self.screen = self._make_display(width, height, mode="windowed")
+            # 回到窗口时也按屏幕尺寸（一切尺寸以屏幕尺寸为依据）
+            self.screen = self._make_display(*self.base_size, mode="windowed", fit=False)
             self.message = "已回到窗口（F11 无边框全屏）"
         else:
             self.screen = self._make_display(
-                self.w, self.h, mode=self.display_mode
+                *self.screen_size, mode=self.display_mode, fit=False
             )
             self.message = (
                 "已开启无边框全屏（F11 独占全屏）"
@@ -629,9 +718,20 @@ class PlayerApp:
         if self._restore_window_state(self._window_ref, "Panda3D 建场景时"):
             self.scene3d.resize(self.w, self.h)
         self.renderer_name = "panda3d"
-        print(f"[In Verus 游玩器] Panda3D 场景就绪 · 窗口 {self.w}x{self.h} · "
-              f"缓冲 {self.scene3d.buffer.getXSize()}x{self.scene3d.buffer.getYSize()}",
-              flush=True)
+        # 顺带用 Panda 自己的 API 报一次屏幕尺寸（文档：GraphicsPipe.getDisplayWidth）
+        pipe = getattr(self.scene3d.base, "pipe", None)
+        display = ""
+        if pipe is not None:
+            try:
+                dw, dh = int(pipe.getDisplayWidth()), int(pipe.getDisplayHeight())
+                if dw > 0 and dh > 0:
+                    display = f" · Panda 屏幕 {dw}x{dh}"
+            except Exception:                      # pragma: no cover - 依赖驱动
+                pass
+        print(f"[In Verus 游玩器] Panda3D 场景就绪 · 屏幕 {self.screen_size[0]}x"
+              f"{self.screen_size[1]} · 窗口客户区 {self.w}x{self.h} · 缓冲 "
+              f"{self.scene3d.buffer.getXSize()}x{self.scene3d.buffer.getYSize()}"
+              f"{display}", flush=True)
         return True
 
     def _drop_scene3d(self) -> None:

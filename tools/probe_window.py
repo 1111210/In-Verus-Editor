@@ -48,7 +48,9 @@ def main() -> int:
     args = [a for a in sys.argv[1:] if not a.startswith("--")]
     chart = args[0] if args else os.path.join(ROOT, "charts", "demo", "demo.json")
     app = PlayerApp([chart])
-    report(app, "启动")
+    report(app, "启动（应已按屏幕尺寸最大化）")
+    print(f"    屏幕尺寸 {app.screen_size} · 基准尺寸 {app.base_size} · "
+          f"最大化={app.maximized}", flush=True)
     if "--max" in sys.argv:                        # 先最大化，再看建 3D 会不会把它打回去
         app._maximize_window()
         for _ in range(20):
