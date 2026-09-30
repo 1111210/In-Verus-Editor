@@ -1999,21 +1999,22 @@ class PlayerApp:
                     tail = self._note_z(timing.beat_to_song_ms(note.tail_beat), now_ms)
                     body_center = (max(0.0, head) + max(0.0, tail)) / 2.0
                     scene.quad(f"hold_body_{lane}", center_x, body_center, x1 - x0,
-                               max(0.2, abs(tail - head)), 0.0, (1, 1, 1, 0.75))
+                               max(0.2, abs(tail - head)), 0.004, (1, 1, 1, 0.75))
                     head_size = max(0.25, self.settings.note_thickness)
                     scene.quad(f"hold_head_{lane}", center_x, max(0.0, head) + head_size / 2.0,
-                               x1 - x0, head_size, 0.0)
+                               x1 - x0, head_size, 0.006)
                 else:
                     thickness = (self.settings.multi_thickness if note.is_multi
                                  else self.settings.note_thickness)
                     scene.quad(f"tap_{lane}", center_x, max(0.0, head) + thickness / 2.0,
-                               x1 - x0, thickness, 0.0)
+                               x1 - x0, thickness, 0.006)
             elif isinstance(note, MouseRegion):
                 z_head = self._note_z(timing.beat_to_song_ms(note.beat_start), now_ms)
                 z_tail = self._note_z(timing.beat_to_song_ms(note.beat_end), now_ms)
                 center = (max(0.0, z_head) + max(0.0, z_tail)) / 2.0
                 scene.quad("region_area", 0.0, center, MOUSE_LEGAL_WIDTH,
-                           max(0.2, abs(z_tail - z_head)), MOUSE_PLANE_HEIGHT, (1, 1, 1, 0.5))
+                           max(0.2, abs(z_tail - z_head)), MOUSE_PLANE_HEIGHT + 0.006,
+                           (1, 1, 1, 0.5))
             elif isinstance(note, MouseSlide):
                 z = max(0.0, self._note_z(self._head_ms(note), now_ms))
                 direction = 1 if note.direction >= 0 else -1

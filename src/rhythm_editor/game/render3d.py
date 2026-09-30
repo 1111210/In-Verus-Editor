@@ -26,6 +26,7 @@ try:  # pragma: no cover - 依赖可选依赖
         GraphicsPipe,
         NodePath,
         PerspectiveLens,
+        SamplerState,
         Texture,
         TransparencyAttrib,
         WindowProperties,
@@ -121,7 +122,7 @@ class Scene3D:
         win_props = WindowProperties.size(width, height)
         self.buffer = self.base.graphicsEngine.make_output(
             self.base.pipe, "verus-3d", -100, props, win_props,
-            GraphicsPipe.BFRefuseWindow, None, None,
+            GraphicsPipe.BFRefuseWindow | GraphicsPipe.BFResizeable, None, None,
         )
         if self.buffer is None:  # pragma: no cover - 依赖驱动
             raise RuntimeError("Panda3D 独立离屏缓冲创建失败")
@@ -179,6 +180,9 @@ class Scene3D:
             return None
         if texture is not None:
             texture.setFormat(Texture.FRgba)
+            # 远处被强烈缩小 -> 不开 mipmap 会出现移动条纹 / 闪烁
+            texture.setMinfilter(SamplerState.FTLinearMipmapLinear)
+            texture.setMagfilter(SamplerState.FTLinear)
         self._textures[name] = texture
         return texture
 
@@ -200,19 +204,24 @@ class Scene3D:
                               self.lane_width, self.start_z, 0.0, (1, 1, 1, 1))
         # 判定线（6K 白 / 鼠标青）
         judge_y = 0.4
-        # 判定线：深度做得很薄（0.008），否则在这个取景下会变成一条 26px 宽的白带
-        self._static_quad("", 0.0, 0.004, width, 0.008, 0.0, (1, 1, 1, 1))
-        self._static_quad("", 0.0, 0.004, 1.0, 0.008, judge_y, (0.35, 0.86, 1.0, 1.0))
+        # 判定线：深度做得很薄（0.008），抬高 0.004 避免与平面共面闪烁
+        self._static_quad("", 0.0, 0.004, width, 0.008, 0.004, (1, 1, 1, 1))
+        self._static_quad("", 0.0, 0.004, 1.0, 0.008, judge_y + 0.004,
+                          (0.35, 0.86, 1.0, 1.0))
+        # 6K 平面左右边线（细卡片，避免和平面共面）
+        for edge in (-width / 2, width / 2):
+            self._static_quad("", edge, self.start_z / 2, 0.012, self.start_z, 0.004,
+                              (0.47, 0.63, 1.0, 0.9))
         # 鼠标平面渐变 + 合法区域边线
         gradient = getattr(self, "_gradient", None)
         if gradient is None:
             gradient = make_gradient_texture("mouse")
             self._gradient = gradient
-        self._static_quad("", 0.0, self.start_z / 2, width, self.start_z, judge_y,
+        self._static_quad("", 0.0, self.start_z / 2, width, self.start_z, judge_y + 0.002,
                           (1, 1, 1, 1), texture=gradient)
         for edge in (-0.5, 0.5):
-            self._static_quad("", edge, self.start_z / 2, 0.012, self.start_z, judge_y,
-                              (0.35, 0.86, 1.0, 0.8))
+            self._static_quad("", edge, self.start_z / 2, 0.012, self.start_z, judge_y + 0.004,
+                              (0.35, 0.86, 1.0, 0.9))
 
     def _static_quad(self, name: str, x: float, z: float, sx: float, sz: float, y: float,
                      color, texture=None) -> None:
@@ -322,10 +331,21 @@ class Scene3D:
         return pygame.transform.flip(surface, False, True)   # Panda 的行序是自下而上
 
     def resize(self, width: int, height: int) -> None:
+        """窗口尺寸变化：缓冲、回读纹理、镜头纵横比一起更新。"""
+        width, height = max(320, int(width)), max(240, int(height))
         if (width, height) == (self.width, self.height):
             return
         self.width, self.height = width, height
         self.buffer.set_size(width, height)
+        # 回读纹理要按新尺寸重建，否则 getRamImageAs 还是旧尺寸
+        try:                                    # 去掉旧的渲染纹理，避免重复 resize 越积越多
+            self.buffer.remove_render_texture(self.frame_texture)
+        except Exception:
+            pass
+        self.frame_texture = Texture("verus-frame")
+        self.frame_texture.setFormat(Texture.FRgba8)
+        self.buffer.add_render_texture(self.frame_texture, GraphicsOutput.RTMCopyRam)
+        self.set_camera()                       # 重设纵横比
 
     def close(self) -> None:  # pragma: no cover - 退出时调用
         try:
