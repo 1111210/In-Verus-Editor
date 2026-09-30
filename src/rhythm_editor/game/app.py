@@ -60,6 +60,21 @@ BG = (10, 10, 14)
 PANEL = (22, 22, 30)
 WHITE = (240, 240, 245)
 DIM = (150, 150, 165)
+
+# 用户自己动窗口时 SDL 会发这些事件（用来区分"用户改的"和"外部改的"）
+_WINDOW_EVENTS = tuple(
+    getattr(pygame, name)
+    for name in ("VIDEORESIZE", "WINDOWMOVED", "WINDOWRESIZED", "WINDOWSIZECHANGED",
+                 "WINDOWMAXIMIZED", "WINDOWRESTORED", "WINDOWMINIMIZED")
+    if hasattr(pygame, name)
+)
+# 「有人在操作窗口」的输入事件（用来区分用户自己拉伸窗口和程序/工具偷偷改）
+_INPUT_EVENTS = tuple(
+    getattr(pygame, name)
+    for name in ("MOUSEBUTTONDOWN", "MOUSEBUTTONUP", "MOUSEMOTION",
+                 "KEYDOWN", "KEYUP", "MOUSEWHEEL")
+    if hasattr(pygame, name)
+)
 ACCENT = (90, 170, 255)
 MOUSE_TINT = (90, 220, 255)
 K6_TINT = (120, 160, 255)
@@ -207,7 +222,12 @@ class PlayerApp:
         self.display_mode = "windowed"     # windowed / borderless / fullscreen
         self.windowed_size: Optional[Tuple[int, int]] = None
         self.maximized = False             # F10 最大化状态（非 Windows 下的退路用）
-        self._window_guard: Optional[Tuple[Optional[dict], int]] = None   # 建 3D 后盯窗口
+        # 窗口守护：记下"应该保持的样子"，外部（Panda 建 GL 上下文 / 窗口工具）挪动它
+        # 就还原；用户自己拉伸/移动（SDL 会发窗口事件）则重新记基准
+        self._window_ref: Optional[dict] = None
+        self._window_user_change = False
+        self._window_fix_logged = 0
+        self._last_input_at = 0.0                  # 最近一次鼠标/键盘输入的时刻
         self._prime_window()
         try:
             desktop = pygame.display.get_desktop_sizes()[0]
@@ -328,6 +348,7 @@ class PlayerApp:
         self.gl_cost = 0.0
         self.screen = self._make_display(self.w, self.h)
         self.message = f"{why}，已自动切回软件渲染"
+        self._window_user_change = True
         print(f"[In Verus 游玩器] {self.message}", flush=True)
 
     # ------------------------------------------------------------ 通用
@@ -359,8 +380,17 @@ class PlayerApp:
 
     def _events(self) -> None:
         for event in pygame.event.get():
+            if event.type in _INPUT_EVENTS:
+                self._last_input_at = time.perf_counter()
             if event.type == pygame.QUIT:
                 self.running = False
+            elif event.type in _WINDOW_EVENTS:
+                # 注意：SDL 对外部（Panda / 窗口工具）改窗口也会发这些事件，
+                # 所以这里**不能**当成"用户在动窗口"，只跟一下尺寸即可；
+                # 是不是用户自己在动，交给 _watch_window() 按输入活动判断。
+                if event.type == pygame.VIDEORESIZE:
+                    # 只跟随窗口尺寸（**不要**再 set_mode，否则最大化会被立刻打回原大小）
+                    self._sync_display_size(event.w, event.h)
             elif event.type == pygame.VIDEOEXPOSE:
                 self._draw()                     # 窗口重新暴露：立刻重画一帧，别留黑屏
                 self._present()
@@ -370,9 +400,6 @@ class PlayerApp:
                 self._maximize_window()
             elif event.type == pygame.KEYDOWN and event.key == pygame.K_F11:
                 self._toggle_fullscreen()
-            elif event.type == pygame.VIDEORESIZE:
-                # 只跟随窗口尺寸（**不要**再 set_mode，否则最大化会被立刻打回原大小）
-                self._sync_display_size(event.w, event.h)
             elif self.state == "menu":
                 self._event_menu(event)
             elif self.state == "settings":
@@ -414,6 +441,7 @@ class PlayerApp:
             else ("opengl" if self.gl_presenter is not None else "software")
         )
         self.message = f"渲染后端：{self.renderer_name}（F2 轮换）"
+        self._window_user_change = True            # 换后端可能重建窗口：重新记基准
         print(f"[In Verus 游玩器] 渲染后端：{self.renderer_name} · 窗口 {self.w}x{self.h}", flush=True)
 
     # ------------------------------------------------------ 窗口尺寸 / 全屏
@@ -450,6 +478,7 @@ class PlayerApp:
                 if hwnd:
                     # 3 = SW_MAXIMIZE，9 = SW_RESTORE
                     ctypes.windll.user32.ShowWindow(int(hwnd), 3 if self.maximized else 9)
+                    self._window_user_change = True
                     self.message = "已最大化窗口（F10 还原）" if self.maximized else "已还原窗口（F10）"
                     return
             except Exception:                          # pragma: no cover - 依赖系统
@@ -464,6 +493,7 @@ class PlayerApp:
         else:
             self.screen = self._make_display(*(self.windowed_size or (SCREEN_W, SCREEN_H)))
             self.message = "已还原窗口（F10）"
+        self._window_user_change = True
 
     def _toggle_fullscreen(self) -> None:
         """F11：窗口 → 无边框全屏 → 独占全屏 → 窗口 循环切换。"""
@@ -486,6 +516,7 @@ class PlayerApp:
                 if self.display_mode == "borderless"
                 else "已开启独占全屏（F11 回到窗口）"
             )
+        self._window_user_change = True
 
     # ------------------------------------------------------------ 菜单
     def _event_menu(self, event) -> None:
@@ -587,17 +618,16 @@ class PlayerApp:
             return False
         if os.environ.get("VERUS_SOFTWARE_3D"):
             return False
-        # 记下窗口原样：Panda3D 想在 Windows 上建 GL 上下文时**偶尔**会把前台窗口
-        # 动一下（尺寸 / 位置 / 取消最大化）。建完立刻核对并恢复，再盯半秒。
-        before = self._window_state()
+        # 记下窗口原样：Panda3D 在 Windows 上建 GL 上下文时**偶尔**会把前台窗口动一下
+        # （尺寸 / 位置 / 取消最大化）。建完由 _watch_window() 核对并还原。
+        self._window_ref = self._window_state()
         try:
             self.scene3d = render3d.Scene3D(self.w, self.h, self.texture_dir)
         except Exception as exc:                  # pragma: no cover - 依赖驱动
             self._fallback_renderer(f"Panda3D 初始化失败：{exc}")
             return False
-        if self._restore_window_state(before, "Panda3D 建场景时"):
+        if self._restore_window_state(self._window_ref, "Panda3D 建场景时"):
             self.scene3d.resize(self.w, self.h)
-        self._window_guard = (before, 20)          # 之后 20 帧继续盯着（异步改动）
         self.renderer_name = "panda3d"
         print(f"[In Verus 游玩器] Panda3D 场景就绪 · 窗口 {self.w}x{self.h} · "
               f"缓冲 {self.scene3d.buffer.getXSize()}x{self.scene3d.buffer.getYSize()}",
@@ -616,23 +646,38 @@ class PlayerApp:
 
     # ------------------------------------------------------ 窗口状态保护
     def _window_state(self) -> Optional[dict]:
-        """记录窗口的尺寸 / 位置 / 最大化状态（用来核对有没有被第三方动过）。"""
+        """记录窗口状态（用来核对有没有被第三方动过）。
+
+        注意区分两个东西：
+
+        * **窗口尺寸** = 客户区像素（``GetClientRect``）——这是"窗口有多大"；
+        * **渲染分辨率** = 我们真正画的那块表面 / 3D 缓冲（``self.screen`` 与 Panda buffer），
+          High-DPI 缩放下两者可能不一样，恢复时要以客户区为准，再把分辨率同步过去。
+        """
         try:
             size = pygame.display.get_window_size()
         except Exception:                          # pragma: no cover - 依赖驱动
             return None
-        state = {"size": (int(size[0]), int(size[1])), "outer": None, "maximized": False}
+        state = {"size": (int(size[0]), int(size[1])),        # SDL 逻辑尺寸
+                 "client": (int(size[0]), int(size[1])),      # 客户区像素（下面覆盖）
+                 "outer": None, "maximized": False,
+                 "render": tuple(self.screen.get_size()) if self.screen is not None else None}
         if os.name == "nt":
             try:
                 import ctypes
+                import ctypes.wintypes
 
                 hwnd = int(pygame.display.get_wm_info().get("window") or 0)
                 if hwnd:
-                    rect = ctypes.wintypes.RECT()
-                    ctypes.windll.user32.GetWindowRect(hwnd, ctypes.byref(rect))
-                    state["outer"] = (rect.left, rect.top,
-                                      rect.right - rect.left, rect.bottom - rect.top)
-                    state["maximized"] = bool(ctypes.windll.user32.IsZoomed(hwnd))
+                    user32 = ctypes.windll.user32
+                    outer = ctypes.wintypes.RECT()
+                    client = ctypes.wintypes.RECT()
+                    user32.GetWindowRect(hwnd, ctypes.byref(outer))
+                    user32.GetClientRect(hwnd, ctypes.byref(client))
+                    state["outer"] = (outer.left, outer.top,
+                                      outer.right - outer.left, outer.bottom - outer.top)
+                    state["client"] = (client.right - client.left, client.bottom - client.top)
+                    state["maximized"] = bool(user32.IsZoomed(hwnd))
             except Exception:                      # pragma: no cover - 依赖系统
                 pass
         return state
@@ -647,8 +692,10 @@ class PlayerApp:
         now = self._window_state()
         if now is None:
             return False
-        if now["size"] == state["size"] and now["maximized"] == state["maximized"]:
+        if (now["client"] == state["client"] and now["maximized"] == state["maximized"]
+                and now["render"] == state["render"]):
             return False
+        before = now
         try:
             import ctypes
 
@@ -658,11 +705,20 @@ class PlayerApp:
             user32 = ctypes.windll.user32
             if state["maximized"]:
                 user32.ShowWindow(hwnd, 3)                     # SW_MAXIMIZE
-            elif state["outer"] is not None:
-                left, top, width, height = state["outer"]
-                # SWP_NOZORDER | SWP_NOACTIVATE
-                user32.SetWindowPos(hwnd, 0, int(left), int(top), int(width), int(height),
-                                    0x0004 | 0x0010)
+            elif state["outer"] is not None and state["client"]:
+                left, top = state["outer"][0], state["outer"][1]
+                target_w, target_h = state["client"]
+                for _attempt in range(3):
+                    # 外框 = 客户区 + 边框（用当前窗口实际差值算，不写死）
+                    delta_w = now["outer"][2] - now["client"][0]
+                    delta_h = now["outer"][3] - now["client"][1]
+                    # SWP_NOZORDER | SWP_NOACTIVATE
+                    user32.SetWindowPos(hwnd, 0, int(left), int(top),
+                                        int(target_w + delta_w), int(target_h + delta_h),
+                                        0x0004 | 0x0010)
+                    now = self._window_state() or now
+                    if now["client"] == (target_w, target_h):
+                        break
             else:
                 return False
         except Exception:                          # pragma: no cover - 依赖系统
@@ -670,20 +726,43 @@ class PlayerApp:
         self._sync_display_size()
         if self.scene3d is not None:
             self.scene3d.resize(self.w, self.h)
-        print(f"[In Verus 游玩器] {why} 把窗口改成了 {now['size']}"
-              f"（{state['size']} 才是原样），已恢复", flush=True)
+        if self._window_fix_logged < 3:             # 只记前几次，别刷屏
+            self._window_fix_logged += 1
+            print(f"[In Verus 游玩器] {why} 把窗口客户区改成了 {before['client']}"
+                  f"（应当 {state['client']}），已恢复；渲染分辨率 "
+                  f"{before['render']} → {self.screen.get_size()}", flush=True)
         return True
 
     def _watch_window(self) -> None:
-        """建完 3D 的头几十帧继续核对窗口：驱动把改动推迟到下一帧也能兜住。"""
-        if not self._window_guard:
+        """全程盯住窗口：**不是用户自己改的**尺寸/位置变化就还原。
+
+        Panda3D 建 GL 上下文、或者系统上的窗口工具，偶尔会顺手把游戏窗口改小 / 挪走；
+        SDL 对外部改动也会发窗口事件，所以不能只看事件类型——这里按"最近 0.35 秒内
+        有没有鼠标/键盘输入、鼠标键有没有按住"判断是不是用户自己在动窗口。
+        """
+        if os.name != "nt":
             return
-        state, frames = self._window_guard
-        if self._restore_window_state(state, "Panda3D 运行中"):
-            self._window_guard = None
+        current = self._window_state()
+        if current is None:
             return
-        frames -= 1
-        self._window_guard = (state, frames) if frames > 0 else None
+        if self._window_ref is None:
+            self._window_ref = current
+            return
+        if (current["client"] == self._window_ref["client"]
+                and current["maximized"] == self._window_ref["maximized"]):
+            self._window_user_change = False
+            return
+        recent_input = (time.perf_counter() - self._last_input_at) < 0.35
+        try:
+            holding = any(pygame.mouse.get_pressed())
+        except Exception:                          # pragma: no cover - 依赖驱动
+            holding = False
+        if self._window_user_change or recent_input or holding:
+            self._window_user_change = False       # 用户自己在动窗口：接受并重记基准
+            self._window_ref = current
+            return
+        if self._restore_window_state(self._window_ref, "外部程序"):
+            self._window_ref = self._window_state()
 
     def _fallback_renderer(self, why: str) -> None:
         """Panda3D 不可用 -> OpenGL；OpenGL 也不可用 -> 软件（用户要求的回退链）。"""
@@ -2166,29 +2245,37 @@ class PlayerApp:
     def _draw_region3d(self, note: MouseRegion, now_ms: float) -> None:
         """Panda 路径的空域：按左右边界曲线采样，铺成**透视正确的梯形/弯边界**。
 
-        贴图与软件渲染器同一套（``region_fill`` 底色 + ``region_area`` 横纹渐变 +
-        ``region_edge`` 左右边线）；这里是 3D 网格，透视天然正确，也不会出现
-        「两端都被夹到远端、只剩一条小色块」的老问题。
+        只用**同一种颜色**填充（``region_fill`` 的色值），既没有贴图接缝，也不会
+        出现"开头实、结尾虚"；而且**只采样看得见的那一段**——超出轨道尽头的部分
+        如果也拿去采样，那些点会全挤在 ``z = START_Z`` 上让三角带自我重叠，
+        叠出来的 alpha 更实，看起来就是"结尾更不透明"。左右边线单独用窄带画。
         """
         assert self.chart is not None and self.scene3d is not None
         scene = self.scene3d
         timing = self.chart.timing
-        span = note.beat_end - note.beat_start
+        head_ms = timing.beat_to_song_ms(note.beat_start)
+        tail_ms = timing.beat_to_song_ms(note.beat_end)
+        near_ms = max(head_ms, now_ms)                       # 判定线这一端
+        far_ms = min(tail_ms, now_ms + self._visible_span_ms())   # 轨道尽头这一端
+        if far_ms - near_ms <= 1e-6:
+            return
         samples = 36
         left: List[Tuple[float, float]] = []
         right: List[Tuple[float, float]] = []
         for index in range(samples + 1):
-            beat = note.beat_start + span * index / samples
-            z = min(START_Z, max(0.0, self._note_z(timing.beat_to_song_ms(beat), now_ms)))
+            song_ms = near_ms + (far_ms - near_ms) * index / samples
+            beat = timing.song_ms_to_beat(song_ms)
+            z = min(START_Z, max(0.0, self._note_z(song_ms, now_ms)))
             left.append((MOUSE_LEFT + note.left_at(beat) * MOUSE_LEGAL_WIDTH, z))
             right.append((MOUSE_LEFT + note.right_at(beat) * MOUSE_LEGAL_WIDTH, z))
         if len(left) < 2:
             return
         y = MOUSE_PLANE_HEIGHT + 0.002
-        # 底图：整片**均匀**半透明的淡蓝（region_uniform 由 region_area.png 拉平 alpha 得到）
-        # ——空域的有效范围和它离判定线多远无关，不能画成「开头实、结尾虚」
-        scene.region_shape(left, right, y, "region_uniform", (1.0, 1.0, 1.0, 1.0),
-                           layer="region_top")
+        fill = self.texture_avg.get("region_fill") or (60, 110, 200, 104)
+        scene.region_shape(left, right, y, "", (
+            fill[0] / 255.0, fill[1] / 255.0, fill[2] / 255.0,
+            min(1.0, fill[3] / 255.0),
+        ))
         edge = self.texture_avg.get("region_edge") or (90, 220, 255, 255)
         for points in (left, right):
             scene.ribbon(points, y + 0.002, 0.006,

@@ -67,6 +67,21 @@ def main() -> int:
             if app.state == "play" and index > 90:
                 break
     report(app, "进入游玩后")
+    if "--poke" in sys.argv:                       # 模拟"外部程序"悄悄改窗口
+        import ctypes
+
+        hwnd = int(pygame.display.get_wm_info().get("window") or 0)
+        rect = window_rect()
+        if hwnd and rect:
+            ctypes.windll.user32.SetWindowPos(hwnd, 0, rect[0] + 40, rect[1] + 40,
+                                              rect[2] - 200, rect[3] - 120, 0x0014)
+            report(app, "被人偷偷改小后（还没跑帧）")
+            for _ in range(30):
+                app._events()
+                app._update(1 / 60.0)
+                app._draw()
+                app._present()
+            report(app, "跑 30 帧后（应当已还原）")
     base = getattr(app.scene3d, "base", None)
     if base is not None:
         print("    Panda 窗口数 =", base.graphicsEngine.getNumWindows(),
