@@ -39,7 +39,7 @@ python run_player.py --software            # 强制软件渲染（OpenGL 黑屏 
 玩法与判定规则见 [`docs/GAMEPLAY.md`](docs/GAMEPLAY.md)，
 游玩器实现与操作见 [`docs/PLAYER.md`](docs/PLAYER.md)。
 
-演示模式（两个平面叠加、只读、可滚动/缩放/播放）：
+演示模式（游玩器软件渲染的 3D 预览，只读，可随时暂停 / 继续）：
 
 ```bash
 python run_editor.py charts/demo/demo.json --demo
@@ -73,7 +73,7 @@ python -m unittest discover -s tests -t . -v
 
 ![放置预览](docs/images/placement.png)
 
-演示模式才把鼠标平面**叠加**到 6K 的中间四条轨道上（只读，支持滚动 / 缩放 / 播放暂停）：
+演示模式直接显示**游玩器的软件渲染画面**（不显示分数 / 判定 / 元数据，空格暂停 / 继续）：
 
 ![演示模式](docs/images/demo_mode.png)
 

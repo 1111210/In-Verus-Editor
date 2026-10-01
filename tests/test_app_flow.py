@@ -559,6 +559,90 @@ class AppFlowTest(unittest.TestCase):
         self.assertFalse(self.app.demo_mode)
         self.assertEqual(self.app.toolbar.winfo_manager(), "pack")
 
+    def _softview(self):
+        try:
+            from rhythm_editor.game import softview
+        except Exception:  # pragma: no cover - 没有 pygame
+            self.skipTest("没有 pygame")
+        if not softview.available():  # pragma: no cover
+            self.skipTest("没有 pygame")
+        return softview
+
+    def test_demo_mode_uses_player_software_render(self) -> None:
+        """演示模式贴的是游玩器软件渲染的帧（game/softview），不再画编辑器叠加视图。"""
+        softview = self._softview()
+        calls = []
+        original = softview.draw_frame
+
+        def spy(view, chart, now_ms, **kwargs):
+            calls.append((view, chart, now_ms, kwargs))
+            return original(view, chart, now_ms, **kwargs)
+
+        softview.draw_frame = spy  # type: ignore[assignment]
+        try:
+            self.app.set_demo_mode(True)
+            self.app._tick()
+        finally:
+            softview.draw_frame = original  # type: ignore[assignment]
+        try:
+            self.assertTrue(calls, "演示模式应当调用游玩器软件渲染")
+            view, chart, _now, kwargs = calls[0]
+            self.assertIs(chart, self.app.document.chart)
+            self.assertIs(view, self.app._demo_view)
+            self.assertIn("rate", kwargs)
+            # 画布上只有演示帧（编辑器场景已清空）
+            self.assertEqual(self.app.scene.item_count, 0)
+            self.assertIsNotNone(self.app._demo_image_id)
+            self.assertIn(self.app._demo_image_id, self.app.canvas.find_all())
+            self.assertTrue(self.app.canvas.find_withtag("demo"))
+            image = self.app.canvas.itemcget(self.app._demo_image_id, "image")
+            self.assertEqual(
+                int(self.app.root.tk.call("image", "width", image)),
+                int(self.app.view.layout.width),
+            )
+            self.assertEqual(
+                int(self.app.root.tk.call("image", "height", image)),
+                int(self.app.view.layout.height),
+            )
+        finally:
+            self.app.set_demo_mode(False)
+
+    def test_demo_mode_pause_resume_keeps_position(self) -> None:
+        """演示模式可以随时暂停 / 继续：暂停停在当前时刻，不吸附网格。"""
+        self._softview()
+        self.app.set_demo_mode(True)
+        timing = self.app.document.chart.timing
+        captured = 333.0                     # 故意取不在 0.25 拍网格上的歌曲位置
+        original_heard = self.app.audio.heard_position_ms
+        self.app.audio.heard_position_ms = lambda: captured  # type: ignore[assignment]
+        try:
+            self.app.play()
+            self.assertTrue(self.app.audio.is_playing)
+            self.app.pause()
+        finally:
+            self.app.audio.heard_position_ms = original_heard  # type: ignore[assignment]
+        self.assertFalse(self.app.audio.is_playing)
+        expected = timing.song_ms_to_beat(captured)
+        self.assertAlmostEqual(self.app.view.current_beat, expected, places=9)
+        steps = expected * 4                 # 网格：0.25 拍一格
+        self.assertNotAlmostEqual(steps, round(steps), places=6)
+        # 继续播放仍然可用
+        self.app.play()
+        self.assertTrue(self.app.audio.is_playing)
+        self.app.pause()
+        self.app.set_demo_mode(False)
+
+    def test_demo_mode_exit_restores_editor_scene(self) -> None:
+        self._softview()
+        self.app.set_demo_mode(True)
+        self.app._tick()
+        self.assertTrue(self.app.canvas.find_withtag("demo"))
+        self.app.set_demo_mode(False)
+        self.assertEqual(self.app.canvas.find_withtag("demo"), ())
+        self.app._tick()
+        self.assertGreater(self.app.scene.item_count, 10)
+        self.assertEqual(self.app.toolbar.winfo_manager(), "pack")
+
     # -------------------------------------------------------------- 设置 / 保存
     def test_settings_and_save(self) -> None:
         self.app.set_grid_division("3")

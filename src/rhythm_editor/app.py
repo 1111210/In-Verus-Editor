@@ -4,6 +4,7 @@ from __future__ import annotations
 
 import os
 import sys
+import time
 import tkinter as tk
 from tkinter import filedialog, messagebox, ttk
 from typing import Dict, Optional, Tuple
@@ -120,6 +121,15 @@ class EditorApp:
         self.hits = Metronome()
         self.hit_volume = 1.0
         self._hit_last_beat: Optional[float] = None
+        # 演示模式：画布上贴的是游玩器软件渲染的离屏帧（见 game/softview.py）
+        self._demo_view = None                 # 离屏软渲染视图（懒创建）
+        self._demo_photo: Optional[tk.PhotoImage] = None
+        self._demo_image_id: Optional[int] = None
+        self._demo_hint_id: Optional[int] = None
+        self._demo_size: Tuple[int, int] = (0, 0)
+        self._demo_mouse_x: Optional[float] = None
+        self._demo_dirty = True
+        self._demo_next_frame = 0.0
 
         # 画布区容器（右侧放竖向滚动条），画布是它的子控件
         self.body = ttk.Frame(self.root)
@@ -252,6 +262,11 @@ class EditorApp:
         self.audio.poll()          # 变速后端：提前准备后续音频窗口
         # 二级菜单展开时暂停画布重绘：否则画布每帧重画会把弹出的菜单"闪"掉
         if self.toolbar.is_menu_posted():
+            self._schedule_next_tick()
+            return
+        if self.demo_mode and self._draw_demo_frame():
+            self._sync_ui()
+            self._maybe_save_settings()
             self._schedule_next_tick()
             return
         state = self.render_state
@@ -419,6 +434,7 @@ class EditorApp:
     # ------------------------------------------------------------------ 事件
     def _on_configure(self, event) -> None:
         self.view.resize(event.width, event.height)
+        self._demo_dirty = True
 
     # ------------------------------------------------------------ 竖向滚动条
     def _on_scroll(self, *args) -> None:
@@ -465,6 +481,11 @@ class EditorApp:
 
     def _on_motion(self, event) -> None:
         self.toolbar.mark_interaction()
+        if self.demo_mode:
+            # 演示画面里的鼠标指针跟随画布上的鼠标位置
+            self._demo_mouse_x = float(event.x)
+            self._demo_dirty = True
+            return
         self.controller.on_motion(event.x, event.y)
         self._hover_status(event.x, event.y)
         self._sync_divider_cursor(event.x)
@@ -766,8 +787,15 @@ class EditorApp:
 
     def pause(self) -> None:
         timing = self.document.chart.timing
-        # 用听到的位置（已按倍速缩放延迟），保证暂停时的判定线与刚刚听到的一致
         heard = self.audio.heard_position_ms()
+        if self.demo_mode:
+            # 演示模式按播放器的方式暂停：停在当前时刻，不吸附网格
+            self.audio.pause()
+            self.view.current_beat = timing.song_ms_to_beat(heard)
+            self._demo_dirty = True
+            self.status("已暂停（演示模式：空格继续播放）")
+            return
+        # 用听到的位置（已按倍速缩放延迟），保证暂停时的判定线与刚刚听到的一致
         beat = self.view.snap_beat(timing.song_ms_to_beat(heard))
         self.audio.pause()
         self.view.set_beat(beat)
@@ -1103,24 +1131,147 @@ class EditorApp:
             return
         self.demo_mode = enabled
         self.render_state.demo = enabled
-        # 演示模式：鼠标平面叠加到 6K 的中间四条轨道；编辑器：左右两个独立区域
+        # 演示模式在画布上直接贴游玩器的软件渲染画面；LAYOUT_OVERLAY 保留给
+        # “没有 pygame”时的退路（编辑器自己的叠加绘制）
         self.view.set_layout_mode(config.LAYOUT_OVERLAY if enabled else config.LAYOUT_SPLIT)
         self.controller.cancel_pending()
         if enabled:
             self.document.clear_selection()
             self.toolbar.pack_forget()
             self.status_bar.pack_forget()
-            self.render_state.message = "演示模式：Tab 或 Esc 返回编辑 · 滚轮滚动 · Ctrl+滚轮缩放 · 空格播放"
+            self.vscroll.pack_forget()          # 播放器视图没有时间轴滚动条
+            self._start_demo_view()
+            self.render_state.message = ""
         else:
+            self._stop_demo_view()
             self.toolbar.pack(side="top", fill="x")
             self.status_bar.pack(side="bottom", fill="x")
+            self.vscroll.pack(side="right", fill="y", before=self.canvas)
             self.body.pack_forget()
             self.body.pack(side="top", fill="both", expand=True)
             self.render_state.message = ""
-        self.status("进入演示模式" if enabled else "退出演示模式")
+        self.status("进入演示模式（游玩器软件渲染）" if enabled else "退出演示模式")
 
     def toggle_demo(self) -> None:
         self.set_demo_mode(not self.demo_mode)
+
+    # ---------------------------------------------------------- 演示渲染
+    def _start_demo_view(self) -> None:
+        """进入演示模式：清空编辑画面，准备贴游玩器的软件渲染帧。"""
+        self.scene.clear()
+        self.canvas.delete("demo")
+        self._demo_photo = None
+        self._demo_image_id = None
+        self._demo_hint_id = None
+        self._demo_dirty = True
+        self._demo_next_frame = 0.0
+
+    def _stop_demo_view(self) -> None:
+        """退出演示模式：删掉演示画面，交回编辑器渲染。"""
+        self.canvas.delete("demo")
+        self._demo_photo = None
+        self._demo_image_id = None
+        self._demo_hint_id = None
+        self.scene.clear()          # 画布上已没有编辑图元，场景缓存同步清空
+        self._demo_dirty = True
+
+    def _draw_demo_frame(self) -> bool:
+        """演示模式：把游玩器软件渲染的一帧贴到画布上。
+
+        复用 ``game/softview.py``（也就是 PlayerApp 的软件绘制方法），
+        因此画面与游玩器完全一致，只是不画分数 / 判定 / 元数据等 HUD。
+        没有 pygame 时返回 ``False``，调用方回退到编辑器自己的叠加绘制。
+        """
+        try:
+            from .game import softview
+        except Exception as exc:  # pragma: no cover - 缺少 pygame
+            self.status(f"演示模式需要 pygame：{exc}")
+            return False
+        if not softview.available():
+            self.status("演示模式需要 pygame-ce（pip install -r requirements.txt）")
+            return False
+        width = max(2, int(self.view.layout.width))
+        height = max(2, int(self.view.layout.height))
+        now = time.perf_counter()
+        playing = self.audio.is_playing
+        if not self._demo_dirty and not playing and now < self._demo_next_frame:
+            return True                      # 暂停时复用上一帧
+        if self._demo_view is None or self._demo_size != (width, height):
+            try:
+                if self._demo_view is None:
+                    self._demo_view = softview.create_software_view(width, height)
+                else:
+                    softview.resize(self._demo_view, width, height)
+            except Exception as exc:  # pragma: no cover - 贴图缺失 / 无 pygame
+                self.status(f"演示模式初始化失败：{exc}")
+                self._demo_view = None
+                return False
+            self._demo_size = (width, height)
+            self._demo_photo = None
+            self._demo_dirty = True
+        mouse_norm, mouse_raw = 0.5, None
+        if self._demo_mouse_x is not None:
+            try:
+                mouse_norm, mouse_raw = softview.mouse_norm_at(
+                    self._demo_view, self._demo_mouse_x
+                )
+            except Exception:  # pragma: no cover - 投影异常
+                mouse_norm, mouse_raw = 0.5, None
+        started = time.perf_counter()
+        frame = softview.draw_frame(
+            self._demo_view,
+            self.document.chart,
+            self.audio.heard_position_ms(),
+            rate=self.audio.rate,
+            mouse_norm=mouse_norm,
+            mouse_raw=mouse_raw,
+        )
+        self._present_demo_frame(frame)
+        cost = time.perf_counter() - started
+        # 自适应帧率：一帧很快时按 60fps，慢时降到 30fps，保证界面不被拖住
+        self._demo_next_frame = now + (1.0 / 60.0 if cost < 0.010 else 1.0 / 30.0)
+        self._demo_dirty = False
+        return True
+
+    def _present_demo_frame(self, frame) -> None:
+        """把 pygame 画面转成 Tk 图像贴到画布（PPM 由 Tk 直接读取）。"""
+        import pygame
+
+        width, height = frame.get_size()
+        raw = pygame.image.tobytes(frame, "RGB")
+        ppm = b"P6\n%d %d\n255\n" % (width, height) + raw
+        if self._demo_photo is None:
+            self._demo_photo = tk.PhotoImage(
+                master=self.root, width=width, height=height
+            )
+            self._demo_image_id = self.canvas.create_image(
+                0, 0, anchor="nw", image=self._demo_photo, tags=("demo",)
+            )
+        # put 直接写入像素，比 configure(data=) 快近一倍（同一块图像内存）
+        self._demo_photo.put(ppm, to=(0, 0))
+        self.canvas.tag_raise(self._demo_image_id)
+        self._update_demo_hint(width, height)
+
+    def _update_demo_hint(self, width: int, height: int) -> None:
+        """左上角的小提示（属于编辑器外壳，不在游玩器画面里）。"""
+        text = (
+            "演示模式 · 空格 暂停 · Tab / Esc 返回编辑"
+            if self.audio.is_playing
+            else "演示模式 · 空格 播放 · Tab / Esc 返回编辑"
+        )
+        if self._demo_hint_id is None:
+            self._demo_hint_id = self.canvas.create_text(
+                12,
+                10,
+                anchor="nw",
+                text=text,
+                fill="#c8c8d8",
+                font=self.theme.font(self.theme.font_small),
+                tags=("demo",),
+            )
+        else:
+            self.canvas.itemconfigure(self._demo_hint_id, text=text)
+        self.canvas.tag_raise(self._demo_hint_id)
 
 
 def main(argv: Optional[list] = None) -> int:  # pragma: no cover - GUI 入口

@@ -108,7 +108,9 @@ y_note  = judgment_y − D(t) × 每秒像素
   6K 区域取 ``SPLIT_6K_RATIO = 0.25``；鼠标区域把 ``MOUSE_OVERFLOW_NORM = 0.45`` 的归一化
   余量分给两侧，于是显示范围是 ``-0.45 .. 1.45``；``norm_to_x()`` 按真实值映射，
   超出显示范围的部分由渲染层与命中测试裁剪到鼠标平面内（只影响显示，不改数据）。
-* `LAYOUT_OVERLAY`（演示模式）：`pane_mouse` 直接取中间四条轨道，鼠标平面叠加在 6K 上。
+* `LAYOUT_OVERLAY`（没有 pygame 时的演示退路）：`pane_mouse` 直接取中间四条轨道，
+  鼠标平面叠加在 6K 上。有 pygame 时演示模式改用 ``game/softview.py``：
+  离屏复用游玩器软件渲染，再把整帧贴到画布上。
 
 `ViewState.set_layout_mode()` 切换时会 `recompute()`；`lane_at()` 在 6K 区域之外返回 `None`，
 因此放置类工具天然不会把 6K 物件放到鼠标区域里。
