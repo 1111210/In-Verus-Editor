@@ -30,6 +30,17 @@ def make_chart() -> Chart:
 
 
 class ChartTests(unittest.TestCase):
+    def test_settings_have_no_grid_upper_limit(self) -> None:
+        """时间网格 / 横向辅助网格都不再有上限（只保留最小值）。"""
+        settings = EditorSettings(grid_division=256, horizontal_divisions=128)
+        settings.normalize()
+        self.assertEqual(settings.grid_division, 256)
+        self.assertEqual(settings.horizontal_divisions, 128)
+        settings = EditorSettings(grid_division=0, horizontal_divisions=-5)
+        settings.normalize()
+        self.assertEqual(settings.grid_division, config.GRID_DIVISION_MIN)
+        self.assertEqual(settings.horizontal_divisions, 0)
+
     def test_ids_unique_and_registered(self) -> None:
         chart = make_chart()
         ids = [chart.new_note_id("L") for _ in range(5)]

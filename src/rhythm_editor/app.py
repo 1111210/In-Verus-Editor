@@ -953,10 +953,9 @@ class EditorApp:
         settings = self.document.chart.settings
         value = simpledialog.askinteger(
             "自定义时间网格",
-            f"一拍细分为多少个音（{config.GRID_DIVISION_MIN} ~ {config.GRID_DIVISION_MAX}）：",
+            f"一拍细分为多少个音（不小于 {config.GRID_DIVISION_MIN}）：",
             initialvalue=settings.grid_division,
             minvalue=config.GRID_DIVISION_MIN,
-            maxvalue=config.GRID_DIVISION_MAX,
             parent=self.root,
         )
         if value:
@@ -971,10 +970,9 @@ class EditorApp:
         settings = self.document.chart.settings
         value = simpledialog.askinteger(
             "自定义横向辅助网格",
-            f"0..1 合法区域几等分（0 = 关闭，最大 {config.HORIZONTAL_DIVISION_MAX}）：",
+            "0..1 合法区域几等分（0 = 关闭）：",
             initialvalue=settings.horizontal_divisions,
             minvalue=0,
-            maxvalue=config.HORIZONTAL_DIVISION_MAX,
             parent=self.root,
         )
         if value is None:
@@ -1108,7 +1106,7 @@ class EditorApp:
         except ValueError:
             return
         settings = self.document.chart.settings
-        settings.grid_division = max(config.GRID_DIVISION_MIN, min(config.GRID_DIVISION_MAX, value))
+        settings.grid_division = max(config.GRID_DIVISION_MIN, value)
         self.document.dirty = True
         self.view.set_beat(self.view.current_beat)
         self.status(f"时间网格：一拍细分为 {settings.grid_division} 份")
@@ -1117,7 +1115,7 @@ class EditorApp:
         text = str(text).strip()
         value = 0 if text in ("", "关") else int(float(text))
         settings = self.document.chart.settings
-        settings.horizontal_divisions = max(0, min(config.HORIZONTAL_DIVISION_MAX, value))
+        settings.horizontal_divisions = max(0, value)
         self.document.dirty = True
         self.status(
             "横向辅助网格已关闭"

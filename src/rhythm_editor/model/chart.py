@@ -84,13 +84,9 @@ class EditorSettings:
         self.zoom_seconds = min(
             config.ZOOM_MAX_SECONDS, max(config.ZOOM_MIN_SECONDS, float(self.zoom_seconds))
         )
-        self.grid_division = max(
-            config.GRID_DIVISION_MIN,
-            min(config.GRID_DIVISION_MAX, int(self.grid_division)),
-        )
-        self.horizontal_divisions = max(
-            0, min(config.HORIZONTAL_DIVISION_MAX, int(self.horizontal_divisions))
-        )
+        # 没有上限：只保证时间网格至少 1 等分、横向网格不为负（0 = 关闭）
+        self.grid_division = max(config.GRID_DIVISION_MIN, int(self.grid_division))
+        self.horizontal_divisions = max(0, int(self.horizontal_divisions))
         # 允许负数：负延迟表示声音比软件位置更早，需要反向补偿
         self.audio_latency_ms = min(
             config.AUDIO_LATENCY_MAX_MS,

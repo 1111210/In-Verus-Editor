@@ -114,6 +114,21 @@ class EditorSmokeTest(unittest.TestCase):
         self.draw()
         self.assertNotIn("hgrid:0", self.scene._items)
 
+    def test_huge_grid_divisions_are_thinned(self) -> None:
+        """细分没有上限：特别密时自动抽稀 / 退化成拍线，图元数量保持有限。"""
+        self.chart.settings.grid_division = 100000
+        self.chart.settings.horizontal_divisions = 10000
+        self.view.set_beat(0.0)
+        self.draw()
+        grid = [k for k in self.scene._items if k.startswith(("grid6:", "gridm:"))]
+        hgrid = [k for k in self.scene._items if k.startswith("hgrid:")]
+        self.assertGreater(len(grid), 0)
+        self.assertLess(len(grid), 500, "时间网格应退化成拍线 / 小节线")
+        self.assertGreater(len(hgrid), 2)
+        self.assertLess(len(hgrid), 300, "横向网格应抽稀到有限条")
+        # 右边界那条线始终在
+        self.assertIn("hgrid:10000", self.scene._items)
+
     def test_grid_labels_show_bar_and_beat_numbers(self) -> None:
         """网格旁要同时标注小节号与绝对拍号（方便照抄填写数据）。"""
         self.view.set_beat(8.0)

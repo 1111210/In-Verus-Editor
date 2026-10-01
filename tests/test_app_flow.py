@@ -644,6 +644,19 @@ class AppFlowTest(unittest.TestCase):
         self.assertEqual(self.app.toolbar.winfo_manager(), "pack")
 
     # -------------------------------------------------------------- 设置 / 保存
+    def test_grid_settings_have_no_upper_limit(self) -> None:
+        """时间网格与横向辅助网格不再有上限，只保留最小值。"""
+        self.app.set_grid_division("128")
+        self.assertEqual(self.app.document.chart.settings.grid_division, 128)
+        self.app.set_grid_division("0")
+        self.assertEqual(
+            self.app.document.chart.settings.grid_division, config.GRID_DIVISION_MIN
+        )
+        self.app.set_horizontal_divisions("96")
+        self.assertEqual(self.app.document.chart.settings.horizontal_divisions, 96)
+        self.app.set_horizontal_divisions("-3")
+        self.assertEqual(self.app.document.chart.settings.horizontal_divisions, 0)
+
     def test_settings_and_save(self) -> None:
         self.app.set_grid_division("3")
         self.assertEqual(self.app.document.chart.settings.grid_division, 3)

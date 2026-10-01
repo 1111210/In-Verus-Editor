@@ -73,6 +73,9 @@ GROUP_COLORS = (
 )
 
 REGION_SAMPLES = 40
+# 横向辅助网格：线距小于这个值就抽稀（等分没有上限，不能逐条画）
+HGRID_MIN_STEP_PX = 8.0
+HGRID_LABEL_MIN_PX = 44.0
 
 
 @dataclass
@@ -375,8 +378,15 @@ class Renderer:
             return
         theme = self.theme
         layout = view.layout
-        divisions = chart.settings.horizontal_divisions
-        for i in range(divisions + 1):
+        divisions = max(1, int(chart.settings.horizontal_divisions))
+        # 等分数量没有上限：太密时隔若干条画一条，只保留有限条线与标签
+        spacing = layout.mouse_width / divisions
+        stride = max(1, int(math.ceil(HGRID_MIN_STEP_PX / max(1e-9, spacing))))
+        show_labels = spacing * stride >= HGRID_LABEL_MIN_PX
+        indices = list(range(0, divisions + 1, stride))
+        if indices[-1] != divisions:
+            indices.append(divisions)          # 右边界那条线始终画
+        for i in indices:
             x = view.norm_to_x(i / divisions)
             self.scene.line(
                 f"hgrid:{i}",
@@ -388,15 +398,16 @@ class Renderer:
                 width=1,
                 dash=(2, 6),
             )
-            self.scene.text(
-                f"hgrid-label:{i}",
-                x + 3,
-                layout.judgment_y - 16,
-                f"{i / divisions:.3g}",
-                fill=theme.text_dim,
-                font=theme.font(theme.font_small),
-                anchor="nw",
-            )
+            if show_labels:
+                self.scene.text(
+                    f"hgrid-label:{i}",
+                    x + 3,
+                    layout.judgment_y - 16,
+                    f"{i / divisions:.3g}",
+                    fill=theme.text_dim,
+                    font=theme.font(theme.font_small),
+                    anchor="nw",
+                )
 
     # ------------------------------------------------------------------ 网格
     def _draw_time_grid(
