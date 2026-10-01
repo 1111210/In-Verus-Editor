@@ -1099,6 +1099,42 @@ class PlayerAppSmokeTests(unittest.TestCase):
         self.assertLessEqual(min(ys), far_y + 8.0,
                              msg="最远的边就在轨道尽头，不会堆到平面外")
 
+    def test_software_slide_left_keeps_wide_side_on_screen_left(self) -> None:
+        """软件路径：贴图左边界绑屏幕左边 —— 左滑键的宽端必须在屏幕左侧。"""
+        import numpy as np
+
+        from rhythm_editor.model.notes import MouseSlide
+
+        pygame = self.pygame
+        app = self.app
+        app._enter_loading()
+        app._start_play()
+        app.scene3d = None                       # 强制走软件绘制
+        app.settings.rate, app.settings.speed = 1.0, 5.0
+        app.settings.slide_thickness = 0.3
+
+        def shot():
+            app.screen.fill((10, 10, 14))
+            app._draw_planes(0.0)
+            app._draw_notes(0.0)
+            return np.transpose(pygame.surfarray.array3d(app.screen), (1, 0, 2)).astype(int)
+
+        blank = shot()
+        for note, side in ((MouseSlide("MR", 0.0, 0.2, 0.8), "right"),
+                           (MouseSlide("ML", 0.0, 0.8, 0.2), "left")):
+            app.chart.mouse_notes = [note]
+            app.chart.invalidate_order()
+            frame = shot()
+            diff = np.abs(frame - blank).sum(axis=2)
+            cols = np.flatnonzero(diff.any(axis=0))
+            heights = diff[:, cols].sum(axis=0)
+            thickest = int(cols[int(np.argmax(heights))])
+            middle = (int(cols.min()) + int(cols.max())) // 2
+            if side == "right":
+                self.assertGreater(thickest, middle, "右滑键的宽端应在屏幕右侧")
+            else:
+                self.assertLess(thickest, middle, "左滑键的宽端应在屏幕左侧")
+
     def test_mouse_plane_has_blue_gradient_and_no_side_lines(self) -> None:
         """鼠标平面：不画边线；靠近判定线略蓝，向轨道尽头渐变为完全透明。"""
         from rhythm_editor.game.app import MOUSE_PLANE_HEIGHT

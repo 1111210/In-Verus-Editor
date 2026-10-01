@@ -2756,11 +2756,15 @@ class PlayerApp:
             height = max(0.006, self.settings.slide_thickness)
             start_x = MOUSE_LEFT + note.x_start * MOUSE_LEGAL_WIDTH
             end_x = MOUSE_LEFT + note.x_end * MOUSE_LEGAL_WIDTH
+            # 贴图的左边界要绑**屏幕左边**（不是"起点"）：左滑键的起点在右、
+            # 终点在左，若按起点绑就会把整张贴图左右镜像（Panda 路径按中心+宽度画，
+            # 本来就是绑屏幕左边的，两条路径必须一致）
+            left_x, right_x = min(start_x, end_x), max(start_x, end_x)
             body_quad = [
-                self._proj(start_x, MOUSE_PLANE_HEIGHT + height, z),
-                self._proj(end_x, MOUSE_PLANE_HEIGHT + height, z),
-                self._proj(end_x, MOUSE_PLANE_HEIGHT, z),
-                self._proj(start_x, MOUSE_PLANE_HEIGHT, z),
+                self._proj(left_x, MOUSE_PLANE_HEIGHT + height, z),
+                self._proj(right_x, MOUSE_PLANE_HEIGHT + height, z),
+                self._proj(right_x, MOUSE_PLANE_HEIGHT, z),
+                self._proj(left_x, MOUSE_PLANE_HEIGHT, z),
             ]
             if not self._blit_tex_quad(f"slide_body_{name}", body_quad):
                 return False
@@ -2768,11 +2772,12 @@ class PlayerApp:
             arrow = self._tex(f"slide_arrow_{name}")
             if arrow is not None and arrow.get_width() > 0:
                 inner = end_x - height * direction       # 箭头朝内延伸，宽度 = 厚度（不拉伸）
+                inner_left, inner_right = min(inner, end_x), max(inner, end_x)
                 arrow_quad = [
-                    self._proj(max(inner, end_x), MOUSE_PLANE_HEIGHT + height, z),
-                    self._proj(min(inner, end_x), MOUSE_PLANE_HEIGHT + height, z),
-                    self._proj(min(inner, end_x), MOUSE_PLANE_HEIGHT, z),
-                    self._proj(max(inner, end_x), MOUSE_PLANE_HEIGHT, z),
+                    self._proj(inner_left, MOUSE_PLANE_HEIGHT + height, z),
+                    self._proj(inner_right, MOUSE_PLANE_HEIGHT + height, z),
+                    self._proj(inner_right, MOUSE_PLANE_HEIGHT, z),
+                    self._proj(inner_left, MOUSE_PLANE_HEIGHT, z),
                 ]
                 self._blit_tex_quad(f"slide_arrow_{name}", arrow_quad, flip_x=direction < 0)
             return True
