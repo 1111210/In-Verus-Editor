@@ -23,6 +23,7 @@ import pygame  # noqa: E402
 
 from rhythm_editor.game import render3d  # noqa: E402
 from rhythm_editor.game.app import PlayerApp  # noqa: E402
+from rhythm_editor.game.scene import UNIT_SCALE  # noqa: E402
 from rhythm_editor.io.chart_io import load_chart  # noqa: E402
 from rhythm_editor.model.chart import Chart  # noqa: E402
 from rhythm_editor.model.notes import MouseSlide  # noqa: E402
@@ -40,7 +41,7 @@ def slide_demo(out_dir: str) -> int:
         MouseSlide("M2", 0.5, 0.85, 0.15),      # 向左
     ]
     app.chart.invalidate_order()
-    app.settings.slide_thickness = 0.35
+    app.settings.slide_thickness = 0.35 * UNIT_SCALE
     app.settings.rate = 1.0
     try:
         for name, ms in (("slide_near", -60.0), ("slide_mid", -300.0)):
@@ -68,8 +69,10 @@ def main() -> int:
     app.chart.invalidate_order()
     s = app.settings
     s.rate, s.speed, s.autoplay = 0.4, 2.6, True
-    s.side_lane_highlight, s.note_thickness, s.multi_thickness = True, 0.3, 0.3
-    s.slide_thickness, s.click_thickness = 0.1, 0.1
+    # 厚度都用世界单位（合法区宽 = 1）：这些数值是旧单位（合法区宽 1.4）下的 0.3 / 0.1
+    s.side_lane_highlight = True
+    s.note_thickness = s.multi_thickness = 0.3 * UNIT_SCALE
+    s.slide_thickness = s.click_thickness = 0.1 * UNIT_SCALE
     try:
         for now in times:
             path = os.path.join(out_dir, f"play_{now:07.0f}.png")

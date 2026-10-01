@@ -8,8 +8,9 @@
 
 * 单键 6 张（1~6 轨）：最下端白色，向上渐变为亮蓝色并变为适中透明，形成尾焰；
   两端的透明速度比中间慢。
-* 长按 12 张：开头 6 张（同单键但不透明、中部纯白竖线）+ 主体 6 张
-  （中间纯白竖线、两侧纯淡蓝、无渐变、**完全不透明**）。
+* 长按 12 张：开头 6 张（单键的画法但不透明、中部纯白竖线）+ 主体 6 张
+  （中间纯白竖线、两侧淡蓝、无渐变、**完全不透明**）。开头与主体共用
+  ``HOLD_BLUE``，接缝处颜色一致。
 * 空域：边界 / 填充 / 判定线各一张单像素图，另有一张带横向条纹的大图（区域底）。
 * 滑键：左右各一张箭头图（当前为全透明，保留接口）与一张主体图
   （直角三角形：**水平直角边贴着判定线**（贴图底边）且最不透明，直角顶点在前进方向
@@ -36,7 +37,10 @@ DEFAULT_OUT = os.path.join(ROOT, "assets", "textures", "player")
 # ---------------------------------------------------------------- 基本参数
 WHITE = np.array([255, 255, 255], dtype=np.float32)
 BRIGHT_BLUE = np.array([70, 160, 255], dtype=np.float32)
-PALE_BLUE = np.array([150, 200, 255], dtype=np.float32)
+# 长按共用的一种蓝：**开头与主体必须是同一个蓝**，否则接缝处颜色会突变
+# （开头是"白 -> 蓝"的渐变，它的顶端正好接在主体的底边上）。
+HOLD_BLUE = np.array([150, 200, 255], dtype=np.float32)
+PALE_BLUE = HOLD_BLUE                 # 旧名字，含义相同
 DARK_FILL = np.array([24, 26, 36], dtype=np.float32)
 PRESS_FILL = np.array([44, 86, 150], dtype=np.float32)
 EDGE_DIM = np.array([46, 48, 58], dtype=np.float32)
@@ -90,10 +94,14 @@ def tap_lane(width: int = 96, height: int = 160) -> np.ndarray:
 
 
 def hold_head_lane(width: int = 96, height: int = 96) -> np.ndarray:
-    """长按开头：同单键的颜色，但完全不透明；中部有纯白竖线接主体。"""
+    """长按开头：单键的画法（底部纯白、向上渐变），但**完全不透明**，且蓝色与主体一致。
+
+    顶端正好接在长按主体的底边上（``_mix(WHITE, HOLD_BLUE, 1.0) == HOLD_BLUE``），
+    所以接缝处没有色差；中部有纯白竖线接主体。
+    """
     xs = np.linspace(0.0, 1.0, width, dtype=np.float32)[None, :]
     top = np.linspace(1.0, 0.0, height, dtype=np.float32)[:, None]
-    color = _mix(WHITE[None, None, :], BRIGHT_BLUE[None, None, :], np.clip(top * 1.5, 0.0, 1.0))
+    color = _mix(WHITE[None, None, :], HOLD_BLUE[None, None, :], np.clip(top * 1.5, 0.0, 1.0))
     rgba = np.zeros((height, width, 4), dtype=np.float32)
     rgba[..., :3] = color
     rgba[..., 3] = 255.0
@@ -107,7 +115,7 @@ def hold_body_lane(width: int = 32, height: int = 128) -> np.ndarray:
     """长按主体：中间纯白竖线，两侧纯淡蓝背景，无渐变，**背景也完全不透明**。"""
     xs = np.linspace(0.0, 1.0, width, dtype=np.float32)[None, :]
     rgba = np.zeros((height, width, 4), dtype=np.float32)
-    rgba[..., :3] = PALE_BLUE[None, None, :]
+    rgba[..., :3] = HOLD_BLUE[None, None, :]
     rgba[..., 3] = 255.0                      # 主体背景不透明（用户要求）
     center = np.abs(xs - 0.5) < (0.5 / max(1.0, width / 6.0))
     rgba[:, center[0], :3] = WHITE

@@ -19,10 +19,18 @@ import math
 import struct
 from typing import Dict, List, Optional, Tuple
 
-# 轨道几何只有一处真相：game/scene.py 里的常量。以前这里写死了 0.25 / 12.0，
-# 后来把轨道加长加宽（0.35 / 26）时只改了 scene.py，于是 Panda 画出来的轨道
-# 还是旧尺寸 —— 按键看着就像"浮在轨道上方的一层"。
-from .scene import LANE_COUNT as _LANE_COUNT, LANE_WIDTH as _LANE_WIDTH, START_Z as _START_Z
+# 轨道几何只有一处真相：game/scene.py 里的常量（长度 / 宽度 / 高度都用同一套
+# 「合法区域宽 = 1」的单位）。这里写死过尺寸，只改 scene.py 时 Panda 画出来的
+# 轨道就变成了旧尺寸 —— 按键看着就像"浮在轨道上方的一层"。
+from .scene import (
+    LANE_COUNT,
+    LANE_WIDTH,
+    MOUSE_LEFT,
+    MOUSE_LEGAL_WIDTH,
+    MOUSE_PLANE_HEIGHT,
+    START_Z,
+    UNIT_SCALE,
+)
 
 _IMPORT_ERROR: Optional[str] = None
 try:  # pragma: no cover - 依赖可选依赖
@@ -204,8 +212,8 @@ class Scene3D:
     )
 
     def __init__(self, width: int, height: int, texture_dir: str,
-                 lane_count: int = _LANE_COUNT,
-                 lane_width: float = _LANE_WIDTH, start_z: float = _START_Z,
+                 lane_count: int = LANE_COUNT,
+                 lane_width: float = LANE_WIDTH, start_z: float = START_Z,
                  camera_height: float = 1.15, camera_back: float = 1.7,
                  pitch: float = 20.0, fov: float = 55.0, decorations: bool = True) -> None:
         if not _AVAILABLE:  # pragma: no cover - 由调用方先检查
@@ -264,7 +272,8 @@ class Scene3D:
         # 取景标定：以**构图贴近软件版**为目标，由 tools/fit_panda_composition2.py
         # 用 Scene3D.project()（官方 Lens.project，与渲染差 <1px）解析搜出，
         # 8 个角点平均误差 13.7px。
-        self.set_camera(pitch=20.0, fov=39.0, back=1.85, height=1.50)
+        self.set_camera(pitch=20.0, fov=39.0, back=1.85 * UNIT_SCALE,
+                        height=1.50 * UNIT_SCALE)
         self.build_static()
 
     # ------------------------------------------------------------------ 设置
@@ -355,8 +364,10 @@ class Scene3D:
         self._lane_state = None
         if not self.decorations:
             # 标定用：只画两条判定线（白 6K / 青鼠标），其余装饰都省掉
-            self._static_quad("", 0.0, 0.02, width, 0.04, 0.0, (1, 1, 1, 1), layer="line")
-            self._static_quad("", 0.0, 0.02, 1.0, 0.04, 0.4, (0.35, 0.86, 1.0, 1.0),
+            self._static_quad("", 0.0, 0.02 * UNIT_SCALE, width, 0.04 * UNIT_SCALE, 0.0,
+                              (1, 1, 1, 1), layer="line")
+            self._static_quad("", 0.0, 0.02 * UNIT_SCALE, MOUSE_LEGAL_WIDTH,
+                              0.04 * UNIT_SCALE, MOUSE_PLANE_HEIGHT, (0.35, 0.86, 1.0, 1.0),
                               layer="line")
             return
         # 6K 底面
@@ -365,15 +376,15 @@ class Scene3D:
         # 轨道贴图 / 侧轨高亮 / 按下高亮 / 边界贴图都由 set_lane_state() 建
         self.set_lane_state(frozenset(), False)
         # 判定线（6K 白 / 鼠标青）
-        judge_y = 0.4
+        judge_y = MOUSE_PLANE_HEIGHT
         # 深度测试已关闭（画家算法），所有东西都可以**正好落在自己的平面上**，
         # 不需要为了躲 z-fighting 抬高 —— 抬高在屏幕上等于整体平移几个像素，
         # 看起来就像"按键浮在轨道上方的一层"。
-        self._static_quad("", 0.0, 0.004, width, 0.008, 0.0, (1, 1, 1, 1), layer="line")
+        self._static_quad("", 0.0, 0.004 * UNIT_SCALE, width, 0.008 * UNIT_SCALE, 0.0,
+                          (1, 1, 1, 1), layer="line")
         # 鼠标判定线要**对准鼠标合法区域边界**（宽度 = MOUSE_LEGAL_WIDTH）
-        from .scene import MOUSE_LEFT, MOUSE_LEGAL_WIDTH
-        self._static_quad("", MOUSE_LEFT + MOUSE_LEGAL_WIDTH / 2.0, 0.004,
-                          MOUSE_LEGAL_WIDTH, 0.008, judge_y,
+        self._static_quad("", MOUSE_LEFT + MOUSE_LEGAL_WIDTH / 2.0, 0.004 * UNIT_SCALE,
+                          MOUSE_LEGAL_WIDTH, 0.008 * UNIT_SCALE, judge_y,
                           (0.35, 0.86, 1.0, 1.0), layer="line")
         # 鼠标平面渐变 + 合法区域边线
         gradient = getattr(self, "_gradient", None)
@@ -420,7 +431,7 @@ class Scene3D:
             if self.texture(name) is None:
                 name = f"lane_edge_{side}_highlight"
             self._lane_nodes.append(self._static_quad(
-                name, x, self.start_z / 2, 0.02, self.start_z, 0.0,
+                name, x, self.start_z / 2, 0.02 * UNIT_SCALE, self.start_z, 0.0,
                 (1, 1, 1, 1), layer="pressed" if pressed else "lane"))
 
     def _layer_of(self, layer: str) -> str:
@@ -493,8 +504,9 @@ class Scene3D:
         return ((ndc.get_x() + 1.0) * 0.5 * self.width,
                 (1.0 - ndc.get_y()) * 0.5 * self.height)
 
-    def judge_line_y(self, plane_y: float = 0.4) -> float:
+    def judge_line_y(self, plane_y: float = None) -> float:
         """判定线（某个平面在 z=0 处）的屏幕 y 坐标。"""
+        plane_y = MOUSE_PLANE_HEIGHT if plane_y is None else plane_y
         point = self.project(0.0, plane_y, 0.0)
         return point[1] if point else self.height * 0.5
 
@@ -505,7 +517,7 @@ class Scene3D:
             node.removeNode()
         self._extra.clear()
 
-    def bar_lines(self, zs, color=(70, 72, 84), half: float = 0.006) -> None:
+    def bar_lines(self, zs, color=(70, 72, 84), half: float = 0.006 * UNIT_SCALE) -> None:
         """6K 平面上的小节线：一批薄卡片（**只画小节线，不画节拍线**）。"""
         width = self.lane_count * self.lane_width
         for z in zs:
@@ -616,9 +628,8 @@ class Scene3D:
 
         `outline_x` 给定时，额外用边线画一个“实际位置”的指针（关闭无界鼠标且出界时）。
         """
-        from .scene import MOUSE_LEFT, MOUSE_LEGAL_WIDTH
         # 比例实测：0.26 宽 × 0.16 长 时在取景下读起来才是清晰的正三角形
-        length = 0.16
+        length = 0.16 * UNIT_SCALE
         width = MOUSE_LEGAL_WIDTH * 0.26
         x = MOUSE_LEFT + norm_x * MOUSE_LEGAL_WIDTH
         # 贴图“上”= 顶点；卡片铺在水平面里、绕法线转 180° 让顶点指向远处（屏幕上方）。

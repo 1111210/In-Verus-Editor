@@ -8,6 +8,10 @@
 * 相机比现在更靠后更高（back↑ height↑），轨道更长（START_Z ≥ 18）。
 
 用法::  python tools/fit_player_framing.py [宽 高]
+
+**注意**：世界单位后来改成了「鼠标合法区宽 = 1」（旧单位下是 1.4，见 ``scene.py``
+里的 ``UNIT_SCALE``）。本工具是在旧单位下把那组观感参数搜出来的，保留作为记录：
+现在再跑，它量到的都是新单位下的值，"相对于当前"的比值会全部接近 1。
 """
 
 from __future__ import annotations

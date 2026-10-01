@@ -26,7 +26,7 @@ os.environ.setdefault(
 
 import pygame  # noqa: E402
 
-from rhythm_editor.game import render3d  # noqa: E402
+from rhythm_editor.game import render3d, scene as scene_module  # noqa: E402
 from rhythm_editor.game.app import PlayerApp  # noqa: E402
 from rhythm_editor.io.chart_io import load_chart  # noqa: E402
 
@@ -43,7 +43,8 @@ def main() -> int:
     app.chart.invalidate_order()
     s = app.settings
     s.rate, s.speed, s.autoplay, s.side_lane_highlight = 0.4, 2.6, True, True
-    s.note_thickness = s.multi_thickness = 0.3
+    # 厚度用世界单位（合法区宽 = 1）：0.3 是旧单位下的取值
+    s.note_thickness = s.multi_thickness = 0.3 * scene_module.UNIT_SCALE
     scene = app.scene3d
     stages: "collections.OrderedDict[str, float]" = collections.OrderedDict()
 

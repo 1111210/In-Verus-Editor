@@ -59,6 +59,24 @@ class PlayerSettingsTests(unittest.TestCase):
         self.assertEqual(s.keys[0], "shift")
         self.assertEqual(s.keys[1], "a")     # 空串用默认键补上
 
+    def test_thickness_migrates_legacy_units(self) -> None:
+        """老存档里的厚度按旧单位（合法区宽 1.4）写，读进来一次性换算到新单位。"""
+        legacy = PS.PlayerSettings.from_dict({
+            "note_thickness": 0.35, "multi_thickness": 0.35,
+            "slide_thickness": 0.03, "click_thickness": 0.03,
+        })
+        self.assertAlmostEqual(legacy.note_thickness, 0.25, places=6)
+        self.assertAlmostEqual(legacy.multi_thickness, 0.25, places=6)
+        self.assertAlmostEqual(legacy.slide_thickness, 0.03 * PS.UNIT_SCALE, places=6)
+        # 缺 multi_thickness 的老存档跟随单键（也一起换算）
+        follow = PS.PlayerSettings.from_dict({"note_thickness": 0.7})
+        self.assertAlmostEqual(follow.multi_thickness, 0.7 * PS.UNIT_SCALE, places=6)
+        # 已经迁移过的存档 / 空存档不再换算
+        done = PS.PlayerSettings.from_dict({"units2": True, "note_thickness": 0.25})
+        self.assertAlmostEqual(done.note_thickness, 0.25, places=6)
+        self.assertAlmostEqual(PS.PlayerSettings.from_dict({}).note_thickness, 0.25, places=6)
+        self.assertTrue(PS.PlayerSettings().to_dict()["units2"])
+
     def test_roundtrip_via_file(self) -> None:
         with tempfile.TemporaryDirectory() as tmp:
             path = os.path.join(tmp, "player.json")

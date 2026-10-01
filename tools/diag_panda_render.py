@@ -141,7 +141,7 @@ def new_node_check(scene3d, out_dir: str = ".") -> None:
     print("\n[5d] 新增卡片的稳定性检查")
     scene3d.begin()
     a = pixels(scene3d.render())
-    line_row = int(scene3d.project(0.0, 0.4, 0.0)[1])
+    line_row = int(scene3d.project(0.0, soft_scene.MOUSE_PLANE_HEIGHT, 0.0)[1])
     for layer, z in (("bar", 3.0), ("marker", 3.0), ("line", 0.0), ("line", 3.0)):
         scene3d.begin()
         scene3d.quad("", 0.0, z, 1.4, 0.08, 0.03, (1, 0, 1, 1), layer=layer)
@@ -188,10 +188,11 @@ def calibrate(scene3d, out_dir: str = ".") -> None:
         pygame.image.save(mask_surface(instability),
                           os.path.join(out_dir, "diag_calib_unstable.png"))
     errors = []
-    for plane_y, label in ((0.0, "6K"), (0.4, "鼠标")):
+    for plane_y, label in ((0.0, "6K"), (soft_scene.MOUSE_PLANE_HEIGHT, "鼠标")):
         for z in (0.0, 0.5, 1.0, 1.5, 2.0, 3.0, 4.0, 5.0, 6.0, 7.0):
             scene3d.begin()
-            scene3d.quad("", 0.0, z, 1.4, 0.08, plane_y + 0.03, (1, 0, 1, 1), layer="line")
+            scene3d.quad("", 0.0, z, soft_scene.K6_WIDTH, 0.08 * soft_scene.UNIT_SCALE,
+                         plane_y + 0.03 * soft_scene.UNIT_SCALE, (1, 0, 1, 1), layer="line")
             marker = mask_of(pixels(scene3d.render()), empty)
             rows = np.flatnonzero(marker.any(axis=1))
             cols = np.flatnonzero(marker.any(axis=0))
@@ -282,7 +283,8 @@ def main() -> int:
         print(f"== Panda3D 渲染诊断（{width}x{height}）==")
         tap_z = lambda ms: app._note_z(0.0, ms)
         print(f"可视跨度：START_Z={scene3d.start_z}，判定线行 = "
-              f"6K {scene3d.judge_line_y(0.0):.1f} / 鼠标 {scene3d.judge_line_y(0.4):.1f}"
+              f"6K {scene3d.judge_line_y(0.0):.1f} / "
+              f"鼠标 {scene3d.judge_line_y(soft_scene.MOUSE_PLANE_HEIGHT):.1f}"
               f"（软件 {soft_scene.PlayerScene().judgment_lines(width, height)['mouse']:.1f}）")
         print("\n[-1] 贴图统计")
         texture_report(app.texture_dir, (
@@ -305,10 +307,14 @@ def main() -> int:
             row_profile(base, row, 0, width, f"6K 平面横切")
         print("    关键点投影：")
         for label, (px, py, pz) in (
-            ("6K左近", (-0.75, 0.0, 0.0)), ("6K右近", (0.75, 0.0, 0.0)),
-            ("6K左远", (-0.75, 0.0, 12.0)), ("6K右远", (0.75, 0.0, 12.0)),
-            ("鼠标左近", (-0.5, 0.4, 0.0)), ("鼠标右近", (0.5, 0.4, 0.0)),
-            ("鼠标左远", (-0.5, 0.4, 12.0)),
+            ("6K左近", (soft_scene.K6_LEFT, 0.0, 0.0)),
+            ("6K右近", (-soft_scene.K6_LEFT, 0.0, 0.0)),
+            ("6K左远", (soft_scene.K6_LEFT, 0.0, soft_scene.START_Z * 0.5)),
+            ("6K右远", (-soft_scene.K6_LEFT, 0.0, soft_scene.START_Z * 0.5)),
+            ("鼠标左近", (soft_scene.MOUSE_LEFT, soft_scene.MOUSE_PLANE_HEIGHT, 0.0)),
+            ("鼠标右近", (soft_scene.MOUSE_RIGHT, soft_scene.MOUSE_PLANE_HEIGHT, 0.0)),
+            ("鼠标左远", (soft_scene.MOUSE_LEFT, soft_scene.MOUSE_PLANE_HEIGHT,
+                        soft_scene.START_Z * 0.5)),
         ):
             point = scene3d.project(px, py, pz)
             shown = tuple(round(v, 1) for v in point) if point else None
@@ -393,10 +399,12 @@ def user_settings(app) -> None:
     app.settings.speed = 2.6
     app.settings.side_lane_highlight = True
     app.settings.autoplay = True
-    app.settings.note_thickness = 0.3
-    app.settings.multi_thickness = 0.3
-    app.settings.slide_thickness = 0.1
-    app.settings.click_thickness = 0.1
+    # 厚度用世界单位（合法区宽 = 1）：0.3 / 0.1 是旧单位下的取值
+    s = soft_scene.UNIT_SCALE
+    app.settings.note_thickness = 0.3 * s
+    app.settings.multi_thickness = 0.3 * s
+    app.settings.slide_thickness = 0.1 * s
+    app.settings.click_thickness = 0.1 * s
 
 
 def bar_and_timing_check(app, out_dir: str, frames: int = 120) -> None:
@@ -470,14 +478,14 @@ def note_coverage(app, out_dir: str, frames: int = 180, start_ms: float = 14000.
             if not (app._note_ahead(note, now) and app._note_visible(note, now)):
                 continue
             head = app._note_z(app._head_ms(note), now)
-            if head < -0.4:
+            if head < -0.4 * soft_scene.UNIT_SCALE:
                 continue
             low, high = min(note.lane_start, note.lane_end), max(note.lane_start, note.lane_end)
             x0 = soft_scene.K6_LEFT + low * soft_scene.LANE_WIDTH + soft_scene.LANE_WIDTH * 0.18
             x1 = soft_scene.K6_LEFT + (high + 1) * soft_scene.LANE_WIDTH - soft_scene.LANE_WIDTH * 0.18
             if note.is_hold:
                 tail = app._note_z(app.chart.timing.beat_to_song_ms(note.tail_beat), now)
-                z_lo, z_hi = max(0.0, head), max(0.2, max(0.0, tail))
+                z_lo, z_hi = max(0.0, head), max(0.2 * soft_scene.UNIT_SCALE, max(0.0, tail))
             else:
                 thick = (app.settings.multi_thickness if note.is_multi
                          else app.settings.note_thickness)

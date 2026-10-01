@@ -57,7 +57,7 @@ def main() -> int:
                     frame = scene3d.render()
                     k6_row, mouse_row = detect_lines(frame, width, height)
                     pred_k6 = scene3d.project(0.0, 0.0, 0.0)
-                    pred_mu = scene3d.project(0.0, 0.4, 0.0)
+                    pred_mu = scene3d.project(0.0, soft.MOUSE_PLANE_HEIGHT, 0.0)
                     if first:
                         print(f'  预测（自己的公式）：6K {pred_k6[1]:.0f} / 鼠标 {pred_mu[1]:.0f}')
                         first = False

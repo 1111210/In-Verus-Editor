@@ -163,18 +163,18 @@ def report() -> int:
         "EXACT / Exact / Near / Break",
     )
     item(
-        "游玩器 3D 布局（鼠标合法区 = 6K 中间四轨 = 单位×轨道加宽；鼠标平面高 0.4；"
+        "游玩器 3D 布局（鼠标合法区 = 6K 中间四轨 = 1 单位；鼠标平面高度；"
         "轨道起点 START_Z）",
-        abs(game_scene.MOUSE_LEGAL_WIDTH
-            - game_scene.UNIT * game_scene.TRACK_WIDTH_SCALE) < 1e-9
-        and abs(game_scene.MOUSE_PLANE_HEIGHT - 0.4) < 1e-9
+        abs(game_scene.MOUSE_LEGAL_WIDTH - 1.0) < 1e-9
+        and abs(game_scene.LANE_WIDTH - 0.25) < 1e-9
+        and abs(game_scene.MOUSE_PLANE_HEIGHT - 0.4 * game_scene.UNIT_SCALE) < 1e-9
         and abs(game_scene.PlayerScene.lane_span(1, 4)[1]
                 - game_scene.PlayerScene.lane_span(1, 4)[0]
                 - game_scene.MOUSE_LEGAL_WIDTH) < 1e-9
         and abs(game_scene.K6_WIDTH - 6 * game_scene.LANE_WIDTH) < 1e-9
         and game_scene.START_Z >= 12.0,
-        f"6K 总宽 {game_scene.K6_WIDTH:g} 单位 · 鼠标区宽 "
-        f"{game_scene.MOUSE_LEGAL_WIDTH:g} · 轨道长 {game_scene.START_Z:g}",
+        f"6K 总宽 {game_scene.K6_WIDTH:g} 单位（合法区宽 "
+        f"{game_scene.MOUSE_LEGAL_WIDTH:g}）· 轨道长 {game_scene.START_Z:g} 单位",
     )
     player_settings = game_settings.PlayerSettings()
     player_settings.normalize()

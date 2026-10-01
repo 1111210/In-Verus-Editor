@@ -53,10 +53,11 @@ def main() -> int:
             return total / len(references)
 
         best = None
+        s = soft.UNIT_SCALE            # 搜索范围按世界单位缩放（0.35 / 26 那套是旧单位）
         for fov in range(24, 61, 3):
             for pitch in range(10, 31, 2):
-                for back in [1.4 + 0.3 * i for i in range(9)]:
-                    for cam_height in [1.0 + 0.2 * i for i in range(8)]:
+                for back in [(1.4 + 0.3 * i) * s for i in range(9)]:
+                    for cam_height in [(1.0 + 0.2 * i) * s for i in range(8)]:
                         err = error(float(fov), float(pitch), back, cam_height)
                         if err is None:
                             continue

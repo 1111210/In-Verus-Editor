@@ -70,13 +70,13 @@ def main() -> int:
         print(f"6K 判定线：Panda 行 {k6_row} / 软件 {soft_lines['k6']:.0f}")
         print(f"鼠标判定线：Panda 行 {mouse_row} / 软件 {soft_lines['mouse']:.0f}")
 
-        point = scene3d.project(0.0, 0.4, 0.0)
+        point = scene3d.project(0.0, soft_scene.MOUSE_PLANE_HEIGHT, 0.0)
         print(f"世界→屏幕投影: {'OK ' + str(tuple(round(v, 1) for v in point)) if point else '不可用（HUD 锚点会退化到屏幕中心）'}")
 
         scene3d.begin()
         without = scene3d.render()
         scene3d.begin()
-        scene3d.mouse_marker(0.5, 0.4, 0.03)
+        scene3d.mouse_marker(0.5, soft_scene.MOUSE_PLANE_HEIGHT, 0.03 * soft_scene.UNIT_SCALE)
         with_marker = scene3d.render()
         diff = 0
         for index in range(0, width * height, 37):

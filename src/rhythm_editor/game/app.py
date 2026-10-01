@@ -5,7 +5,7 @@
 * 软件透视投影（:mod:`rhythm_editor.game.scene`），需要时可换成 OpenGL；
 * 判定核心 :class:`~rhythm_editor.game.judge.Judge`；音频复用编辑器的 ``AudioPlayer``
   （倍速 / 系统音频延迟补偿都已在编辑器里验证过）；
-* 鼠标平面在 6K 平面上方 0.4 单位、离镜头更近，看起来更宽；
+* 鼠标平面在 6K 平面上方（``MOUSE_PLANE_HEIGHT``）、离镜头更近，看起来更宽；
 * 第 0 拍在进入游玩 1.5 秒后到达判定平面（``LEAD_MS``）。
 """
 
@@ -33,6 +33,7 @@ from . import render3d
 from .judge import BREAK, EXACT, EXACT_MIXED, GRADES, NEAR, Judge
 from .scene import (
     K6_LEFT,
+    UNIT_SCALE,
     LANE_COUNT,
     LANE_WIDTH,
     MOUSE_LEFT,
@@ -50,7 +51,10 @@ os.environ.setdefault("SDL_VIDEO_CENTERED", "1")
 SCREEN_W, SCREEN_H = 1280, 800
 LEAD_MS = 1500.0
 END_DELAY_S = 3.0                   # 谱面结束后至少等这么久再进结算
+# 空域判定范围两边各放宽多少（**归一化横坐标**，合法区域宽 = 1，与 judge.py 一致）
 REGION_PAD = 0.01
+# 越过了判定线（z < 0）之后还继续绘制多长：过去得太多就该消失
+PAST_LINE_KEEP = 0.4 * UNIT_SCALE
 # 6K 按键左右各留多少轨宽（越小越"填满轨道"）。贴图两侧本来就有透明收边，
 # 这里再留一点点，免得相邻轨道的按键边缘贴在一起。
 NOTE_SIDE_INSET = 0.02
@@ -2135,7 +2139,7 @@ class PlayerApp:
         self._line(a, b, color, max(1, int(width)))
 
     def _mouse_plane_strip_z(self, strips: int) -> List[float]:
-        """鼠标平面渐变用的 z 分界（按屏幕高度均匀切，等价于 ``world_y=0.4``）。"""
+        """鼠标平面渐变用的 z 分界（按屏幕高度均匀切）。"""
         return self._plane_strip_z(strips, MOUSE_PLANE_HEIGHT)
 
     def _plane_strip_z(self, strips: int, world_y: float = 0.0) -> List[float]:
@@ -2324,12 +2328,13 @@ class PlayerApp:
                 continue
             # 边界是斜的窄条：用贴图的平均色按屏幕高度切片画正梯形（贴图窄条直接拉伸会糊成块）
             boundaries = self._plane_strip_z(10, 0.0)
+            edge_half = 0.008 * UNIT_SCALE          # 轨道边界贴图的半宽（世界单位）
             for za, zb in zip(boundaries, boundaries[1:]):
                 quad = [
-                    self._proj(x - 0.008, 0.0, za),
-                    self._proj(x + 0.008, 0.0, za),
-                    self._proj(x + 0.008, 0.0, zb),
-                    self._proj(x - 0.008, 0.0, zb),
+                    self._proj(x - edge_half, 0.0, za),
+                    self._proj(x + edge_half, 0.0, za),
+                    self._proj(x + edge_half, 0.0, zb),
+                    self._proj(x - edge_half, 0.0, zb),
                 ]
                 if color[3] >= 250:
                     self._quad(quad, color[:3])
@@ -2346,7 +2351,7 @@ class PlayerApp:
         # 鼠标平面（在上方、且更靠镜头）：靠近判定线处略微不透明的蓝色，
         # 向轨道尽头渐变为完全透明（不画边线）。整层压在 6K 平面内容之上。
         self._draw_mouse_plane_gradient()
-        # 判定平面：两条判定线（鼠标线在 6K 线上方 0.4 单位）
+        # 判定平面：两条判定线（鼠标线在 6K 线上方 MOUSE_PLANE_HEIGHT 处）
         k6_left = self._proj(K6_LEFT, 0.0, 0.0)
         k6_right = self._proj(K6_LEFT + width, 0.0, 0.0)
         m_left = self._proj(MOUSE_LEFT, MOUSE_PLANE_HEIGHT, 0.0)
@@ -2479,7 +2484,7 @@ class PlayerApp:
         inside = 0.0 <= self.mouse_raw <= 1.0
         outline = None if (self.settings.unbounded_mouse or inside) else self.mouse_raw
         self.scene3d.mouse_marker(
-            self.mouse_norm, MOUSE_PLANE_HEIGHT, 0.03, outline_x=outline
+            self.mouse_norm, MOUSE_PLANE_HEIGHT, 0.03 * UNIT_SCALE, outline_x=outline
         )
 
     def _render_scene3d(self, now_ms: float):
@@ -2512,7 +2517,7 @@ class PlayerApp:
             layer = f"note{self._layer_of(note)}"
             if isinstance(note, LaneNote):
                 head = self._note_z(self._head_ms(note), now_ms)
-                if head < -0.4:
+                if head < -PAST_LINE_KEEP:
                     continue
                 low, high = min(note.lane_start, note.lane_end), max(note.lane_start, note.lane_end)
                 x0 = K6_LEFT + low * LANE_WIDTH + LANE_WIDTH * NOTE_SIDE_INSET
@@ -2523,9 +2528,9 @@ class PlayerApp:
                     tail = self._note_z(timing.beat_to_song_ms(note.tail_beat), now_ms)
                     body_center = (max(0.0, head) + max(0.0, tail)) / 2.0
                     scene.quad(f"hold_body_{lane}", center_x, body_center, x1 - x0,
-                               max(0.2, abs(tail - head)), 0.0, (1, 1, 1, 1.0),
+                               max(0.2 * UNIT_SCALE, abs(tail - head)), 0.0, (1, 1, 1, 1.0),
                                layer=layer)
-                    head_size = max(0.25, self.settings.note_thickness)
+                    head_size = max(0.25 * UNIT_SCALE, self.settings.note_thickness)
                     scene.quad(f"hold_head_{lane}", center_x, max(0.0, head) + head_size / 2.0,
                                x1 - x0, head_size, 0.0, layer=layer)
                 else:
@@ -2604,7 +2609,7 @@ class PlayerApp:
         ))
         edge = self.texture_avg.get("region_edge") or (90, 220, 255, 255)
         for points in (left, right):
-            scene.ribbon(points, y, 0.006,
+            scene.ribbon(points, y, 0.006 * UNIT_SCALE,
                          (edge[0] / 255.0, edge[1] / 255.0, edge[2] / 255.0, 0.85),
                          layer="region_top")
 
@@ -2612,7 +2617,7 @@ class PlayerApp:
         """6K 单键 / 长按：用预设贴图绘制（贴图**底端**在判定边，到达判定线即判定）。"""
         assert self.chart is not None
         head_z = self._note_z(self._head_ms(note), now_ms)
-        if head_z < -0.4:
+        if head_z < -PAST_LINE_KEEP:
             return
         low, high = min(note.lane_start, note.lane_end), max(note.lane_start, note.lane_end)
         tex_index = min(LANE_COUNT, max(1, low + 1))
@@ -2644,7 +2649,7 @@ class PlayerApp:
                 mid_far = self._proj((x0 + x1) / 2, 0.0, max(0.0, tail_z))
                 self._line_scaled(mid_near, mid_far, WHITE, 2.4, min(near[2], far[2]))
             # 开头盖在主体上面（有意让一部分主体被开头覆盖）
-            head_top = max(0.0, head_z) + max(0.4, self.settings.note_thickness)
+            head_top = max(0.0, head_z) + max(0.4 * UNIT_SCALE, self.settings.note_thickness)
             if not self._blit_lane_tex(f"hold_head_{tex_index}", x0, x1,
                                        max(0.0, head_z), min(START_Z, head_top)):
                 self._quad(
@@ -2796,7 +2801,7 @@ class PlayerApp:
     def _draw_pattern(self, note: Note, now_ms: float) -> None:
         """滑键 / 鼠标点击按键：图案平行于判定平面，改用预设贴图。"""
         z = self._note_z(self._head_ms(note), now_ms)
-        if z < -0.4 or z > START_Z:
+        if z < -PAST_LINE_KEEP or z > START_Z:
             return
         z = max(0.0, z)
         if self.textures or self._tex("click_diamond") is not None:
@@ -2809,7 +2814,7 @@ class PlayerApp:
         if isinstance(note, MouseSlide):
             direction = 1 if note.direction >= 0 else -1
             name = "right" if direction > 0 else "left"
-            height = max(0.006, self.settings.slide_thickness)
+            height = max(0.006 * UNIT_SCALE, self.settings.slide_thickness)
             start_x = MOUSE_LEFT + note.x_start * MOUSE_LEGAL_WIDTH
             end_x = MOUSE_LEFT + note.x_end * MOUSE_LEGAL_WIDTH
             # 贴图的左边界要绑**屏幕左边**（不是"起点"）：左滑键的起点在右、
@@ -2838,7 +2843,7 @@ class PlayerApp:
                 self._blit_tex_quad(f"slide_arrow_{name}", arrow_quad, flip_x=direction < 0)
             return True
         assert isinstance(note, MouseClick)
-        height = max(0.006, self.settings.click_thickness)
+        height = max(0.006 * UNIT_SCALE, self.settings.click_thickness)
         x0 = MOUSE_LEFT + min(note.x_range()) * MOUSE_LEGAL_WIDTH
         x1 = MOUSE_LEFT + max(note.x_range()) * MOUSE_LEGAL_WIDTH
         middle = MOUSE_PLANE_HEIGHT + height / 2.0
@@ -2891,7 +2896,7 @@ class PlayerApp:
             # 滑动朝向的一侧更厚、不透明度更高：起点 -> 终点 **厚度与透明度都渐变**
             start_x = MOUSE_LEFT + note.x_start * MOUSE_LEGAL_WIDTH
             end_x = MOUSE_LEFT + note.x_end * MOUSE_LEGAL_WIDTH
-            thin = max(0.004, height * 0.25)
+            thin = max(0.004 * UNIT_SCALE, height * 0.25)
             # 切成细条逐条插值出真正的渐变；条数按屏幕宽度取，宽的时候不会看到色带
             span_px = abs(
                 self._proj(end_x, MOUSE_PLANE_HEIGHT, z)[0]
@@ -2939,8 +2944,8 @@ class PlayerApp:
             xb = x0 + (x1 - x0) * t1
             la = 1.0 - abs(2.0 * t0 - 1.0)        # 中点 1、两端 0 -> 菱形轮廓
             lb = 1.0 - abs(2.0 * t1 - 1.0)
-            half_a = max(0.0004, height / 2.0 * la)
-            half_b = max(0.0004, height / 2.0 * lb)
+            half_a = max(0.0004 * UNIT_SCALE, height / 2.0 * la)
+            half_b = max(0.0004 * UNIT_SCALE, height / 2.0 * lb)
             alpha = int(round(alpha_edge + (alpha_mid - alpha_edge) * (la + lb) / 2.0))
             self._alpha_quad(
                 [
@@ -2972,8 +2977,8 @@ class PlayerApp:
     def _mouse_marker_points(self, norm_x: float):
         """指针三角形的三个点（躺在鼠标平面内、矮胖）。"""
         x = MOUSE_LEFT + norm_x * MOUSE_LEGAL_WIDTH
-        length = 0.16                      # 沿 z 的长度（矮）
-        half_w = 0.13                      # 横向半宽（胖，是长度的 1.6 倍）
+        length = 0.16 * UNIT_SCALE         # 沿 z 的长度（矮）
+        half_w = 0.13 * UNIT_SCALE         # 横向半宽（胖，是长度的 1.6 倍）
         return (
             self._proj(x, MOUSE_PLANE_HEIGHT, length),
             self._proj(x - half_w, MOUSE_PLANE_HEIGHT, 0.0),

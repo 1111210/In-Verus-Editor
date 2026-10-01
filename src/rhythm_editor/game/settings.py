@@ -11,6 +11,8 @@ import os
 from dataclasses import asdict, dataclass, field
 from typing import Dict, List, Optional
 
+from .scene import UNIT_SCALE
+
 ENV_PLAYER_SETTINGS = "VERUS_PLAYER_SETTINGS"
 
 DEFAULT_KEYS: List[str] = ["shift", "a", "s", "d", "f", "space"]
@@ -29,11 +31,13 @@ class PlayerSettings:
 
     player_name: str = "Player"
     keys: List[str] = field(default_factory=lambda: list(DEFAULT_KEYS))
-    # 各物件的厚度（单位）：长按和空域没有厚度，所以只有下面四种
-    note_thickness: float = 0.35          # 单键
-    multi_thickness: float = 0.35         # 多轨单键
-    slide_thickness: float = 0.03         # 滑键图案高度
-    click_thickness: float = 0.03         # 鼠标点击按键图案高度
+    # 各物件的厚度（**世界单位**：鼠标合法区域宽 = 1，与编辑器一致，见 scene.py）。
+    # 长按和空域没有厚度，所以只有下面四种。默认值是旧单位（合法区宽 1.4）下的
+    # 0.35 / 0.03 换算过来的，屏幕上看到的厚度与以前完全相同。
+    note_thickness: float = 0.35 * UNIT_SCALE          # 单键
+    multi_thickness: float = 0.35 * UNIT_SCALE         # 多轨单键
+    slide_thickness: float = 0.03 * UNIT_SCALE         # 滑键图案高度
+    click_thickness: float = 0.03 * UNIT_SCALE         # 鼠标点击按键图案高度
     audio_latency_ms: float = 0.0         # 系统音频延迟（毫秒，可为负）
     speed: float = 1.0                    # 流速 1.0 ~ 10.0（0.1 一档）；可视毫秒 = 1500 / 流速
     side_lane_highlight: bool = False     # 6K 第 1 / 第 6 轨高亮
@@ -80,6 +84,7 @@ class PlayerSettings:
         self.normalize()
         result = asdict(self)
         result["renderer2"] = True          # 记录“已按新规则迁移过”
+        result["units2"] = True             # 记录“厚度已换算成新单位（合法区宽 = 1）”
         return result
 
     @property
@@ -91,13 +96,24 @@ class PlayerSettings:
     @classmethod
     def from_dict(cls, data: Optional[Dict[str, object]]) -> "PlayerSettings":
         data = data or {}
+        # 老存档里的厚度是按旧单位（合法区宽 1.4）写的：一次性换算到新单位，
+        # 这样玩家看到的厚度不变（见 to_dict 里的 units2 标记）。
+        def thickness(key: str, default: float) -> float:
+            if key not in data or data[key] is None:
+                return default
+            value = float(data[key])
+            return value if data.get("units2") else value * UNIT_SCALE
+
         obj = cls(
             player_name=str(data.get("player_name", "Player")),
             keys=list(data.get("keys", DEFAULT_KEYS)),  # type: ignore[arg-type]
-            note_thickness=float(data.get("note_thickness", 0.35)),
-            multi_thickness=float(data.get("multi_thickness", data.get("note_thickness", 0.35))),
-            slide_thickness=float(data.get("slide_thickness", 0.03)),
-            click_thickness=float(data.get("click_thickness", 0.03)),
+            note_thickness=thickness("note_thickness", 0.35 * UNIT_SCALE),
+            multi_thickness=thickness(
+                "multi_thickness",
+                thickness("note_thickness", 0.35 * UNIT_SCALE),   # 老存档缺这项时跟随单键
+            ),
+            slide_thickness=thickness("slide_thickness", 0.03 * UNIT_SCALE),
+            click_thickness=thickness("click_thickness", 0.03 * UNIT_SCALE),
             audio_latency_ms=float(data.get("audio_latency_ms", 0.0)),
             speed=float(data.get("speed", _speed_from_legacy(data.get("scroll_ms")))),
             side_lane_highlight=bool(data.get("side_lane_highlight", False)),
