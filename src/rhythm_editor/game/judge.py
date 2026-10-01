@@ -46,16 +46,22 @@ REGION_PAD = 0.01            # 空域 / 滑键判定范围两边各放宽
 REGION_INTERVAL_BEATS = 0.5  # 空域与长按每半拍一个判定区间
 
 
-def grade_for_offset(offset_ms: float) -> Optional[str]:
-    """``offset_ms = 敲击时刻 − 判定时刻``（正数表示晚）。返回 None 表示空敲。"""
-    if offset_ms > WINDOW_NEAR_MS or offset_ms < -EARLY_BREAK_MS:
+def grade_for_offset(offset_ms: float, rate: float = 1.0) -> Optional[str]:
+    """``offset_ms = 敲击时刻 − 判定时刻``（**歌曲毫秒**，正数表示晚）；None = 空敲。
+
+    **允许误差是真实时间，不随倍速变**：判定时钟按倍速推进，所以歌曲毫秒窗口
+    = 常量 × 倍速（倍速 0.4 时 25ms 的真实误差 = 10 歌曲毫秒）。
+    判定区间长度（半拍）仍然按谱面 BPM 的歌曲毫秒算，因此不同倍速判定数量一致。
+    """
+    scale = max(1e-6, float(rate))
+    if offset_ms > WINDOW_NEAR_MS * scale or offset_ms < -EARLY_BREAK_MS * scale:
         return None
     distance = abs(offset_ms)
-    if distance <= WINDOW_EXACT_MS:
+    if distance <= WINDOW_EXACT_MS * scale:
         return EXACT
-    if distance <= WINDOW_EXACT_MIXED_MS:
+    if distance <= WINDOW_EXACT_MIXED_MS * scale:
         return EXACT_MIXED
-    if distance <= WINDOW_NEAR_MS:
+    if distance <= WINDOW_NEAR_MS * scale:
         return NEAR
     return BREAK            # 提前 100~150ms：算 Break
 
@@ -178,7 +184,7 @@ class Judge:
                 continue
             judge_ms = self.timing.beat_to_song_ms(getattr(note, "head_beat", 0.0))
             offset = now_ms - judge_ms
-            if grade_for_offset(offset) is None:
+            if grade_for_offset(offset, self.rate) is None:
                 continue
             # 同时可判多个时取**判定时刻最靠前**的那个
             if best is None or judge_ms < best[0]:
@@ -186,7 +192,7 @@ class Judge:
         if best is None:
             return None      # 空敲：不消耗、无惩罚
         _, offset, state = best
-        grade = grade_for_offset(offset) or BREAK
+        grade = grade_for_offset(offset, self.rate) or BREAK
         state.done = True
         beat = getattr(state.note, "head_beat", 0.0)
         result = self._judge_result(state.note.id, grade, beat, offset)
@@ -209,7 +215,7 @@ class Judge:
                 continue
             judge_ms = self.timing.beat_to_song_ms(note.beat)
             offset = now_ms - judge_ms
-            if offset > WINDOW_NEAR_MS:
+            if offset > WINDOW_NEAR_MS * self.rate:
                 # 过了判定线 100ms：用记录到的最好等级收尾（完全没有则 Break）
                 grade = self._slide_best.get(note.id, BREAK)
                 state.done = True
@@ -218,7 +224,7 @@ class Judge:
             lo, hi = note.x_range()
             lo, hi = min(lo, hi) - REGION_PAD, max(lo, hi) + REGION_PAD
             if moved and self._segment_hits(lo, hi):
-                grade = grade_for_offset(offset)
+                grade = grade_for_offset(offset, self.rate)
                 if grade is not None:
                     self._slide_best[note.id] = better(
                         self._slide_best.get(note.id, BREAK), grade
@@ -339,14 +345,15 @@ class Judge:
             # 但最后一个区间允许提前 <=50ms 抬起，仍算 EXACT
             if not state.released:
                 return EXACT
-            if getattr(state, "is_last", False) and state.release_lead_ms <= 50.0:
+            if (getattr(state, "is_last", False)
+                    and state.release_lead_ms <= 50.0 * self.rate):
                 return EXACT
             return NEAR
         if state.outside_ms <= 0.0:
             return EXACT
-        if state.outside_ms <= 50.0:
+        if state.outside_ms <= 50.0 * self.rate:
             return EXACT
-        if state.outside_ms <= 100.0:
+        if state.outside_ms <= 100.0 * self.rate:
             return EXACT_MIXED
         return NEAR
 
@@ -391,7 +398,8 @@ class Judge:
                     )
                 continue
             judge_ms = self.timing.beat_to_song_ms(getattr(note, "head_beat", 0.0))
-            if now_ms - judge_ms > WINDOW_NEAR_MS and not isinstance(note, MouseSlide):
+            if (now_ms - judge_ms > WINDOW_NEAR_MS * self.rate
+                    and not isinstance(note, MouseSlide)):
                 state.done = True
                 self._judge_result(note.id, BREAK, getattr(note, "head_beat", 0.0))
         for state in self._intervals:
@@ -520,7 +528,7 @@ class Judge:
                 return self._judge_result(note.id, BREAK, start_beat)
             if all_up_ms is None:
                 return self._judge_result(note.id, EXACT, start_beat)
-            grace = (hold_end_ms - all_up_ms) <= 50.0
+            grace = (hold_end_ms - all_up_ms) <= 50.0 * self.rate
             if grace and end_ms >= all_up_ms - 1e-9:
                 return self._judge_result(note.id, EXACT, start_beat)
             if start_ms <= all_up_ms <= end_ms:
@@ -529,9 +537,9 @@ class Judge:
         if not seen_inside:
             return self._judge_result(note.id, BREAK, start_beat)
         outside = outside_seconds
-        if outside <= 50.0:
+        if outside <= 50.0 * self.rate:
             grade = EXACT
-        elif outside <= 100.0:
+        elif outside <= 100.0 * self.rate:
             grade = EXACT_MIXED
         else:
             grade = NEAR
@@ -550,9 +558,9 @@ class Judge:
         if not seen_inside:
             return BREAK
         if not held_all_time and outside_ms > 0.0:
-            return NEAR if outside_ms > 100.0 else NEAR
-        if outside_ms <= 50.0:
+            return NEAR if outside_ms > 100.0 * self.rate else NEAR
+        if outside_ms <= 50.0 * self.rate:
             return EXACT
-        if outside_ms <= 100.0:
+        if outside_ms <= 100.0 * self.rate:
             return EXACT_MIXED
         return NEAR

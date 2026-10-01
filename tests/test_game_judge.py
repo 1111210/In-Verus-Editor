@@ -44,6 +44,38 @@ class WindowTests(unittest.TestCase):
         self.assertIsNone(grade_for_offset(-151.0))
         self.assertIsNone(grade_for_offset(101.0))
 
+    def test_windows_are_real_time_not_song_time(self) -> None:
+        """允许误差按**真实时间**算：同一真实偏差在任何倍速下等级相同。"""
+        for rate in (0.4, 1.0, 1.5):
+            # 真实偏差 × 倍速 = 歌曲毫秒偏差
+            self.assertEqual(grade_for_offset(20.0 * rate, rate), EXACT)
+            self.assertEqual(grade_for_offset(20.0 * rate, rate), EXACT)
+            self.assertEqual(grade_for_offset(30.0 * rate, rate), EXACT_MIXED)
+            self.assertEqual(grade_for_offset(80.0 * rate, rate), NEAR)
+            self.assertEqual(grade_for_offset(-120.0 * rate, rate), BREAK)
+            self.assertIsNone(grade_for_offset(-200.0 * rate, rate))
+
+    def test_press_window_is_rate_independent(self) -> None:
+        """同一次真实时间上偏 40ms 的敲击，0.4x / 1.0x / 1.5x 都应判 Exact。"""
+        for rate in (0.4, 1.0, 1.5):
+            chart = make_chart([LaneNote("L1", 0, 0, 4.0)])
+            hit_ms = chart.timing.beat_to_song_ms(4.0)
+            judge = Judge(chart, rate=rate)
+            result = judge.on_press(hit_ms + 40.0 * rate, lane=0)   # 真实 +40ms
+            self.assertIsNotNone(result, f"rate={rate} 时不该算空敲")
+            self.assertEqual(result.grade, EXACT_MIXED, f"rate={rate} 时等级应一致")
+
+    def test_miss_window_is_rate_independent(self) -> None:
+        """过线 150 真实毫秒才判 Break；0.4x 下不能因为"歌曲毫秒只走了 60"而漏判。"""
+        for rate in (0.4, 1.0, 1.5):
+            chart = make_chart([LaneNote("L1", 0, 0, 4.0)])
+            hit_ms = chart.timing.beat_to_song_ms(4.0)
+            judge = Judge(chart, rate=rate)
+            judge.update(hit_ms + 90.0 * rate)
+            self.assertEqual(judge.counts[BREAK], 0, f"rate={rate} 时 90ms 还不该判 Break")
+            judge.update(hit_ms + 120.0 * rate)
+            self.assertEqual(judge.counts[BREAK], 1, f"rate={rate} 时 120ms 应判 Break")
+
 
 class ClickJudgeTests(unittest.TestCase):
     def test_input_type_must_match_note_type(self) -> None:
