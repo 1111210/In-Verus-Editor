@@ -258,13 +258,33 @@ class Scene3D:
         # 画家算法：整棵树关掉深度测试，层序完全由图层父节点的顺序决定
         self.root.setDepthTest(False)
         self.root.setDepthWrite(False)
-        self.build_static()
         # 取景标定：以**构图贴近软件版**为目标，由 tools/fit_panda_composition2.py
         # 用 Scene3D.project()（官方 Lens.project，与渲染差 <1px）解析搜出，
         # 8 个角点平均误差 13.7px。
-        self.set_camera(pitch=20.0, fov=39.0, back=1.85, height=1.50)
+        self.set_camera(pitch=19.0, fov=35.0, back=2.15, height=1.60)
+        # 鼠标平面的“运动起点”：投影行与 6K 平面 z=START_Z 一致 —— 蓝底正好收在
+        # 轨道远端那一条线上，不会冒到上面去（鼠标平面更靠近相机，同一 z 投影更高）
+        self.mouse_start_z = self._solve_mouse_start_z()
+        self.build_static()
 
     # ------------------------------------------------------------------ 设置
+    def _solve_mouse_start_z(self) -> float:
+        """二分求鼠标平面的起点 z，使其投影行 = 6K 平面 z=START_Z 的投影行。"""
+        target = self.project(0.0, 0.0, self.start_z)
+        if target is None:                       # pragma: no cover - 依赖相机
+            return self.start_z
+        low, high = 0.0, self.start_z
+        for _ in range(60):
+            mid = (low + high) / 2.0
+            row = self.project(0.0, 0.4, mid)
+            if row is None:                      # pragma: no cover
+                return self.start_z
+            if row[1] > target[1]:               # 屏幕更靠下 = 还不够远
+                low = mid
+            else:
+                high = mid
+        return (low + high) / 2.0
+
     def _make_buffer(self, width: int, height: int) -> None:
         """创建**独立**离屏缓冲（文档：makeOutput + BFRefuseWindow + 不共享 GSG）。
 
@@ -374,7 +394,8 @@ class Scene3D:
         if gradient is None:
             gradient = make_gradient_texture("mouse")
             self._gradient = gradient
-        self._static_quad("", 0.0, self.start_z / 2, width, self.start_z, judge_y,
+        bg_far = getattr(self, "mouse_start_z", self.start_z)
+        self._static_quad("", 0.0, bg_far / 2, width, bg_far, judge_y,
                           (1, 1, 1, 1), texture=gradient, layer="mouse_plane")
 
     def set_lane_state(self, pressed, side_highlight: bool = False,

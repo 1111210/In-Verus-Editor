@@ -1094,7 +1094,8 @@ class PlayerAppSmokeTests(unittest.TestCase):
         points, _color, _alpha = area[0]
         ys = [point[1] for point in points]
         near_y = app._proj(0.0, MOUSE_PLANE_HEIGHT, 0.0)[1]
-        far_y = app._proj(0.0, MOUSE_PLANE_HEIGHT, START_Z)[1]
+        # 鼠标平面的"轨道尽头"是 mouse_start_z（与 6K 平面同一条屏幕线），不是 START_Z
+        far_y = app._proj(0.0, MOUSE_PLANE_HEIGHT, app.mouse_start_z)[1]
         self.assertAlmostEqual(max(ys), near_y, delta=6.0, msg="最近的边贴在判定线一侧")
         self.assertLessEqual(min(ys), far_y + 8.0,
                              msg="最远的边就在轨道尽头，不会堆到平面外")
@@ -1300,5 +1301,34 @@ class PlayerAppSmokeTests(unittest.TestCase):
         finally:
             app.text = original
         self.assertTrue(any("FPS" in text for text in seen), "游玩界面要显示实时帧率")
+
+    def test_texture_averages_ready_after_loading(self) -> None:
+        """加载页就要算好贴图平均色。
+
+        软件路径的长按主体 / 轨道 / 边界都用平均色填多边形；以前只在"渲染回退"时才算，
+        正常进游戏时是空的，于是长按走了"切片重复贴图"的兜底分支，看起来是锯齿状。
+        """
+        app = self.app
+        app._load_textures()
+        for key in ("region_area", "hold_body_1", "hold_body_6",
+                    "lane_1_default", "lane_6_pressed"):
+            self.assertIsNotNone(app.texture_avg.get(key), f"{key} 的平均色缺失")
+
+    def test_mouse_plane_start_matches_k6_far_edge(self) -> None:
+        """鼠标平面的运动起点与 6K 平面 z=START_Z 在同一条屏幕线上（蓝底不会冒头）。"""
+        from rhythm_editor.game.app import MOUSE_PLANE_HEIGHT
+        from rhythm_editor.game.scene import START_Z
+
+        app = self.app
+        app._enter_loading()
+        app._start_play()
+        row_k6 = app._proj(0.0, 0.0, START_Z)[1]
+        row_mouse = app._proj(0.0, MOUSE_PLANE_HEIGHT, app.mouse_start_z)[1]
+        self.assertAlmostEqual(row_k6, row_mouse, delta=1.5,
+                               msg="鼠标平面背景远端应与 6K 轨道远端重合")
+        self.assertLess(app.mouse_start_z, START_Z,
+                        "鼠标平面更靠近相机，起点 z 应该更小")
+
+
 if __name__ == "__main__":
     unittest.main()

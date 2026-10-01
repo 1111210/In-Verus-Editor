@@ -802,6 +802,7 @@ class PlayerApp:
             self.textures = {}
         self._tex_cache.clear()
         self._quad_cache.clear()
+        self._compute_texture_averages()          # 软件路径的长条 / 轨道要用平均色
 
     def _ensure_scene3d(self) -> bool:
         """准备 Panda3D 渲染层（离屏 3D；游戏画面由它渲染）。"""
@@ -991,6 +992,15 @@ class PlayerApp:
             f"{why}，已回退到{'OpenGL' if self.renderer_name == 'opengl' else '软件'}渲染"
         )
         print(f"[In Verus 游玩器] {self.message}", flush=True)
+        self._compute_texture_averages()
+
+    def _compute_texture_averages(self) -> None:
+        """算好"平均色"贴图（软件绘制长条 / 轨道 / 边界时用它们填透视正确的多边形）。
+
+        以前只在**渲染回退**时才算，正常从加载页进游戏时 `texture_avg` 是空的，
+        于是长按主体走了"切片重复贴图"的兜底分支 —— 看起来就是锯齿状。现在在
+        加载阶段就算好（`_load_textures` 里调用）。
+        """
         self.texture_avg = {}
         surface = self.textures.get("region_area")
         if surface is not None:
@@ -1097,7 +1107,7 @@ class PlayerApp:
         return True
 
     def _blit_lane_tex(self, name: str, x0: float, x1: float, z_near: float, z_far: float,
-                       slices: int = 8, flip_x: bool = False) -> bool:
+                       slices: int = 0, flip_x: bool = False) -> bool:
         """把贴图按**透视正确**的方式铺在 6K 平面的一块区域里。
 
         直接 ``_blit_tex_quad`` 只能做仿射（旋转 + 缩放），而轨道平面上的矩形在屏幕上
@@ -1111,7 +1121,10 @@ class PlayerApp:
         tex_w, tex_h = surface.get_size()
         if tex_w < 1 or tex_h < 1:
             return False
-        slices = max(1, int(slices))
+        if slices <= 0:
+            # 分片数按屏幕高度自适应：每片约 5px，片内透视误差 <1px（不会出现锯齿）
+            height_px = abs(self._proj(x0, 0.0, z_far)[1] - self._proj(x0, 0.0, z_near)[1])
+            slices = int(max(2, min(40, round(height_px / 5.0))))
         for index in range(slices):
             za = z_near + (z_far - z_near) * index / slices          # 近端 -> 远端
             zb = z_near + (z_far - z_near) * (index + 1) / slices
@@ -2156,9 +2169,17 @@ class PlayerApp:
         """
         return max(1.0, self.settings.scroll_ms * self.settings.rate)
 
-    def _note_z(self, judge_ms: float, now_ms: float) -> float:
+    @property
+    def mouse_start_z(self) -> float:
+        """鼠标平面的运动起点 z（与 6K 平面 z=START_Z 同一条屏幕线）。"""
+        if self.scene3d is not None:
+            return float(getattr(self.scene3d, "mouse_start_z", START_Z))
+        return float(getattr(self.scene, "mouse_start_z", START_Z))
+
+    def _note_z(self, judge_ms: float, now_ms: float,
+                start_z: Optional[float] = None) -> float:
         span = self._visible_span_ms()
-        return PlayerScene.note_z(1.0 - (judge_ms - now_ms) / span)
+        return PlayerScene.note_z(1.0 - (judge_ms - now_ms) / span, start_z)
 
     def _draw_play(self) -> None:
         assert self.chart is not None and self.judge is not None
@@ -2358,8 +2379,9 @@ class PlayerApp:
     def _mouse_plane_overlay(self):
         """烘好的鼠标平面蓝底（含梯形掩码）；窗口尺寸不变时复用。"""
         width = LANE_COUNT * LANE_WIDTH
-        left_far = self._proj(K6_LEFT, MOUSE_PLANE_HEIGHT, START_Z)
-        right_far = self._proj(K6_LEFT + width, MOUSE_PLANE_HEIGHT, START_Z)
+        far_z = self.mouse_start_z          # 收在轨道远端那条线（不是原始的 START_Z）
+        left_far = self._proj(K6_LEFT, MOUSE_PLANE_HEIGHT, far_z)
+        right_far = self._proj(K6_LEFT + width, MOUSE_PLANE_HEIGHT, far_z)
         left_near = self._proj(K6_LEFT, MOUSE_PLANE_HEIGHT, 0.0)
         right_near = self._proj(K6_LEFT + width, MOUSE_PLANE_HEIGHT, 0.0)
         xs = (left_far[0], right_far[0], left_near[0], right_near[0])
@@ -2518,7 +2540,7 @@ class PlayerApp:
             elif isinstance(note, MouseRegion):
                 self._draw_region3d(note, now_ms)
             elif isinstance(note, MouseSlide):
-                z = max(0.0, self._note_z(self._head_ms(note), now_ms))
+                z = max(0.0, self._note_z(self._head_ms(note), now_ms, self.mouse_start_z))
                 direction = 1 if note.direction >= 0 else -1
                 name = "right" if direction > 0 else "left"
                 x_start = MOUSE_LEFT + note.x_start * MOUSE_LEGAL_WIDTH
@@ -2532,7 +2554,7 @@ class PlayerApp:
                 scene.quad(f"slide_arrow_{name}", x_end, z, thick, thick, center_y,
                            (1, 1, 1, 1), vertical=True, layer=layer)
             elif isinstance(note, MouseClick):
-                z = max(0.0, self._note_z(self._head_ms(note), now_ms))
+                z = max(0.0, self._note_z(self._head_ms(note), now_ms, self.mouse_start_z))
                 lo, hi = note.x_range()
                 x0 = MOUSE_LEFT + min(lo, hi) * MOUSE_LEGAL_WIDTH
                 x1 = MOUSE_LEFT + max(lo, hi) * MOUSE_LEGAL_WIDTH
@@ -2573,7 +2595,7 @@ class PlayerApp:
         for index in range(samples + 1):
             song_ms = near_ms + (far_ms - near_ms) * index / samples
             beat = timing.song_ms_to_beat(song_ms)
-            z = min(START_Z, max(0.0, self._note_z(song_ms, now_ms)))
+            z = min(self.mouse_start_z, max(0.0, self._note_z(song_ms, now_ms, self.mouse_start_z)))
             left.append((MOUSE_LEFT + note.left_at(beat) * MOUSE_LEGAL_WIDTH, z))
             right.append((MOUSE_LEFT + note.right_at(beat) * MOUSE_LEGAL_WIDTH, z))
         if len(left) < 2:
@@ -2704,7 +2726,7 @@ class PlayerApp:
         for index in range(samples + 1):
             song_ms = near_ms + (far_ms - near_ms) * index / samples
             beat = timing.song_ms_to_beat(song_ms)
-            z = min(START_Z, max(0.0, self._note_z(song_ms, now_ms)))
+            z = min(self.mouse_start_z, max(0.0, self._note_z(song_ms, now_ms, self.mouse_start_z)))
             left_x = MOUSE_LEFT + note.left_at(beat) * MOUSE_LEGAL_WIDTH
             right_x = MOUSE_LEFT + note.right_at(beat) * MOUSE_LEGAL_WIDTH
             left_points.append(self._proj(left_x, MOUSE_PLANE_HEIGHT, z))
@@ -2777,8 +2799,8 @@ class PlayerApp:
 
     def _draw_pattern(self, note: Note, now_ms: float) -> None:
         """滑键 / 鼠标点击按键：图案平行于判定平面，改用预设贴图。"""
-        z = self._note_z(self._head_ms(note), now_ms)
-        if z < -0.4 or z > START_Z:
+        z = self._note_z(self._head_ms(note), now_ms, self.mouse_start_z)
+        if z < -0.4 or z > self.mouse_start_z:
             return
         z = max(0.0, z)
         if self.textures or self._tex("click_diamond") is not None:
