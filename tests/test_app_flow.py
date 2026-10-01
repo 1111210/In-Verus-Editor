@@ -658,7 +658,7 @@ class AppFlowTest(unittest.TestCase):
         self.assertEqual(self.app.document.chart.settings.horizontal_divisions, 0)
 
     def test_show_past_notes_menu_toggle(self) -> None:
-        """视图菜单提供「显示更早的物件」，切换后可撤销。"""
+        """视图菜单提供「显示更早的物件」；视图设置不进撤销栈。"""
         view_menu = self.app.toolbar._menus["视图"]
         labels = [
             view_menu.entrycget(i, "label")
@@ -667,10 +667,28 @@ class AppFlowTest(unittest.TestCase):
         ]
         self.assertIn("显示更早的物件", labels)
         self.assertFalse(self.app.document.chart.settings.show_past_notes)
+        self.app.document.dirty = False
         self.app.toggle_show_past_notes()
         self.assertTrue(self.app.document.chart.settings.show_past_notes)
+        self.assertFalse(self.app.document.can_undo(), "视图设置不应产生撤销记录")
+        self.assertFalse(self.app.document.dirty, "视图设置不应标记谱面已修改")
         self.app.undo()
-        self.assertFalse(self.app.document.chart.settings.show_past_notes)
+        self.assertTrue(self.app.document.chart.settings.show_past_notes, "撤销不应回退视图设置")
+
+    def test_editor_settings_changes_are_not_undoable(self) -> None:
+        """视图 / 编辑器设置（含网格、缩放）与谱面无关：不进撤销栈、不标记已修改。"""
+        app = self.app
+        app.document.dirty = False
+        app.toggle_side_lane_highlight()
+        app.toggle_hit_sound()
+        app.set_metronome("bar")
+        app.set_grid_division("8")
+        app.set_horizontal_divisions("6")
+        before = app.view.zoom_seconds
+        app.zoom(1 / config.ZOOM_STEP)
+        self.assertNotEqual(app.view.zoom_seconds, before)
+        self.assertFalse(app.document.can_undo(), "编辑器设置不应产生撤销记录")
+        self.assertFalse(app.document.dirty, "编辑器设置不应标记谱面已修改")
 
     def test_settings_and_save(self) -> None:
         self.app.set_grid_division("3")

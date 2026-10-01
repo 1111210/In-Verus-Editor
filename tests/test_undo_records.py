@@ -94,22 +94,21 @@ class UndoRecordTests(unittest.TestCase):
 
         self.assert_roundtrip(document, change_timing)
 
-        def change_settings() -> None:
-            def _apply() -> None:
-                document.chart.settings.grid_division = 7
-                document.chart.settings.audio_latency_ms = -45.0
+    def test_editor_settings_are_not_undoable(self) -> None:
+        """视图 / 编辑器设置与谱面无关：不进撤销栈，也不被撤销带走。"""
+        document = make_document()
+        self.assertFalse(document.can_undo())
 
-            document.apply("改设置", _apply)
+        # 设置改动不产生撤销记录
+        document.chart.settings.grid_division = 7
+        document.chart.settings.show_past_notes = True
+        self.assertFalse(document.can_undo(), "编辑器设置不应产生撤销记录")
 
-        # 设置不进谱面文件，所以这里比较 settings 本身（撤销 / 重做照样要还原）
-        before = document.chart.settings.to_dict()
-        change_settings()
-        after = document.chart.settings.to_dict()
-        self.assertNotEqual(before, after, "编辑应当有可检测的改变")
+        # 撤销谱面改动（元数据）时也不会顺带回退设置
+        document.apply("改元数据", lambda: setattr(document.chart.metadata, "title", "改了"))
         document.undo()
-        self.assertEqual(document.chart.settings.to_dict(), before)
-        document.redo()
-        self.assertEqual(document.chart.settings.to_dict(), after)
+        self.assertEqual(document.chart.settings.grid_division, 7)
+        self.assertTrue(document.chart.settings.show_past_notes)
 
     def test_records_only_touch_changed_notes(self) -> None:
         """1000 物件里改一个物件：记录规模只与改动量有关（不是整谱）。"""

@@ -369,10 +369,8 @@ class EditorApp:
         """视图菜单：关闭 / 小节音 / 节拍音。"""
         if mode not in METRONOME_LABELS:
             return
-        self.document.apply(
-            "切换节拍音",
-            lambda: setattr(self.document.chart.settings, "metronome", mode),
-        )
+        # 编辑器设置与谱面无关：直接改值，不进撤销栈
+        self.document.chart.settings.metronome = mode
         self._metronome_last_beat = None
         if mode == MODE_OFF:
             self.status("节拍音已关闭")
@@ -878,7 +876,7 @@ class EditorApp:
             settings.hit_volume = float(result.get("hit_volume", settings.hit_volume))
             settings.normalize()
 
-        self.document.apply("修改编辑器设置", _apply)
+        _apply()          # 编辑器设置：不进撤销栈
         self.audio.latency_ms = self.document.chart.settings.audio_latency_ms
         self._apply_volumes()
         self.view.set_beat(self.view.current_beat)
@@ -904,10 +902,7 @@ class EditorApp:
         """音效菜单：开关打击音效。"""
         chart = self.document.chart
         value = not chart.settings.hit_enabled
-        self.document.apply(
-            "开关打击音效",
-            lambda: setattr(chart.settings, "hit_enabled", value),
-        )
+        chart.settings.hit_enabled = value          # 编辑器设置：不进撤销栈
         self._apply_volumes()
         self.status("打击音效：" + ("开启" if value else "关闭"))
         self.toolbar.sync()
@@ -916,20 +911,14 @@ class EditorApp:
         """视图菜单：第 1 / 第 6 轨背景高亮（暗紫色）。"""
         chart = self.document.chart
         value = not chart.settings.side_lane_highlight
-        self.document.apply(
-            "侧轨高亮",
-            lambda: setattr(chart.settings, "side_lane_highlight", value),
-        )
+        chart.settings.side_lane_highlight = value   # 视图设置：不进撤销栈
         self.status("侧轨高亮：" + ("开启（第 1 / 6 轨暗紫）" if value else "关闭"))
 
     def toggle_show_past_notes(self) -> None:
         """视图菜单：判定时刻已经过去的物件是否继续绘制（判定线下方）。"""
         chart = self.document.chart
         value = not chart.settings.show_past_notes
-        self.document.apply(
-            "显示更早的物件",
-            lambda: setattr(chart.settings, "show_past_notes", value),
-        )
+        chart.settings.show_past_notes = value       # 视图设置：不进撤销栈
         self.status(
             "显示更早的物件：开启（判定线下方继续绘制）"
             if value
@@ -950,7 +939,7 @@ class EditorApp:
             settings.hit_volume = float(result["hit_volume"])
             settings.normalize()
 
-        self.document.apply("修改音量", _apply)
+        _apply()          # 编辑器设置：不进撤销栈
         self._apply_volumes()
         settings = self.document.chart.settings
         self.status(
@@ -1121,7 +1110,6 @@ class EditorApp:
             return
         settings = self.document.chart.settings
         settings.grid_division = max(config.GRID_DIVISION_MIN, value)
-        self.document.dirty = True
         self.view.set_beat(self.view.current_beat)
         self.status(f"时间网格：一拍细分为 {settings.grid_division} 份")
 
@@ -1130,7 +1118,6 @@ class EditorApp:
         value = 0 if text in ("", "关") else int(float(text))
         settings = self.document.chart.settings
         settings.horizontal_divisions = max(0, value)
-        self.document.dirty = True
         self.status(
             "横向辅助网格已关闭"
             if settings.horizontal_divisions == 0

@@ -9,7 +9,11 @@
 * 放置 / 粘贴 → 撤销 = 删除这些新 id；重做 = 用保存的数据重建；
 * 删除 → 撤销 = 把被删物件的数据写回来；重做 = 再删一次；
 * 镜像 / 编辑物件 / 改速度组归属 → 记录这些物件的“改动前 / 改动后”数据并互相替换；
-* 元数据 / BPM 与偏移 / 编辑器设置 / 速度组面板 → 只记录这些轻量结构的旧值。
+* 元数据 / BPM 与偏移 / 速度组面板 → 只记录这些轻量结构的旧值。
+
+与谱面无关的**视图 / 编辑器设置**（缩放、网格、延迟、音量、节拍音、侧轨高亮、
+显示更早的物件……）不进撤销栈，也不标记谱面已修改：它们保存在全局 ``settings.json``，
+撤销谱面改动时也不会顺带把它们回退。
 
 于是每次编辑的成本只与“改动量”成正比（实测 10000 物件下从 32 ms 降到 <1 ms），
 撤销栈内存也从整谱级别降到 KB 级。
@@ -118,24 +122,23 @@ class Document:
         return True
 
     # -------------------------------------------------------- 轻量结构编辑
-    def _light_state(self) -> Tuple[Any, Any, Any, List[Any]]:
+    def _light_state(self) -> Tuple[Any, Any, List[Any]]:
+        """可撤销的谱面数据：元数据 / 时间轴 / 速度组（不含编辑器设置）。"""
         chart = self.chart
         return (
             chart.metadata.to_dict(),
             chart.timing.to_dict(),
-            chart.settings.to_dict(),
             [group.to_dict() for group in chart.speed_groups],
         )
 
-    def _restore_light_state(self, state: Tuple[Any, Any, Any, List[Any]]) -> None:
-        from .chart import EditorSettings, Metadata
+    def _restore_light_state(self, state: Tuple[Any, Any, List[Any]]) -> None:
+        from .chart import Metadata
         from .speed import SpeedGroup
         from .timing import TimingMap
 
-        metadata, timing, settings, groups = state
+        metadata, timing, groups = state
         self.chart.metadata = Metadata.from_dict(copy.deepcopy(metadata))
         self.chart.timing = TimingMap.from_dict(copy.deepcopy(timing))
-        self.chart.settings = EditorSettings.from_dict(copy.deepcopy(settings))
         self.chart.speed_groups = [SpeedGroup.from_dict(copy.deepcopy(g)) for g in groups]
         if not any(g.is_default for g in self.chart.speed_groups):
             self.chart.speed_groups.insert(0, SpeedGroup.default())
@@ -144,7 +147,10 @@ class Document:
         self.chart.invalidate_order()
 
     def apply(self, label: str, func: Callable[[], Any]) -> Any:
-        """修改元数据 / BPM / 设置 / 速度组等轻量结构（只记录这些结构的旧值）。"""
+        """修改元数据 / BPM / 速度组等**谱面数据**（只记录这些结构的旧值）。
+
+        与谱面无关的视图 / 编辑器设置请直接改值 —— 它们不进撤销栈。
+        """
         before = self._light_state()
         snapshot_before = copy.deepcopy(before)
         result = func()
