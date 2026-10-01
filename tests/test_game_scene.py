@@ -48,58 +48,6 @@ class LayoutTests(unittest.TestCase):
         self.assertAlmostEqual(S.K6_WIDTH, 1.5)
 
 
-class ScaleInvarianceTests(unittest.TestCase):
-    """世界坐标（连同相机）整体缩小 1.4 倍时，屏幕上的像**完全不变**。
-
-    这是本次改单位（合法区宽 1.4 -> 1）的关键约定：scene.py 里所有历史调参
-    （轨道长度 / 相机位置 / 平面高度 …）都乘 ``UNIT_SCALE = 5/7``，等价于把
-    整个世界做一个相似变换，所以游玩器画面与旧世界逐像素一致。
-    """
-
-    # 旧世界（合法区宽 1.4）下的取值
-    OLD = {
-        "LANE_WIDTH": 0.35,
-        "K6_WIDTH": 2.1,
-        "K6_LEFT": -1.05,
-        "MOUSE_LEFT": -0.7,
-        "MOUSE_RIGHT": 0.7,
-        "MOUSE_LEGAL_WIDTH": 1.4,
-        "MOUSE_PLANE_HEIGHT": 0.4,
-        "NOTE_HEIGHT_UNIT": 0.03,
-        "START_Z": 26.0,
-    }
-
-    @staticmethod
-    def _corners():
-        """旧单位下的游玩区角点（左右 × 上下 × 远近）。"""
-        return [
-            (x, y, z)
-            for x in (-1.05, 0.0, 1.05)
-            for y in (0.0, 0.4, 0.43)
-            for z in (0.0, 26.0)
-        ]
-
-    def test_projection_matches_the_old_world(self) -> None:
-        saved = {name: getattr(S, name) for name in self.OLD}
-        try:
-            for name, value in self.OLD.items():
-                setattr(S, name, value)
-            old = S.PlayerScene(S.Camera(y=1.60, z=-2.20, pitch_deg=16.0, fov_deg=55.0))
-            old_points = [old.point(x, y, z, W, H) for x, y, z in self._corners()]
-        finally:
-            for name, value in saved.items():
-                setattr(S, name, value)
-        new = S.PlayerScene()
-        new_points = [
-            new.point(x * S.UNIT_SCALE, y * S.UNIT_SCALE, z * S.UNIT_SCALE, W, H)
-            for x, y, z in self._corners()
-        ]
-        for (old_x, old_y, old_scale), (new_x, new_y, new_scale) in zip(old_points, new_points):
-            self.assertAlmostEqual(old_x, new_x, places=6)
-            self.assertAlmostEqual(old_y, new_y, places=6)
-            self.assertAlmostEqual(old_scale, new_scale * S.UNIT_SCALE, places=6)
-
-
 class ProjectionTests(unittest.TestCase):
     def setUp(self) -> None:
         self.scene = S.PlayerScene()

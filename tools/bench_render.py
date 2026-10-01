@@ -18,8 +18,10 @@ import os
 import sys
 import time
 
-ROOT = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
-sys.path.insert(0, os.path.join(ROOT, "src"))
+from _common import add_paths, use_utf8_console
+
+add_paths()
+use_utf8_console()
 
 import tkinter as tk  # noqa: E402
 
@@ -113,7 +115,7 @@ def bench(count: int, frames: int = 20) -> dict:
         notes_at(chart, view, WIDTH / 2, 200 + i * 2, cache=state.hit_cache)
     hit_cached_ms = (time.perf_counter() - t0) * 1000 / 20
 
-    # 编辑一次的开销：差量撤销（记录被改动的物件，而不是整谱拷贝）
+    # 编辑一次的开销：差量撤销（只记录被改动的物件）
     document = Document(chart)
     t0 = time.perf_counter()
     for _ in range(3):

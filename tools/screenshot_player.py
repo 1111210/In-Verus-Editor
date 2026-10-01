@@ -11,16 +11,13 @@ from __future__ import annotations
 
 import os
 import sys
-import tempfile
 import time
 
-ROOT = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
-sys.path.insert(0, os.path.join(ROOT, "src"))
-sys.path.insert(0, os.path.dirname(os.path.abspath(__file__)))
+from _common import ROOT, add_paths, use_isolated_player_settings, use_utf8_console
 
-os.environ.setdefault(
-    "VERUS_PLAYER_SETTINGS", os.path.join(tempfile.gettempdir(), "inverus_player_shot.json")
-)
+add_paths()
+use_utf8_console()
+use_isolated_player_settings("player_shot")
 
 import pygame  # noqa: E402
 

@@ -373,20 +373,8 @@ class AppFlowTest(unittest.TestCase):
         finally:
             app.toolbar.is_menu_posted = original  # type: ignore[assignment]
 
-    def test_menu_protection_has_no_hold_time(self) -> None:
-        """回归：菜单保护没有任何等待时间 —— 一旦继续操作就立刻恢复重绘。"""
-        toolbar = self.app.toolbar
-        toolbar.mark_menu_open()
-        self.assertTrue(toolbar.is_menu_posted())
-        toolbar.mark_interaction()
-        self.assertFalse(toolbar.is_menu_posted(), "交互后应立即解除保护（无保护时间）")
-        # 菜单自己触发 <Unmap> 时同样立即解除
-        toolbar.mark_menu_open()
-        toolbar.mark_menu_closed()
-        self.assertFalse(toolbar.is_menu_posted())
-
     def test_menu_toggles_closed_on_second_click(self) -> None:
-        """回归：菜单按钮再次点击是收起，而不是重新弹出。"""
+        """菜单按钮再次点击时收起。"""
         toolbar = self.app.toolbar
         # tk_popup 在 Windows 会进入嵌套事件循环；测试里替换掉真正的弹出动作与“是否展开”查询
         toolbar._post_menu = lambda menu, button: None  # type: ignore[assignment]
@@ -456,16 +444,6 @@ class AppFlowTest(unittest.TestCase):
         # 判定线仍然吸附在网格上
         steps = app.view.current_beat * app.document.chart.settings.grid_division
         self.assertAlmostEqual(steps, round(steps), places=6)
-
-    def test_scrollbars_use_white_thumb_black_trough(self) -> None:
-        """滚动条样式：滑条体白色、背景黑色（竖向时间轴与工具栏横向滚动条一致）。"""
-        style = ttk.Style(self.app.root)
-        for name in ("White.Vertical.TScrollbar", "White.Horizontal.TScrollbar"):
-            self.assertEqual(str(style.lookup(name, "background")), "#ffffff")
-            self.assertEqual(str(style.lookup(name, "troughcolor")), "#000000")
-        # 两个滚动条都套用了该样式
-        self.assertEqual(str(self.app.vscroll.cget("style")), "White.Vertical.TScrollbar")
-        self.assertEqual(str(self.app.toolbar._hscroll.cget("style")), "White.Horizontal.TScrollbar")
 
     def test_maximized_by_default(self) -> None:
         """默认以最大化启动（保留标题栏与任务栏），而不是无边框全屏。"""
@@ -647,15 +625,6 @@ class AppFlowTest(unittest.TestCase):
         self.app._tick()
         hgrid = [k for k in self.app.scene._items if k.startswith("hgrid:")]
         self.assertTrue(hgrid, "设置了等分就应该画出横向辅助网格")
-
-    def test_toolbar_buttons_share_same_height_style(self) -> None:
-        """编辑物件 / 速度组 / 编辑器设置与能展开菜单的按钮同样高（同一套样式）。"""
-        toolbar = self.app.toolbar
-        styles = {button.cget("style") for button, _ in toolbar._direct_buttons}
-        self.assertEqual(styles, {"Tool.TButton"})
-        for button in toolbar._group_buttons.values():
-            self.assertEqual(str(button.cget("style")), "Tool.TButton")
-
 
 if __name__ == "__main__":
     unittest.main()

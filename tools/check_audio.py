@@ -17,20 +17,14 @@ from __future__ import annotations
 import math
 import os
 import struct
-import sys
 import tempfile
 import time
 import wave
 
-ROOT = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
-sys.path.insert(0, os.path.join(ROOT, "src"))
+from _common import add_paths, use_utf8_console
 
-# 输出里带有 − (U+2212) 等符号，Windows 控制台默认 GBK 会直接抛 UnicodeEncodeError
-for _stream in (sys.stdout, sys.stderr):
-    try:
-        _stream.reconfigure(encoding="utf-8", errors="replace")
-    except (AttributeError, OSError):  # pragma: no cover - 极老的 Python / 非文本流
-        pass
+add_paths()
+use_utf8_console()
 
 from rhythm_editor.audio import AudioPlayer, audio_backend_name  # noqa: E402
 

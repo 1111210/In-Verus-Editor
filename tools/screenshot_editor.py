@@ -20,9 +20,10 @@ import sys
 import tempfile
 import time
 
-ROOT = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
-sys.path.insert(0, os.path.join(ROOT, "src"))
-sys.path.insert(0, os.path.dirname(os.path.abspath(__file__)))
+from _common import ROOT, add_paths, use_utf8_console
+
+add_paths()
+use_utf8_console()
 
 from rhythm_editor import config  # noqa: E402
 from rhythm_editor import global_settings  # noqa: E402

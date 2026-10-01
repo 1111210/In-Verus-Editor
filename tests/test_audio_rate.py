@@ -149,8 +149,7 @@ class AudioPlayerRateTests(unittest.TestCase):
     def test_first_play_after_opening_uses_real_backend(self) -> None:
         """回归：刚打开谱面（还没动过倍速）时第一次播放必须有声音。
 
-        曾经 load() 会先清空 self.path 再选后端，于是刚载入的歌曲被误判成
-        “没有歌曲”，第一次播放走静音时钟 —— 随便改一次倍速后才恢复。
+        载入后第一次播放必须走真实后端（load() 不能在选后端之前清空 self.path）。
         """
         import tempfile
         import wave
@@ -306,7 +305,7 @@ class TimeStretchTests(unittest.TestCase):
         self.assertEqual(len(same), len(tone))
 
     def test_stereo_music_can_be_slowed(self) -> None:
-        """回归：立体声（真实音乐文件）慢放不能崩 —— 以前多声道相关会维度不匹配。"""
+        """回归：立体声（真实音乐文件）慢放不能崩。"""
         import numpy as np
 
         mono = self._tone(1.0, freq=440.0)

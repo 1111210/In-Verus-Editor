@@ -56,7 +56,7 @@ class GlobalSettingsTests(unittest.TestCase):
         data = chart.to_dict()
         self.assertNotIn("editor", data)
         restored = Chart.from_dict(data)
-        self.assertEqual(restored.settings.grid_division, 4)   # 默认值，而不是 16
+        self.assertEqual(restored.settings.grid_division, 4)   # 默认值 4
 
     def test_legacy_chart_editor_block_is_migrated_once(self) -> None:
         """读老谱面时，把里面的 editor 段并入全局设置（只迁移一次）。"""

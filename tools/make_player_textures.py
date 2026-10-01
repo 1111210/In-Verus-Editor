@@ -26,12 +26,14 @@ import sys
 
 import numpy as np
 
-os.environ.setdefault("SDL_VIDEODRIVER", "dummy")
-os.environ.setdefault("SDL_AUDIODRIVER", "dummy")
+from _common import ROOT, use_dummy_audio, use_dummy_video, use_utf8_console
+
+use_utf8_console()
+use_dummy_video()
+use_dummy_audio()
 
 import pygame  # noqa: E402
 
-ROOT = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
 DEFAULT_OUT = os.path.join(ROOT, "assets", "textures", "player")
 
 # ---------------------------------------------------------------- 基本参数
@@ -241,8 +243,7 @@ def transparent(size: int = 48) -> np.ndarray:
 def mouse_marker(filled: bool, size: int = 96) -> np.ndarray:
     """鼠标指针（场景内元素）：躺在鼠标平面里的矮胖三角形，可实心 / 只画边线。
 
-    形状**只有三角形**：以前多了一条贯穿整幅的横杠（``ys >= 0.9`` 那一项），
-    渲染出来就是指针上方多一根横线，这里去掉。
+    形状只有三角形：底边最宽、顶点朝远处。
     """
     xs = np.linspace(-1.0, 1.0, size, dtype=np.float32)[None, :]
     ys = np.linspace(-1.0, 1.0, size, dtype=np.float32)[:, None]   # -1 = 图顶（远处）

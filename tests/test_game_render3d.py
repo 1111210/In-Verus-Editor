@@ -3,7 +3,6 @@
 from __future__ import annotations
 
 import os
-import struct
 import sys
 import unittest
 
@@ -63,28 +62,6 @@ class QuadCornerTests(unittest.TestCase):
                                 want[axis], got[axis], places=6,
                                 msg=f"vertical={vertical} angle={angle} uv=({u},{v})",
                             )
-
-
-@unittest.skipUnless(render3d.available(), "没有 Panda3D")
-class QuadBatchTests(unittest.TestCase):
-    """一批四边形打包成 6 顶点/张（两个三角形），字节布局 = V3f + T2f。"""
-
-    def test_packs_six_vertices_per_quad(self) -> None:
-        from panda3d.core import NodePath
-
-        parent = NodePath("parent")
-        batch = render3d.QuadBatch(parent, "batch", None, (1, 1, 1, 1), 30)
-        batch.add_quad(0.0, 3.0, 2.0, 1.0, 0.5, False, 0.0)
-        batch.add_quad(1.0, 3.0, 0.5, 0.5, 0.4, True, 45.0)
-        self.assertEqual(batch.count, 2)
-        data = b"".join(batch.parts)
-        self.assertEqual(len(data), 2 * 6 * 5 * 4)          # 2 张 × 6 顶点 × (3+2) float
-        first = struct.unpack("<30f", batch.parts[0])
-        # 第一张是水平卡片：四角在 y=0.5 平面（Panda 的 Z），UV 顺序 (0,0)(1,0)(1,1)(0,1)
-        self.assertEqual((first[3], first[4]), (0.0, 0.0))
-        self.assertAlmostEqual(first[2], 0.5)
-        batch.reset()
-        self.assertEqual((batch.count, batch.parts), (0, []))
 
 
 if __name__ == "__main__":

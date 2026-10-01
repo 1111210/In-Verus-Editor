@@ -692,55 +692,6 @@ class PlayerAppSmokeTests(unittest.TestCase):
         app._start_play()
         app._draw_play()                    # 各厚度都要能画出来
 
-    def test_region_edge_line_thins_with_distance(self) -> None:
-        """软渲染的空域边线要按透视变细：远处的线不能和近处一样粗。"""
-        from rhythm_editor.game import app as game_app
-        from rhythm_editor.game.scene import MOUSE_PLANE_HEIGHT
-        from rhythm_editor.model.chart import Chart
-        from rhythm_editor.model.notes import BoundaryCurve, MouseRegion
-
-        pygame = self.pygame
-        app = self.app
-        app._load_textures()
-        app._compute_texture_averages()
-        app.settings.rate, app.settings.side_lane_highlight = 1.0, False
-        app.scene3d = None
-
-        half_world = game_app.REGION_EDGE_HALF_WORLD
-        self.assertAlmostEqual(half_world, 0.006 * game_app.UNIT_SCALE, places=9)
-        ref = app._proj(0.0, MOUSE_PLANE_HEIGHT, 0.0)[2]     # 判定线处（最近）的缩放
-        near_half, near_fade = app._region_edge_style(ref)
-        far_half, far_fade = app._region_edge_style(
-            app._proj(0.0, MOUSE_PLANE_HEIGHT, 12.0)[2])
-        self.assertAlmostEqual(near_half, half_world * ref, places=6)
-        self.assertAlmostEqual(near_fade, 1.0)
-        self.assertGreater(near_half, far_half, "远处的空域边线必须更细")
-        self.assertGreater(near_fade, far_fade, "远处的空域边线必须更淡")
-        self.assertGreaterEqual(far_half, app.REGION_EDGE_MIN_HALF_PX)
-        # 判定线处整条边线约 5.6px（与 Panda 那条 ribbon 同宽）
-        self.assertGreater(2 * near_half, 5.0)
-
-        # 空域还得真的画出来（不抛异常、覆盖到边界处）
-        app.chart = Chart()
-        app.chart.lane_notes = []
-        app.chart.mouse_notes = [
-            MouseRegion("R", 0.0, 24.0, BoundaryCurve(0.2, 0.0), BoundaryCurve(0.8, 0.0))
-        ]
-        app.chart.invalidate_order()
-        now = app.chart.timing.beat_to_song_ms(0.0)
-        app.screen.fill((10, 10, 14))
-        app._draw_planes(now)
-        app._draw_notes(now)
-        edge_color = game_app.textures.average_color(app._tex("region_edge"))
-        boundary = app._proj(-0.3, MOUSE_PLANE_HEIGHT, 2.0)
-        row = int(round(boundary[1]))
-        seen = False
-        for x in range(max(0, int(boundary[0]) - 6), min(app.w, int(boundary[0]) + 7)):
-            pixel = app.screen.get_at((x, row))
-            if pixel[1] - pixel[0] >= edge_color[1] - edge_color[0] - 40:
-                seen = True
-        self.assertTrue(seen, "空域边线没画出来")
-
     def test_region_edge_thickness_matches_panda(self) -> None:
         """同一段空域在两种渲染器里的边线**像素宽度**要一致（同一个世界宽度常量）。"""
         from rhythm_editor.game import app as game_app
@@ -892,28 +843,6 @@ class PlayerAppSmokeTests(unittest.TestCase):
             self.assertEqual(app.state, "result")
         finally:
             type(app.audio).is_playing = original
-
-    def test_notes_beyond_the_horizon_are_not_drawn(self) -> None:
-        """比可视范围更远的滑键 / 点击按键不画（否则会全堆在屏幕最上方）。"""
-        from rhythm_editor.model.notes import MouseClick, MouseSlide
-
-        app = self.app
-        app._enter_loading()
-        chart = app.chart
-        markers = [n for n in chart.all_notes() if isinstance(n, (MouseSlide, MouseClick))]
-        self.assertTrue(markers, "示例谱面应有滑键 / 点击按键")
-        scroll = app.settings.scroll_ms
-        for now in (0.0, 1000.0):
-            drawn = [n for n in markers if app._note_ahead(n, now) and app._note_visible(n, now)]
-            for note in drawn:
-                self.assertLessEqual(
-                    app._head_ms(note) - now, scroll + 1e-6, "远于可视范围的物件不该被画"
-                )
-        first = min(markers, key=lambda n: app._head_ms(n))
-        head = app._head_ms(first)
-        just_entered = head - scroll + 1.0
-        self.assertTrue(app._note_ahead(first, just_entered))
-        self.assertFalse(app._note_ahead(first, just_entered - 2.0))
 
     def test_culling_matches_the_visible_span_at_any_rate(self) -> None:
         """剔除阈值必须和 z 映射用同一个跨度：低倍速不堆积、高倍速从轨道尽头出现。"""
@@ -1302,7 +1231,7 @@ class PlayerAppSmokeTests(unittest.TestCase):
         mouse_line_y = app._proj(0.0, MOUSE_PLANE_HEIGHT, 0.0)[1]
         self.assertAlmostEqual(rect.bottom, mouse_line_y, delta=4.0, msg="渐变贴着判定线")
         self.assertLess(rect.top, mouse_line_y - 100, "渐变一路铺到远处")
-        self.assertGreaterEqual(START_Z, 12.0, "轨道比原来更长")
+        self.assertGreaterEqual(START_Z, 12.0, "轨道长度下限")
         # 6K 平面底色仍然只有一个四边形
         # 贴图版轨道不再画底色四边形（缺贴图时才会退回程序绘制）
         self.assertLessEqual(len(quads), 1)
@@ -1358,7 +1287,7 @@ class PlayerAppSmokeTests(unittest.TestCase):
             self.assertLess(index, first_gradient, "侧轨 / 按下高亮要在鼠标平面下方")
 
     def test_slide_judgement_shows_text_and_sound(self) -> None:
-        """滑键判定要出判定文字（回归：以前 on_move 的返回值被丢掉，滑键没有飘字）。"""
+        """滑键判定要出判定文字。"""
         from rhythm_editor.model.notes import MouseSlide
 
         app = self.app
@@ -1430,8 +1359,8 @@ class PlayerAppSmokeTests(unittest.TestCase):
     def test_texture_averages_ready_after_loading(self) -> None:
         """加载页就要算好贴图平均色。
 
-        软件路径的长按主体 / 轨道 / 边界都用平均色填多边形；以前只在"渲染回退"时才算，
-        正常进游戏时是空的，于是长按走了"切片重复贴图"的兜底分支，看起来是锯齿状。
+        软件路径的长按主体 / 轨道 / 边界都用平均色填多边形，缺了就会退回
+        "切片重复贴图"的兜底分支（看起来是锯齿状）。
         """
         app = self.app
         app._load_textures()

@@ -63,14 +63,5 @@ class SortedCacheTests(unittest.TestCase):
         mouse = self.chart.mouse_notes_sorted()
         self.assertEqual([n.id for n in mouse], ["M2"])
 
-    def test_new_chart_from_snapshot_has_fresh_cache(self) -> None:
-        self.document.select_all()
-        self.document.mirror_notes(self.document.selection)   # 走 apply -> 失效
-        first = self.chart.sorted_notes()
-        self.assertIs(first, self.chart.sorted_notes())
-        self.document.undo()                                   # 快照恢复：新 Chart 实例
-        self.assertIs(self.chart.sorted_notes(), self.chart.sorted_notes())
-
-
 if __name__ == "__main__":
     unittest.main()

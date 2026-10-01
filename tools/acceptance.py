@@ -8,10 +8,11 @@
 from __future__ import annotations
 
 import os
-import sys
 
-ROOT = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
-sys.path.insert(0, os.path.join(ROOT, "src"))
+from _common import ROOT, add_paths, use_utf8_console
+
+add_paths()
+use_utf8_console()
 
 from rhythm_editor import config  # noqa: E402
 from rhythm_editor import global_settings  # noqa: E402
@@ -45,7 +46,7 @@ def report() -> int:
         f"{counts['lane']} 个",
     )
     item(
-        "空域（鼠标停留区域：半透明蓝 + 不透明左右边界 + 缓动）",
+        "空域（半透明蓝 + 不透明左右边界 + 缓动）",
         any(isinstance(n, MouseRegion) and n.left.ease in config.EASE_CHOICES for n in chart.mouse_notes),
         f"{counts['region']} 个",
     )

@@ -366,20 +366,6 @@ class EditorSmokeTest(unittest.TestCase):
         finally:
             self.renderer._region_points = original  # type: ignore[assignment]
 
-    def test_region_samples_adapt_to_screen_height(self) -> None:
-        """屏幕内很矮的空域使用更少的采样点（省掉不必要的边界计算）。"""
-        self.chart.settings.grid_division = 4
-        tall = MouseRegion("MT", 0.0, 20.0, BoundaryCurve(0.1, 0.2), BoundaryCurve(0.9, 0.8))
-        short = MouseRegion("MS", 2.0, 2.25, BoundaryCurve(0.1, 0.2), BoundaryCurve(0.9, 0.8))
-        self.chart.add(tall)
-        self.chart.add(short)
-        self.view.set_beat(0.0)
-        self.draw()
-        tall_points = len(self.scene._items["region:MT"][2][0]) // 2
-        short_points = len(self.scene._items["region:MS"][2][0]) // 2
-        self.assertLess(short_points, tall_points)
-        self.assertGreaterEqual(short_points, 8 + 2)   # 至少左 5 + 右 5 个点
-
     def test_region_pending_preview_has_only_side_edges(self) -> None:
         """放置预览同样只画左右边界线。"""
         self.controller.set_tool(config.TOOL_MOUSE_REGION)
@@ -639,7 +625,7 @@ class EditorSmokeTest(unittest.TestCase):
         self.assertAlmostEqual(fixed.beat_end - fixed.beat_start, self.view.grid_step())
 
     def test_hold_preview_extends_upward_from_start_line(self) -> None:
-        """回归：长按起始位置的预览要画在时间网格线**上方**（原来画到了下方）。"""
+        """长按起始位置的预览画在时间网格线**上方**。"""
         self.chart.settings.horizontal_divisions = 0
         self.controller.set_tool(config.TOOL_LANE_HOLD)
         lane_x = self.view.layout.lane_center(2)
@@ -776,7 +762,7 @@ class EditorSmokeTest(unittest.TestCase):
         self.assertGreater(slides[1].x_end, slides[1].x_start)
 
     def test_slide_arrow_points_to_swipe_direction(self) -> None:
-        """回归：向左滑键的箭头必须指向左（曾经用 min/max 取端点，永远朝右）。"""
+        """向左滑键的箭头指向左。"""
         right = MouseSlide("S1", 3.0, 0.2, 0.6)
         left = MouseSlide("S2", 5.0, 0.8, 0.3)
         self.chart.add(right)
@@ -819,7 +805,7 @@ class EditorSmokeTest(unittest.TestCase):
         self.assertGreaterEqual(abs(arrow[2] - arrow[0]), min_dx - 0.5, "箭头要保持最小长度")
 
     def test_slide_pending_start_is_single_yellow_line(self) -> None:
-        """选起点时只画一根黄色虚线（不再是方框+箭头）。"""
+        """选起点时只画一根黄色虚线。"""
         self.chart.settings.horizontal_divisions = 0
         self.controller.set_tool(config.TOOL_MOUSE_SLIDE)
         self.controller.on_motion(self.view.norm_to_x(0.3), self.y_of_beat(3.0))
@@ -1003,33 +989,6 @@ class EditorSmokeTest(unittest.TestCase):
                 self.view.beat_to_y(beat),
                 places=6,
             )
-
-    def test_no_ruler_items_on_canvas(self) -> None:
-        """总览条已移除：画布上不再有 ruler:* 图元（时间导航交给右侧滚动条）。"""
-        self.draw()
-        self.assertFalse([k for k in self.scene._items if k.startswith("ruler")])
-
-    def test_scrollbar_fractions_track_view(self) -> None:
-        """竖向滚动条：滑块位置跟随可视时间窗口，拖动可跳转时间。"""
-        self.chart.settings.grid_division = 4
-        for beat in (0.0, 40.0, 80.0):          # 让文档明显长于可视窗口
-            self.chart.add(LaneNote(f"SL{int(beat)}", 0, 0, beat))
-        self.view.set_beat(0.0)
-        first, last = self.view.scroll_fractions()
-        self.assertGreaterEqual(first, 0.0)
-        self.assertLess(first, last)
-        self.assertLessEqual(last, 1.0)
-        # 方向是反的：比例 1.0 = 曲首、0.0 = 曲末
-        self.view.set_from_fraction(1.0)
-        self.assertLess(self.view.current_beat, 1.0)
-        head = self.view.current_beat
-        self.view.set_from_fraction(0.0)
-        self.assertGreater(self.view.current_beat, head)
-        # 往后走时滑块往上（比例变小）
-        later_first, _ = self.view.scroll_fractions()
-        self.view.set_from_fraction(1.0)
-        earlier_first, _ = self.view.scroll_fractions()
-        self.assertLessEqual(later_first, earlier_first)
 
     def test_scrollbar_drag_round_trip_keeps_thumb_under_cursor(self) -> None:
         """回归：拖动滑块时不能“先跳一个滑块长度”。

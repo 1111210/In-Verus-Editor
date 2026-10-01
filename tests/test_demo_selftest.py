@@ -2,6 +2,7 @@ from __future__ import annotations
 
 import os
 import sys
+import tempfile
 import unittest
 
 sys.path.insert(0, os.path.join(os.path.dirname(os.path.dirname(os.path.abspath(__file__))), "src"))
@@ -26,8 +27,9 @@ class DemoTests(unittest.TestCase):
         self.assertGreaterEqual(len(chart.speed_groups), 3)
 
     def test_write_demo_chart(self) -> None:
-        path = write_demo_chart()
-        self.assertTrue(os.path.isfile(path))
+        with tempfile.TemporaryDirectory() as tmp:
+            path = write_demo_chart(os.path.join(tmp, "demo.json"))
+            self.assertTrue(os.path.isfile(path))
 
     def test_committed_demo_chart_loads(self) -> None:
         root = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
