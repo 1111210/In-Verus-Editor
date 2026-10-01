@@ -885,23 +885,28 @@ class Renderer:
             width=2,
             stipple=theme.stipple_fill,
         )
-        # 箭头从起点指向终点（向左的滑键指向左）；长度不足时按最小长度补足，保证方向可见
-        direction = 1.0 if x_end >= x_start else -1.0
-        arrow_from = x_start
-        arrow_to = x_start + direction * max(abs(x_end - x_start), min_dx)
-        segment = clip_segment((arrow_from, y), (arrow_to, y), pane)
-        if segment is not None:
-            self.scene.line(
-                f"slide-arrow:{note.id}",
-                segment[0][0],
-                segment[0][1],
-                segment[1][0],
-                segment[1][1],
-                fill=edge,
-                width=3,
-                arrow="last",
-                arrowshape=(12, 14, 5),
-            )
+        # 箭头从起点指向终点（向左的滑键指向左）；长度不足时按最小长度补足，保证方向可见。
+        # 只有整支箭头都落在显示范围内时才画：线段被裁剪后 Tk 会把箭头头挪到裁剪端点上，
+        # 看起来像滑动终点落在显示边界上；滑键越界时只保留被裁剪的方框。
+        if pane[0] - 0.5 <= min(x_start, x_end) and max(x_start, x_end) <= pane[2] + 0.5:
+            direction = 1.0 if x_end >= x_start else -1.0
+            arrow_from = x_start
+            arrow_to = x_start + direction * max(abs(x_end - x_start), min_dx)
+            if not (pane[0] - 0.5 <= arrow_to <= pane[2] + 0.5):
+                # 最小长度补足会伸出显示范围：退回真实终点，不把箭头裁到面板边
+                arrow_to = x_end
+            if abs(arrow_to - arrow_from) >= 1.0:
+                self.scene.line(
+                    f"slide-arrow:{note.id}",
+                    arrow_from,
+                    y,
+                    arrow_to,
+                    y,
+                    fill=edge,
+                    width=3,
+                    arrow="last",
+                    arrowshape=(12, 14, 5),
+                )
         if selected:
             selection = clip_bounds(
                 (x0 - 6, y - SLIDE_MIN_PX / 2 - 4, x1 + 6, y + SLIDE_MIN_PX / 2 + 4), pane
@@ -1090,19 +1095,25 @@ class Renderer:
                         dash=(4, 3),
                         stipple=theme.stipple_fill,
                     )
-                # 方框按实际长度显示；箭头保持最小长度以便看清方向
-                arrow_from = x0
-                arrow_to = x0 + (-1.0 if leftward else 1.0) * max(abs(x1 - x0), min_dx)
-                segment = clip_segment((arrow_from, y), (arrow_to, y), pane)
-                if segment is not None:
-                    self.scene.line(
-                        "pending:slide-arrow",
-                        segment[0][0], segment[0][1], segment[1][0], segment[1][1],
-                        fill=edge,
-                        width=3,
-                        arrow="last",
-                        arrowshape=(12, 14, 5),
-                    )
+                # 方框按实际长度显示；箭头保持最小长度以便看清方向。
+                # 与成品一致：整支箭头都在显示范围内才画（裁剪会把箭头头挪到面板边）
+                if pane[0] - 0.5 <= lo and hi <= pane[2] + 0.5:
+                    arrow_from = x0
+                    arrow_to = x0 + (-1.0 if leftward else 1.0) * max(abs(x1 - x0), min_dx)
+                    if not (pane[0] - 0.5 <= arrow_to <= pane[2] + 0.5):
+                        arrow_to = x1
+                    if abs(arrow_to - arrow_from) >= 1.0:
+                        self.scene.line(
+                            "pending:slide-arrow",
+                            arrow_from,
+                            y,
+                            arrow_to,
+                            y,
+                            fill=edge,
+                            width=3,
+                            arrow="last",
+                            arrowshape=(12, 14, 5),
+                        )
         elif pending.tool == config.TOOL_MOUSE_CLICK and pending.x_start is not None and pending.beat_start is not None:
             # 点击按键预览：选中心时给一根竖直虚线；选大小时给半透明红圆盘 + 实心菱形
             y = view.note_y(pending.beat_start)

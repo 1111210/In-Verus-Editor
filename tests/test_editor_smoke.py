@@ -344,7 +344,7 @@ class EditorSmokeTest(unittest.TestCase):
         self.assertLess(max(right_xs), pane_right + 1)
 
     def test_slide_beyond_display_is_clipped(self) -> None:
-        """滑键超出显示范围时裁到面板边，箭头同样裁断（不把面板边画成滑键边界）。"""
+        """滑键超出显示范围时只保留裁剪后的方框，不画箭头。"""
         note = MouseSlide("S1", 3.0, -0.8, 0.4)
         self.chart.add(note)
         self.view.set_beat(0.0)
@@ -353,9 +353,29 @@ class EditorSmokeTest(unittest.TestCase):
         box = self.scene._items["slide:S1"][2][0]
         self.assertGreaterEqual(min(box[0::2]), pane_left - 0.5)
         self.assertAlmostEqual(min(box[0::2]), pane_left, delta=1.0, msg="方框应裁到面板边")
-        arrow = self.scene._items["slide-arrow:S1"][2][0]
-        self.assertGreaterEqual(min(arrow[0], arrow[2]), pane_left - 0.5)
-        self.assertAlmostEqual(min(arrow[0], arrow[2]), pane_left, delta=1.0)
+        self.assertNotIn("slide-arrow:S1", self.scene._items)
+
+    def test_slide_arrow_hidden_when_out_of_display(self) -> None:
+        """滑键任一端越出显示范围时不画箭头：不能在面板边上出现假的箭头头。"""
+        right = MouseSlide("SR", 2.0, 0.2, 5.0)     # 起点在内、终点极远
+        left = MouseSlide("SL", 3.0, -5.0, 0.4)     # 起点极远、终点在内
+        inside = MouseSlide("SI", 4.0, 0.2, 0.6)    # 完全在显示范围内
+        self.chart.add(right)
+        self.chart.add(left)
+        self.chart.add(inside)
+        self.view.set_beat(0.0)
+        self.draw()
+        pane_left, pane_right = self.view.layout.pane_mouse
+        # 越界的滑键：方框裁到面板内，箭头不画
+        for note_id in ("SR", "SL"):
+            box = self.scene._items[f"slide:{note_id}"][2][0]
+            self.assertGreaterEqual(min(box[0::2]), pane_left - 0.5)
+            self.assertLessEqual(max(box[0::2]), pane_right + 0.5)
+            self.assertNotIn(f"slide-arrow:{note_id}", self.scene._items)
+        # 完全在显示范围内的滑键：箭头照常画
+        arrow = self.scene._items["slide-arrow:SI"][2][0]
+        self.assertGreaterEqual(min(arrow[0], arrow[2]), pane_left)
+        self.assertLessEqual(max(arrow[0], arrow[2]), pane_right)
 
     def test_click_beyond_display_does_not_cover_k6(self) -> None:
         """点击按键超出显示范围时裁到面板内，不画进左侧 6K 区域。"""
