@@ -75,23 +75,8 @@ class PlayerScene:
         self.camera = camera or Camera()
         self._fit_key: Tuple[int, int] = (0, 0)
         self._fit_value: Tuple[float, float, float] = (1.0, 0.0, 0.0)
-        # 鼠标平面的“运动起点”：它的投影行与 6K 平面 z=START_Z 的投影行一致，
-        # 这样两个平面的物件都在**同一条屏幕线**上出现，鼠标平面蓝底也正好收在那里
-        # （否则鼠标平面更靠近相机，同一 z 投影更高，蓝底会冒到轨道远端之上）。
-        self.mouse_start_z = self._solve_mouse_start_z()
-
-    def _solve_mouse_start_z(self) -> float:
-        """二分求鼠标平面的起点 z（用**原始**投影，与窗口尺寸/自适应缩放无关）。"""
-        target = self.camera.project((0.0, 0.0, START_Z), 1000, 1000)[1]
-        low, high = 0.0, START_Z
-        for _ in range(60):
-            mid = (low + high) / 2.0
-            row = self.camera.project((0.0, MOUSE_PLANE_HEIGHT, mid), 1000, 1000)[1]
-            if row > target:            # 行号更大 = 屏幕更靠下 = z 还不够远
-                low = mid
-            else:
-                high = mid
-        return (low + high) / 2.0
+        # 鼠标平面的远端**在 6K 轨道远端之上**（它更靠近相机，同一个 z 投影更高）——
+        # 两个平面共用同一个 z 行程 START_Z。
 
     # ------------------------------------------------------------ 局部坐标
     @staticmethod
@@ -124,14 +109,10 @@ class PlayerScene:
     FIT_MARGIN_BOTTOM = 10.0
 
     def _field_corners(self):
-        """游玩区的极值点：两个平面 × 远近两端 × 左右边界（含鼠标物件高度）。
-
-        鼠标平面的远端用 ``mouse_start_z``（与 6K 平面同一条屏幕线），
-        这样自适应缩放不会为了那段"多出来的蓝底"把整个游玩区压小。
-        """
+        """游玩区的极值点：两个平面 × 远近两端 × 左右边界（含鼠标物件高度）。"""
         top = MOUSE_PLANE_HEIGHT + NOTE_HEIGHT_UNIT
-        for y, z_end in ((0.0, START_Z), (top, self.mouse_start_z)):
-            for z in (0.0, z_end):
+        for z in (0.0, START_Z):
+            for y in (0.0, top):
                 for x in (K6_LEFT, -K6_LEFT):
                     yield (x, y, z)
 

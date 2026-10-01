@@ -1094,8 +1094,7 @@ class PlayerAppSmokeTests(unittest.TestCase):
         points, _color, _alpha = area[0]
         ys = [point[1] for point in points]
         near_y = app._proj(0.0, MOUSE_PLANE_HEIGHT, 0.0)[1]
-        # 鼠标平面的"轨道尽头"是 mouse_start_z（与 6K 平面同一条屏幕线），不是 START_Z
-        far_y = app._proj(0.0, MOUSE_PLANE_HEIGHT, app.mouse_start_z)[1]
+        far_y = app._proj(0.0, MOUSE_PLANE_HEIGHT, START_Z)[1]
         self.assertAlmostEqual(max(ys), near_y, delta=6.0, msg="最近的边贴在判定线一侧")
         self.assertLessEqual(min(ys), far_y + 8.0,
                              msg="最远的边就在轨道尽头，不会堆到平面外")
@@ -1314,8 +1313,8 @@ class PlayerAppSmokeTests(unittest.TestCase):
                     "lane_1_default", "lane_6_pressed"):
             self.assertIsNotNone(app.texture_avg.get(key), f"{key} 的平均色缺失")
 
-    def test_mouse_plane_start_matches_k6_far_edge(self) -> None:
-        """鼠标平面的运动起点与 6K 平面 z=START_Z 在同一条屏幕线上（蓝底不会冒头）。"""
+    def test_mouse_plane_far_edge_is_above_k6(self) -> None:
+        """鼠标平面远端应在 6K 轨道远端**之上**（它更靠近相机，同一个 z 投影更高）。"""
         from rhythm_editor.game.app import MOUSE_PLANE_HEIGHT
         from rhythm_editor.game.scene import START_Z
 
@@ -1323,11 +1322,9 @@ class PlayerAppSmokeTests(unittest.TestCase):
         app._enter_loading()
         app._start_play()
         row_k6 = app._proj(0.0, 0.0, START_Z)[1]
-        row_mouse = app._proj(0.0, MOUSE_PLANE_HEIGHT, app.mouse_start_z)[1]
-        self.assertAlmostEqual(row_k6, row_mouse, delta=1.5,
-                               msg="鼠标平面背景远端应与 6K 轨道远端重合")
-        self.assertLess(app.mouse_start_z, START_Z,
-                        "鼠标平面更靠近相机，起点 z 应该更小")
+        row_mouse = app._proj(0.0, MOUSE_PLANE_HEIGHT, START_Z)[1]
+        self.assertLess(row_mouse, row_k6, "鼠标平面远端应在 6K 轨道远端之上")
+        self.assertLess(row_k6 - row_mouse, 400.0, "两个平面不应差得太远")
 
 
 if __name__ == "__main__":

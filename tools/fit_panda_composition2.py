@@ -30,6 +30,9 @@ def main() -> int:
         (soft.MOUSE_RIGHT, soft.MOUSE_PLANE_HEIGHT, soft.START_Z),
         (soft.MOUSE_LEFT, soft.MOUSE_PLANE_HEIGHT, 0.0),
         (soft.MOUSE_RIGHT, soft.MOUSE_PLANE_HEIGHT, 0.0),
+        # 两条判定线（6K / 鼠标）也要对上，并且**必须留在屏幕内**
+        (0.0, 0.0, 0.0),
+        (0.0, soft.MOUSE_PLANE_HEIGHT, 0.0),
     ]
     targets = [scene_soft.point(x, y, z, width, height)[:2] for x, y, z in references]
 
@@ -42,6 +45,9 @@ def main() -> int:
             for (x, y, z), (tx, ty) in zip(references, targets):
                 got = scene.project(x, y, z)
                 if got is None:
+                    return None
+                # 判定线 / 角点都不能跑出屏幕（留 6px 边距）
+                if not (6.0 <= got[1] <= height - 6.0):
                     return None
                 total += abs(got[0] - tx) + abs(got[1] - ty)
             return total / len(references)

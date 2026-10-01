@@ -2169,12 +2169,6 @@ class PlayerApp:
         """
         return max(1.0, self.settings.scroll_ms * self.settings.rate)
 
-    @property
-    def mouse_start_z(self) -> float:
-        """鼠标平面的运动起点 z（与 6K 平面 z=START_Z 同一条屏幕线）。"""
-        if self.scene3d is not None:
-            return float(getattr(self.scene3d, "mouse_start_z", START_Z))
-        return float(getattr(self.scene, "mouse_start_z", START_Z))
 
     def _note_z(self, judge_ms: float, now_ms: float,
                 start_z: Optional[float] = None) -> float:
@@ -2379,7 +2373,7 @@ class PlayerApp:
     def _mouse_plane_overlay(self):
         """烘好的鼠标平面蓝底（含梯形掩码）；窗口尺寸不变时复用。"""
         width = LANE_COUNT * LANE_WIDTH
-        far_z = self.mouse_start_z          # 收在轨道远端那条线（不是原始的 START_Z）
+        far_z = START_Z                      # 鼠标平面远端在 6K 轨道远端之上
         left_far = self._proj(K6_LEFT, MOUSE_PLANE_HEIGHT, far_z)
         right_far = self._proj(K6_LEFT + width, MOUSE_PLANE_HEIGHT, far_z)
         left_near = self._proj(K6_LEFT, MOUSE_PLANE_HEIGHT, 0.0)
@@ -2540,7 +2534,7 @@ class PlayerApp:
             elif isinstance(note, MouseRegion):
                 self._draw_region3d(note, now_ms)
             elif isinstance(note, MouseSlide):
-                z = max(0.0, self._note_z(self._head_ms(note), now_ms, self.mouse_start_z))
+                z = max(0.0, self._note_z(self._head_ms(note), now_ms))
                 direction = 1 if note.direction >= 0 else -1
                 name = "right" if direction > 0 else "left"
                 x_start = MOUSE_LEFT + note.x_start * MOUSE_LEGAL_WIDTH
@@ -2554,7 +2548,7 @@ class PlayerApp:
                 scene.quad(f"slide_arrow_{name}", x_end, z, thick, thick, center_y,
                            (1, 1, 1, 1), vertical=True, layer=layer)
             elif isinstance(note, MouseClick):
-                z = max(0.0, self._note_z(self._head_ms(note), now_ms, self.mouse_start_z))
+                z = max(0.0, self._note_z(self._head_ms(note), now_ms))
                 lo, hi = note.x_range()
                 x0 = MOUSE_LEFT + min(lo, hi) * MOUSE_LEGAL_WIDTH
                 x1 = MOUSE_LEFT + max(lo, hi) * MOUSE_LEGAL_WIDTH
@@ -2595,7 +2589,7 @@ class PlayerApp:
         for index in range(samples + 1):
             song_ms = near_ms + (far_ms - near_ms) * index / samples
             beat = timing.song_ms_to_beat(song_ms)
-            z = min(self.mouse_start_z, max(0.0, self._note_z(song_ms, now_ms, self.mouse_start_z)))
+            z = min(START_Z, max(0.0, self._note_z(song_ms, now_ms)))
             left.append((MOUSE_LEFT + note.left_at(beat) * MOUSE_LEGAL_WIDTH, z))
             right.append((MOUSE_LEFT + note.right_at(beat) * MOUSE_LEGAL_WIDTH, z))
         if len(left) < 2:
@@ -2726,7 +2720,7 @@ class PlayerApp:
         for index in range(samples + 1):
             song_ms = near_ms + (far_ms - near_ms) * index / samples
             beat = timing.song_ms_to_beat(song_ms)
-            z = min(self.mouse_start_z, max(0.0, self._note_z(song_ms, now_ms, self.mouse_start_z)))
+            z = min(START_Z, max(0.0, self._note_z(song_ms, now_ms)))
             left_x = MOUSE_LEFT + note.left_at(beat) * MOUSE_LEGAL_WIDTH
             right_x = MOUSE_LEFT + note.right_at(beat) * MOUSE_LEGAL_WIDTH
             left_points.append(self._proj(left_x, MOUSE_PLANE_HEIGHT, z))
@@ -2799,8 +2793,8 @@ class PlayerApp:
 
     def _draw_pattern(self, note: Note, now_ms: float) -> None:
         """滑键 / 鼠标点击按键：图案平行于判定平面，改用预设贴图。"""
-        z = self._note_z(self._head_ms(note), now_ms, self.mouse_start_z)
-        if z < -0.4 or z > self.mouse_start_z:
+        z = self._note_z(self._head_ms(note), now_ms)
+        if z < -0.4 or z > START_Z:
             return
         z = max(0.0, z)
         if self.textures or self._tex("click_diamond") is not None:
