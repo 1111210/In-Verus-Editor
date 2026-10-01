@@ -694,7 +694,6 @@ class PlayerAppSmokeTests(unittest.TestCase):
 
     def test_region_edge_line_thins_with_distance(self) -> None:
         """软渲染的空域边线要按透视变细：远处的线不能和近处一样粗。"""
-        from rhythm_editor.game import textures as game_textures
         from rhythm_editor.game.scene import MOUSE_PLANE_HEIGHT
         from rhythm_editor.model.chart import Chart
         from rhythm_editor.model.notes import BoundaryCurve, MouseRegion
@@ -705,45 +704,57 @@ class PlayerAppSmokeTests(unittest.TestCase):
         app = self.app
         app._load_textures()
         app._compute_texture_averages()
-        app.chart = Chart()
-        app.chart.lane_notes = []
-        app.chart.mouse_notes = [
-            MouseRegion("R", 0.0, 24.0, BoundaryCurve(0.2, 0.0), BoundaryCurve(0.8, 0.0))
-        ]
-        app.chart.invalidate_order()
         app.settings.rate, app.settings.side_lane_highlight = 1.0, False
         app.scene3d = None
-        now = app.chart.timing.beat_to_song_ms(0.0)
-        app.screen.fill((10, 10, 14))
-        app._draw_planes(now)
-        app._draw_notes(now)
+        region = MouseRegion("R", 0.0, 24.0, BoundaryCurve(0.2, 0.0), BoundaryCurve(0.8, 0.0))
+
+        def frame(notes):
+            app.chart = Chart()
+            app.chart.lane_notes = []
+            app.chart.mouse_notes = list(notes)
+            app.chart.invalidate_order()
+            now = app.chart.timing.beat_to_song_ms(0.0)
+            app.screen.fill((10, 10, 14))
+            app._draw_planes(now)
+            app._draw_notes(now)
+            return now, pygame.surfarray.array3d(app.screen).astype(np.int16)
+
+        _now, with_region = frame([region])
 
         ref = app._proj(0.0, MOUSE_PLANE_HEIGHT, 0.0)[2]     # 判定线处（最近）的缩放
-        near_half = app._region_edge_half_px(ref)
-        far_half = app._region_edge_half_px(app._proj(0.0, MOUSE_PLANE_HEIGHT, 12.0)[2])
-        self.assertGreater(near_half, far_half, "远处的空域边线必须更细")
+        near_half, near_fade = app._region_edge_style(ref)
+        far_half, far_fade = app._region_edge_style(
+            app._proj(0.0, MOUSE_PLANE_HEIGHT, 12.0)[2])
         self.assertAlmostEqual(near_half, app.REGION_EDGE_HALF_PX)
-        self.assertGreaterEqual(far_half, 0.6, "再远也要留一点，别细到看不见")
+        self.assertAlmostEqual(near_fade, 1.0)
+        self.assertGreater(near_half, far_half, "远处的空域边线必须更细")
+        self.assertGreater(near_fade, far_fade, "远处的空域边线必须更淡")
+        self.assertGreaterEqual(far_half, app.REGION_EDGE_MIN_HALF_PX)
+        self.assertAlmostEqual(app.REGION_EDGE_HALF_PX, 2.0, places=6)   # 比原来粗一倍
 
-        # 实际画出来也必须是近粗远细（在两条边界线上各量一次横向像素宽）
-        edge = game_textures.average_color(app._tex("region_edge"))
-        target = np.array(edge[:3], dtype=np.int16)
-
+        # 实际画出来也必须是近粗远细：边线是青色（绿远大于红），比底图"青"得多，
+        # 用"绿 - 红"这个判据在边界附近量它占了几像素。
         def measured(z: float) -> int:
             point = app._proj(-0.3, 0.0, z)
             row = int(round(point[1]))
             if not 0 <= row < app.h:                       # pragma: no cover
                 return 0
-            data = pygame.surfarray.array3d(app.screen).astype(np.int16)
-            best = 0
             center = int(round(point[0]))
-            for x in range(max(1, center - 40), min(app.w - 1, center + 40)):
-                if np.abs(data[x, row] - target).max() > 60:
+            window = range(max(1, center - 30), min(app.w - 1, center + 31))
+            score = {x: int(with_region[x, row, 1]) - int(with_region[x, row, 0]) for x in window}
+            if not score:                                  # pragma: no cover
+                return 0
+            fill = score[max(window.start, min(window.stop - 1, center + 12))]
+            peak = max(score.values())
+            threshold = fill + (peak - fill) * 0.5
+            best = 0
+            for x in window:
+                if score[x] < threshold:
                     continue
                 left = right = x
-                while left > 0 and np.abs(data[left - 1, row] - target).max() <= 60:
+                while left > window.start and score[left - 1] >= threshold:
                     left -= 1
-                while right < app.w - 1 and np.abs(data[right + 1, row] - target).max() <= 60:
+                while right < window.stop - 1 and score[right + 1] >= threshold:
                     right += 1
                 best = max(best, right - left + 1)
             return best

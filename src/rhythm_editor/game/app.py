@@ -2203,15 +2203,26 @@ class PlayerApp:
         """鼠标平面渐变用的 z 分界（按屏幕高度均匀切）。"""
         return self._plane_strip_z(strips, MOUSE_PLANE_HEIGHT)
 
-    # 空域边线在**判定线处**的半宽（像素）：共 2px，越远按透视越细
-    REGION_EDGE_HALF_PX = 1.0
+    # 空域边线在**判定线处**的半宽（像素）：共 4px（比原来粗一倍）
+    REGION_EDGE_HALF_PX = 2.0
+    REGION_EDGE_MIN_HALF_PX = 0.35     # 再远也留一点，别整条看不见
+
+    def _region_edge_style(self, scale: float):
+        """空域边线在某个透视缩放下的 ``(半宽像素, 不透明度系数)``。
+
+        两者都随透视缩小：远处又细又淡。只缩宽度是不够的 —— pygame 的多边形填充
+        最小也要占满 1 像素，远看还是跟近处一样实，所以同时按比例降不透明度
+        （Panda 路径那条世界宽度的 ribbon 在远处本来就细到发虚，这里保持一致）。
+        """
+        ref = self._proj(0.0, MOUSE_PLANE_HEIGHT, 0.0)[2]
+        ratio = 1.0 if ref <= 1e-6 else max(0.0, scale) / ref
+        half = max(self.REGION_EDGE_MIN_HALF_PX, self.REGION_EDGE_HALF_PX * ratio)
+        fade = min(1.0, 0.3 + 0.7 * ratio)
+        return half, fade
 
     def _region_edge_half_px(self, scale: float) -> float:
-        """空域边线的屏幕半宽：随透视缩放（远处的线更细，不会看着比近处粗）。"""
-        ref = self._proj(0.0, MOUSE_PLANE_HEIGHT, 0.0)[2]
-        if ref <= 1e-6 or scale <= 0.0:                  # pragma: no cover - 退化情形
-            return self.REGION_EDGE_HALF_PX
-        return max(0.6, self.REGION_EDGE_HALF_PX * scale / ref)
+        """空域边线的屏幕半宽（兼容旧接口）。"""
+        return self._region_edge_style(scale)[0]
 
     def _plane_strip_z(self, strips: int, world_y: float = 0.0) -> List[float]:
         """某个水平面上按**屏幕高度**均匀切出来的 z 分界。
@@ -2849,7 +2860,7 @@ class PlayerApp:
             for points in (left_points, right_points):
                 a, b = points[index], points[index + 1]
                 scale = (a[2] + b[2]) / 2.0             # 这一段的透视缩放
-                half = self._region_edge_half_px(scale)
+                half, fade = self._region_edge_style(scale)
                 if edge_color is not None:
                     dx, dy = b[0] - a[0], b[1] - a[1]
                     length = max(1.0, math.hypot(dx, dy))
@@ -2860,9 +2871,9 @@ class PlayerApp:
                         (b[0] - nx, b[1] - ny),
                         (a[0] - nx, a[1] - ny),
                     ]
-                    self._alpha_quad(quad, edge_color[:3], edge_color[3])
+                    self._alpha_quad(quad, edge_color[:3], int(round(edge_color[3] * fade)))
                 else:
-                    self._line_scaled(a, b, MOUSE_TINT, 2, scale)
+                    self._line_scaled(a, b, MOUSE_TINT, int(max(1, round(4 * fade))), scale)
         # 空域判定线：单像素图铺在判定线处
         line_color = self.texture_avg.get("region_line")
         if line_color is None:
