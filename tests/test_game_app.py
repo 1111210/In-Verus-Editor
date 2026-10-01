@@ -692,6 +692,35 @@ class PlayerAppSmokeTests(unittest.TestCase):
         app._start_play()
         app._draw_play()                    # 各厚度都要能画出来
 
+    def test_hold_center_line_uses_texture_fraction(self) -> None:
+        """软渲染的长按主体白线：占键宽与贴图一致（= 开头的白线），并按透视收窄。"""
+        from rhythm_editor.game import textures as game_textures
+        from rhythm_editor.game.app import WHITE
+
+        app = self.app
+        captured = []
+        original = app._quad
+        app._quad = lambda points, color: captured.append((list(points), color))
+        try:
+            app._blit_hold_center_line(0.0, 0.6, 0.0, 2.0)
+        finally:
+            app._quad = original
+        self.assertEqual(len(captured), 1)
+        points, color = captured[0]
+        self.assertEqual(color, WHITE)
+        half = 0.6 * game_textures.HOLD_LINE_FRACTION / 2.0     # 白线半宽（世界单位）
+        want = [
+            app._proj(0.3 - half, 0.0, 0.0),
+            app._proj(0.3 + half, 0.0, 0.0),
+            app._proj(0.3 + half, 0.0, 2.0),
+            app._proj(0.3 - half, 0.0, 2.0),
+        ]
+        for got, expected in zip(points, want):
+            for axis in (0, 1):
+                self.assertAlmostEqual(got[axis], expected[axis], places=6)
+        # 近端比远端宽（透视）
+        self.assertGreater(abs(points[1][0] - points[0][0]), abs(points[2][0] - points[3][0]))
+
     def test_result_layout_thirds_and_no_rate(self) -> None:
         """结算页：左 1/3、右 2/3；分数行不显示倍速与倍率。"""
         app = self.app

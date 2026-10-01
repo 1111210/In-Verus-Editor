@@ -100,6 +100,27 @@ class TextureLoadTests(unittest.TestCase):
         for name, expected in T.expected_sizes().items():
             self.assertEqual(loaded[name].get_size(), expected, name)
 
+    def test_hold_head_and_body_share_one_center_line(self) -> None:
+        """长按开头与主体的中心白线必须一样粗（都用 ``HOLD_LINE_FRACTION``）。"""
+        directory = os.path.join(ROOT, "assets", "textures", "player")
+        names = ["hold_head_1", "hold_body_1"]
+        if not os.path.isdir(directory):
+            self.skipTest("缺少贴图目录（先跑 tools/make_player_textures.py）")
+        loaded = T.load_textures(directory, names=names)
+        measured = {}
+        for name in names:
+            surface = loaded[name]
+            width, height = surface.get_size()
+            row = height // 2
+            white = [x for x in range(width) if min(surface.get_at((x, row))[:3]) >= 250]
+            self.assertGreater(len(white), 0, f"{name} 没有中心白线")
+            measured[name] = len(white) / width
+            # 单像素量化误差内等于规格值（贴图宽度很小，允许 1 像素的误差）
+            self.assertAlmostEqual(measured[name], T.HOLD_LINE_FRACTION,
+                                   delta=1.0 / width + 1e-6, msg=name)
+        self.assertAlmostEqual(measured["hold_head_1"], measured["hold_body_1"],
+                               delta=1.0 / 32 + 1e-6, msg="开头与主体的白线粗细要一致")
+
 
 if __name__ == "__main__":
     unittest.main()

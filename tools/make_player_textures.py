@@ -41,6 +41,9 @@ BRIGHT_BLUE = np.array([70, 160, 255], dtype=np.float32)
 # （开头是"白 -> 蓝"的渐变，它的顶端正好接在主体的底边上）。
 HOLD_BLUE = np.array([150, 200, 255], dtype=np.float32)
 PALE_BLUE = HOLD_BLUE                 # 旧名字，含义相同
+# 长按中间那条纯白竖线占键宽的比例：**开头与主体必须一致**，否则接缝处会一粗一细
+# （游戏侧同名的常量在 ``game/textures.py``，软渲染手绘白线时用它）。
+HOLD_LINE_FRACTION = 1.0 / 8.0
 DARK_FILL = np.array([24, 26, 36], dtype=np.float32)
 PRESS_FILL = np.array([44, 86, 150], dtype=np.float32)
 EDGE_DIM = np.array([46, 48, 58], dtype=np.float32)
@@ -68,6 +71,12 @@ def _mix(a: np.ndarray, b: np.ndarray, t: np.ndarray) -> np.ndarray:
 def _smoothstep(value: np.ndarray) -> np.ndarray:
     value = np.clip(value, 0.0, 1.0)
     return value * value * (3.0 - 2.0 * value)
+
+
+def _center_line_mask(width: int) -> np.ndarray:
+    """长按中间白线的列掩码：宽 ``HOLD_LINE_FRACTION``、居中。"""
+    xs = np.linspace(0.0, 1.0, width, dtype=np.float32)
+    return np.abs(xs - 0.5) < HOLD_LINE_FRACTION / 2.0
 
 
 def tap_lane(width: int = 96, height: int = 160) -> np.ndarray:
@@ -105,8 +114,7 @@ def hold_head_lane(width: int = 96, height: int = 96) -> np.ndarray:
     rgba = np.zeros((height, width, 4), dtype=np.float32)
     rgba[..., :3] = color
     rgba[..., 3] = 255.0
-    line = np.abs(xs - 0.5) < (0.5 / max(1.0, width / 12.0))
-    rgba[:, line[0], :3] = WHITE                                       # 中部纯白竖线
+    rgba[:, _center_line_mask(width), :3] = WHITE                       # 中部纯白竖线（与主体同宽）
     rgba[-2:, :, :3] = WHITE
     return rgba.astype(np.uint8)
 
@@ -117,8 +125,7 @@ def hold_body_lane(width: int = 32, height: int = 128) -> np.ndarray:
     rgba = np.zeros((height, width, 4), dtype=np.float32)
     rgba[..., :3] = HOLD_BLUE[None, None, :]
     rgba[..., 3] = 255.0                      # 主体背景不透明（用户要求）
-    center = np.abs(xs - 0.5) < (0.5 / max(1.0, width / 6.0))
-    rgba[:, center[0], :3] = WHITE
+    rgba[:, _center_line_mask(width), :3] = WHITE     # 中部纯白竖线（与开头同宽）
     return rgba.astype(np.uint8)
 
 

@@ -2698,12 +2698,23 @@ class PlayerApp:
         return True
 
     def _blit_hold_center_line(self, x0: float, x1: float, head_z: float, tail_z: float) -> bool:
-        """长按主体中间那条纯白竖线（宽度取自贴图：约 1/6）。"""
+        """长按主体中间那条纯白竖线（占键宽 = 贴图的 ``HOLD_LINE_FRACTION``，与开头一致）。
+
+        画成**透视正确的梯形**（近端宽、远端窄）：以前用 ``_line_scaled`` 画等宽直线，
+        看起来比贴图版的开头粗，接缝处会突然变粗。
+        """
         center = (x0 + x1) / 2.0
-        half = (x1 - x0) / 12.0
-        near = self._proj(center, 0.0, max(0.0, head_z))
-        far = self._proj(center, 0.0, max(0.0, tail_z))
-        self._line_scaled(near, far, WHITE, max(2.0, abs(near[0] - self._proj(center - half, 0.0, max(0.0, head_z))[0]) * 2.0), near[2])
+        half = (x1 - x0) * textures.HOLD_LINE_FRACTION / 2.0
+        near_z, far_z = max(0.0, head_z), max(0.0, tail_z)
+        self._quad(
+            [
+                self._proj(center - half, 0.0, near_z),
+                self._proj(center + half, 0.0, near_z),
+                self._proj(center + half, 0.0, far_z),
+                self._proj(center - half, 0.0, far_z),
+            ],
+            WHITE,
+        )
         return True
 
     def _draw_region(self, note: MouseRegion, now_ms: float) -> None:

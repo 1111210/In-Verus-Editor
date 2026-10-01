@@ -19,6 +19,10 @@ import pygame
 
 LANE_COUNT = 6
 
+# 长按中间那条纯白竖线占键宽的比例：贴图（tools/make_player_textures.py 里的同名
+# 常量）与软渲染手绘白线必须用同一个值，否则开头 / 主体接缝处会一粗一细。
+HOLD_LINE_FRACTION = 1.0 / 8.0
+
 # 期望尺寸（宽, 高）：与实际文件不符时会拉伸 / 取平均
 EXPECTED_TAP = (96, 160)
 EXPECTED_HOLD_HEAD = (96, 96)
