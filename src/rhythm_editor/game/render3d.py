@@ -346,6 +346,12 @@ class Scene3D:
             return None
         if texture is not None:
             texture.setFormat(Texture.FRgba)
+            # **必须夹边（WMClamp）**：Panda3D 贴图的默认环绕模式是 WM_repeat
+            # （见 Texture.setWrapV 的官方说明），而我们的卡片 UV 正好取到 0 / 1，
+            # 采样器会把**对边**混进来 —— 长按开头顶端是淡蓝、底端是纯白，混色结果
+            # 就是头 / 体交界处那条 1px 白线；单键、滑键、空域等贴图的上下边缘同理。
+            texture.setWrapU(Texture.WMClamp)
+            texture.setWrapV(Texture.WMClamp)
             # 远处被强烈缩小 -> 没有 mipmap 会出现摩尔纹（看起来就是"条纹"）
             texture.setMinfilter(SamplerState.FTLinearMipmapLinear)
             texture.setMagfilter(SamplerState.FTLinear)

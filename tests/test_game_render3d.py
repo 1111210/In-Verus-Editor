@@ -17,6 +17,27 @@ from rhythm_editor.game import render3d  # noqa: E402
 
 
 @unittest.skipUnless(render3d.available(), "没有 Panda3D")
+class TextureWrapTests(unittest.TestCase):
+    """贴图必须夹边：Panda 默认 WM_repeat，会让卡片边缘混进贴图**对边**的颜色。"""
+
+    def test_textures_are_clamped(self) -> None:
+        from panda3d.core import Texture
+
+        directory = os.path.join(ROOT, "assets", "textures", "player")
+        if not os.path.isdir(directory):
+            self.skipTest("缺少贴图目录（先跑 tools/make_player_textures.py）")
+        scene = render3d.Scene3D(320, 240, directory)
+        try:
+            for name in ("hold_head_1", "hold_body_1", "tap_1", "region_area"):
+                texture = scene.texture(name)
+                self.assertIsNotNone(texture, name)
+                self.assertEqual(texture.getWrapU(), Texture.WMClamp, name)
+                self.assertEqual(texture.getWrapV(), Texture.WMClamp, name)
+        finally:
+            scene.close()
+
+
+@unittest.skipUnless(render3d.available(), "没有 Panda3D")
 class QuadCornerTests(unittest.TestCase):
     """批渲染用解析式算角点，必须和 Panda 自己的卡片变换完全一致。"""
 

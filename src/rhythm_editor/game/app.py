@@ -1129,24 +1129,70 @@ class PlayerApp:
             # 分片数按屏幕高度自适应：每片约 5px，片内透视误差 <1px（不会出现锯齿）
             height_px = abs(self._proj(x0, 0.0, z_far)[1] - self._proj(x0, 0.0, z_near)[1])
             slices = int(max(2, min(40, round(height_px / 5.0))))
-        for index in range(slices):
-            za = z_near + (z_far - z_near) * index / slices          # 近端 -> 远端
-            zb = z_near + (z_far - z_near) * (index + 1) / slices
-            # 贴图 v：0 = 近端（判定线一侧，图像的**下**边），1 = 远端
-            v0 = index / slices
-            v1 = (index + 1) / slices
-            y1 = int(round((1.0 - v1) * tex_h))
-            y0 = int(round((1.0 - v0) * tex_h))
-            rect = pygame.Rect(0, y1, tex_w, max(1, y0 - y1))
-            piece = surface.subsurface(rect)
-            corners = [
-                self._proj(x0, 0.0, zb), self._proj(x1, 0.0, zb),     # 左上 / 右上（远边）
-                self._proj(x1, 0.0, za), self._proj(x0, 0.0, za),     # 右下 / 左下（近边）
-            ]
-            self._blit_surface_quad(
-                piece, corners, flip_x,
+        zs = [z_near + (z_far - z_near) * index / slices for index in range(slices + 1)]
+        for index, (za, zb, source, dest) in enumerate(
+                self._lane_tex_pieces(x0, x1, zs, tex_w, tex_h)):
+            self._blit_surface_rect(
+                surface.subsurface(source), dest, flip_x,
                 key_prefix=f"{name}#{index}/{slices}",
             )
+        return True
+
+    def _lane_tex_pieces(self, x0: float, x1: float, zs, tex_w: int, tex_h: int):
+        """把 6K 平面里的一块区域按 ``zs``（近 -> 远）切片。
+
+        返回 ``[(z_near, z_far, 源矩形, 目标矩形), ...]``。相邻分片的**目标矩形边界
+        整像素对齐**（上一片的下边界 == 下一片的上边界）：同一个 z 的屏幕 y 与 x 无关，
+        所以只要按同一条 y 取整，片与片之间既不会留缝也不会重叠。
+
+        以前每片各按自己的外接矩形取整，片与片之间会漏出 1px 的下层颜色 —— 长按开头、
+        单键上看到的那条横线就是这么来的。
+        """
+        pieces = []
+        count = max(1, len(zs) - 1)
+        for index in range(count):
+            za, zb = zs[index], zs[index + 1]
+            if zb <= za:
+                continue
+            # 贴图 v：0 = 近端（判定线一侧，图像的**下**边），1 = 远端
+            v0, v1 = index / count, (index + 1) / count
+            y1 = int(round((1.0 - v1) * tex_h))
+            y0 = int(round((1.0 - v0) * tex_h))
+            source = pygame.Rect(0, y1, tex_w, max(1, y0 - y1))
+            far_left = self._proj(x0, 0.0, zb)
+            far_right = self._proj(x1, 0.0, zb)
+            near_left = self._proj(x0, 0.0, za)
+            near_right = self._proj(x1, 0.0, za)
+            top = int(round((far_left[1] + far_right[1]) / 2.0))
+            bottom = int(round((near_left[1] + near_right[1]) / 2.0))
+            width = max(1, int(round(
+                ((far_right[0] - far_left[0]) + (near_right[0] - near_left[0])) / 2.0
+            )))
+            center_x = (far_left[0] + far_right[0] + near_left[0] + near_right[0]) / 4.0
+            left = int(round(center_x - width / 2.0))
+            pieces.append((za, zb, source,
+                           pygame.Rect(left, top, width, max(1, bottom - top))))
+        return pieces
+
+    def _blit_surface_rect(self, surface, rect, flip_x: bool = False,
+                           key_prefix: str = "") -> bool:
+        """把一片贴图缩放到**整数矩形**上（分片贴图用；带缓存）。"""
+        if surface is None:
+            return False
+        width = max(1, int(rect[2]))
+        height = max(1, int(rect[3]))
+        left, top = int(rect[0]), int(rect[1])
+        key = (key_prefix, width, height, 0.0, flip_x)
+        cached = self._quad_cache.get(key)
+        if cached is None:
+            base = pygame.transform.flip(surface, True, False) if flip_x else surface
+            if base.get_size() != (width, height):
+                base = pygame.transform.smoothscale(base, (width, height))
+            if len(self._quad_cache) > 512:
+                self._quad_cache.clear()
+            cached = base
+            self._quad_cache[key] = cached
+        self.screen.blit(cached, (left, top))
         return True
 
     @staticmethod
@@ -2104,6 +2150,21 @@ class PlayerApp:
         if len(pts) >= 3:
             pygame.draw.polygon(self.screen, color, pts)
 
+    @staticmethod
+    def _spread_quad_x(quad, pixels: float = 1.0):
+        """把 ``[远左, 远右, 近右, 近左]`` 四边形的左右两条边各向外挪 ``pixels`` 像素。
+
+        车道高亮是填充多边形，而 pygame 的填充**不含右 / 下边界像素**：它正好压在
+        车道分界线上时，会漏出一条 1px 的深色线（贴着轨道边界的那条斜线）。
+        """
+        far_left, far_right, near_right, near_left = quad
+        return [
+            (far_left[0] - pixels, far_left[1]),
+            (far_right[0] + pixels, far_right[1]),
+            (near_right[0] + pixels, near_right[1]),
+            (near_left[0] - pixels, near_left[1]),
+        ]
+
     def _alpha_quad(self, points, color, alpha: int) -> None:
         """半透明填充：鼠标平面在更靠前的位置，必须能透过它看到下面的 6K 物件。"""
         pts = [(p[0], p[1]) for p in points]
@@ -2289,12 +2350,14 @@ class PlayerApp:
                 x0 = K6_LEFT + lane * LANE_WIDTH
                 x1 = x0 + LANE_WIDTH
                 self._quad(
-                    [
-                        self._proj(x0, 0.0, START_Z),
-                        self._proj(x1, 0.0, START_Z),
-                        self._proj(x1, 0.0, 0.0),
-                        self._proj(x0, 0.0, 0.0),
-                    ],
+                    self._spread_quad_x(
+                        [
+                            self._proj(x0, 0.0, START_Z),
+                            self._proj(x1, 0.0, START_Z),
+                            self._proj(x1, 0.0, 0.0),
+                            self._proj(x0, 0.0, 0.0),
+                        ]
+                    ),
                     SIDE_TINT,
                 )
         if not lane_textured:
@@ -2305,12 +2368,14 @@ class PlayerApp:
                 x0 = K6_LEFT + lane * LANE_WIDTH
                 x1 = x0 + LANE_WIDTH
                 self._quad(
-                    [
-                        self._proj(x0, 0.0, START_Z),
-                        self._proj(x1, 0.0, START_Z),
-                        self._proj(x1, 0.0, 0.0),
-                        self._proj(x0, 0.0, 0.0),
-                    ],
+                    self._spread_quad_x(
+                        [
+                            self._proj(x0, 0.0, START_Z),
+                            self._proj(x1, 0.0, START_Z),
+                            self._proj(x1, 0.0, 0.0),
+                            self._proj(x0, 0.0, 0.0),
+                        ]
+                    ),
                     LANE_PRESS_TINT,
                 )
         # 边界：高亮 / 高亮按下（左右各一条贴图）
@@ -2326,20 +2391,20 @@ class PlayerApp:
             color = self.texture_avg.get(name)
             if color is None:
                 continue
-            # 边界是斜的窄条：用贴图的平均色按屏幕高度切片画正梯形（贴图窄条直接拉伸会糊成块）
-            boundaries = self._plane_strip_z(10, 0.0)
             edge_half = 0.008 * UNIT_SCALE          # 轨道边界贴图的半宽（世界单位）
-            for za, zb in zip(boundaries, boundaries[1:]):
-                quad = [
-                    self._proj(x - edge_half, 0.0, za),
-                    self._proj(x + edge_half, 0.0, za),
-                    self._proj(x + edge_half, 0.0, zb),
-                    self._proj(x - edge_half, 0.0, zb),
-                ]
-                if color[3] >= 250:
-                    self._quad(quad, color[:3])
-                else:
-                    self._alpha_quad(quad, color[:3], color[3])
+            # 边界是一条**等宽**的斜窄条：整条就是一个梯形，一个多边形画完。
+            # （以前按屏幕高度切成 10 片、逐片画，片与片之间会留下 1px 横线。
+            #   颜色取自贴图平均色，本来就是平的，不需要切片。）
+            quad = [
+                self._proj(x - edge_half, 0.0, START_Z),
+                self._proj(x + edge_half, 0.0, START_Z),
+                self._proj(x + edge_half, 0.0, 0.0),
+                self._proj(x - edge_half, 0.0, 0.0),
+            ]
+            if color[3] >= 250:
+                self._quad(quad, color[:3])
+            else:
+                self._alpha_quad(quad, color[:3], color[3])
         # 6K 平面只画小节线（不画更细的节拍线）
         timing = self.chart.timing
         beat = timing.song_ms_to_beat(max(0.0, now_ms))
@@ -2680,21 +2745,23 @@ class PlayerApp:
             self._line_scaled(near, near2, WHITE, 2.4, near[2])
 
     def _blit_strip(self, name: str, x0: float, x1: float, z0: float, z1: float, slices: int = 28) -> bool:
-        """铺一条贴图（6K 平面内）：**按屏幕高度切片**，保证每片都是窄条、透视正确。"""
-        if self._tex(name) is None or z1 <= z0:
+        """铺一条贴图（6K 平面内）：**按屏幕高度切片**，保证每片都是窄条、透视正确。
+
+        分片之间用 :meth:`_lane_tex_pieces` 的整数边界对齐，不会漏出下层颜色。
+        """
+        surface = self._tex(name)
+        if surface is None or z1 <= z0:
             return False
         boundaries = [z for z in self._plane_strip_z(max(4, slices), 0.0) if z0 - 1e-9 <= z <= z1 + 1e-9]
         if len(boundaries) < 2:
             boundaries = [z0, z1]
-        for za, zb in zip(boundaries, boundaries[1:]):
-            if zb - za < 1e-6:
-                continue
-            near_left = self._proj(x0, 0.0, za)
-            near_right = self._proj(x1, 0.0, za)
-            far_left = self._proj(x0, 0.0, zb)
-            far_right = self._proj(x1, 0.0, zb)
-            # 贴图的“上”对应远处：左上 / 右上 / 右下 / 左下
-            self._blit_tex_quad(name, [far_left, far_right, near_right, near_left])
+        tex_w, tex_h = surface.get_size()
+        for index, (_za, _zb, source, dest) in enumerate(
+                self._lane_tex_pieces(x0, x1, boundaries, tex_w, tex_h)):
+            # 贴图的“上”对应远处：分片按 v 从近端 0 到远端 1 取子块
+            self._blit_surface_rect(
+                surface.subsurface(source), dest, key_prefix=f"{name}#{index}",
+            )
         return True
 
     def _blit_hold_center_line(self, x0: float, x1: float, head_z: float, tail_z: float) -> bool:

@@ -692,6 +692,22 @@ class PlayerAppSmokeTests(unittest.TestCase):
         app._start_play()
         app._draw_play()                    # 各厚度都要能画出来
 
+    def test_sliced_texture_pieces_tile_without_gaps(self) -> None:
+        """分片贴图（单键 / 长按开头）的相邻分片必须共用整数边界。"""
+        app = self.app
+        zs = [0.0, 0.25, 0.5, 0.75, 1.0, 1.25]
+        pieces = app._lane_tex_pieces(-0.25, 0.0, zs, 96, 96)
+        self.assertEqual(len(pieces), len(zs) - 1)
+        for (za, zb, _sa, da), (_zb, _zc, _sb, db) in zip(pieces, pieces[1:]):
+            self.assertLess(za, zb)
+            # 列表按 z 从近到远：屏幕 y 越来越小，所以是上一片的**上**边界接下一片的**下**边界
+            self.assertEqual(da.top, db.bottom, "相邻分片必须严丝合缝（不能留缝 / 重叠）")
+        # 远处的分片更窄（透视收敛）
+        self.assertGreaterEqual(pieces[0][3].width, pieces[-1][3].width)
+        # 贴图 v：近端用图像的下边，远端用图像的上边
+        self.assertEqual(pieces[0][2].bottom, 96)
+        self.assertEqual(pieces[-1][2].top, 0)
+
     def test_hold_center_line_uses_texture_fraction(self) -> None:
         """软渲染的长按主体白线：占键宽与贴图一致（= 开头的白线），并按透视收窄。"""
         from rhythm_editor.game import textures as game_textures

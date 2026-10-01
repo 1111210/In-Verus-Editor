@@ -108,6 +108,14 @@ python run_player.py --opengl              # 强制 OpenGL（启动自检不过�
   左下 `R 重试`、右下 `Esc 回主界面`；
 * 截图：`python tools/screenshot_player.py docs/images`
   （`player_menu/settings/play/result.png`）。
+* 接缝自检：`python tools/check_seams.py` —— 每种物件（单键 / 多轨单键 / 长按 /
+  多轨长按 / 空域 / 滑键 / 鼠标点击）× 两种渲染器 × 两种窗口尺寸 × 多个位置，
+  找**孤立的 1 像素线**（贴图分片取整留缝、贴图环绕混进对边）。全部 OK 才返回 0。
+  * Panda 侧：贴图必须 `WMClamp` —— Panda3D 默认是 `WM_repeat`，卡片 UV 正好取到
+    0 / 1 时采样器会把对边混进来（长按开头顶端淡蓝混到底端纯白 = 交界处 1px 白线）。
+  * 软件侧：分片贴图（单键 / 长按开头 / 长条）用 `_lane_tex_pieces()` 的**整数边界**
+    逐片对齐；轨道边界条改成一个多边形、车道高亮左右各外扩 1px（pygame 填充不含
+    右 / 下边界像素）。
 
 ## 后续可做（非阻塞）
 
