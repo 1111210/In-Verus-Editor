@@ -32,6 +32,123 @@ Bounds = Tuple[float, float, float, float]
 Point = Tuple[float, float]
 
 
+def mouse_pane_rect(view: ViewState) -> Bounds:
+    """鼠标平面在屏幕上的显示范围（只在横向裁剪，y 方向不限制）。"""
+    left, right = view.layout.pane_mouse
+    return (float(left), -1e9, float(right), 1e9)
+
+
+def clip_bounds(bounds: Bounds, rect: Bounds) -> Optional[Bounds]:
+    """两个矩形的交集；没有交集时返回 ``None``。"""
+    x0 = max(bounds[0], rect[0])
+    y0 = max(bounds[1], rect[1])
+    x1 = min(bounds[2], rect[2])
+    y1 = min(bounds[3], rect[3])
+    if x0 > x1 or y0 > y1:
+        return None
+    return (x0, y0, x1, y1)
+
+
+def clip_segment(a: Point, b: Point, rect: Bounds) -> Optional[Tuple[Point, Point]]:
+    """Liang–Barsky：把线段裁剪到矩形内；完全在外时返回 ``None``。"""
+    x0, y0 = a
+    x1, y1 = b
+    dx, dy = x1 - x0, y1 - y0
+    t0, t1 = 0.0, 1.0
+    for p, q in (
+        (-dx, x0 - rect[0]),
+        (dx, rect[2] - x0),
+        (-dy, y0 - rect[1]),
+        (dy, rect[3] - y0),
+    ):
+        if abs(p) < 1e-12:
+            if q < 0.0:
+                return None
+            continue
+        ratio = q / p
+        if p < 0.0:
+            if ratio > t1:
+                return None
+            t0 = max(t0, ratio)
+        else:
+            if ratio < t0:
+                return None
+            t1 = min(t1, ratio)
+    return (
+        (x0 + t0 * dx, y0 + t0 * dy),
+        (x0 + t1 * dx, y0 + t1 * dy),
+    )
+
+
+def clip_polyline(points: Sequence[Point], rect: Bounds) -> List[List[Point]]:
+    """把折线裁剪到矩形内，返回若干条连续可见段（可能为空）。"""
+    runs: List[List[Point]] = []
+    current: List[Point] = []
+    for index in range(len(points) - 1):
+        segment = clip_segment(points[index], points[index + 1], rect)
+        if segment is None:
+            if len(current) >= 2:
+                runs.append(current)
+            current = []
+            continue
+        start, end = segment
+        if current and abs(current[-1][0] - start[0]) < 1e-6 and abs(current[-1][1] - start[1]) < 1e-6:
+            current.append(end)
+        else:
+            if len(current) >= 2:
+                runs.append(current)
+            current = [start, end]
+    if len(current) >= 2:
+        runs.append(current)
+    return runs
+
+
+def clip_polygon(points: Sequence[Point], rect: Bounds) -> List[Point]:
+    """Sutherland–Hodgman：把多边形裁剪到矩形内；完全在外时返回空列表。"""
+    if len(points) < 3:
+        return []
+    x0, y0, x1, y1 = rect
+    output: List[Point] = list(points)
+
+    def inside(point: Point, edge: str) -> bool:
+        px, py = point
+        if edge == "left":
+            return px >= x0
+        if edge == "right":
+            return px <= x1
+        if edge == "top":
+            return py >= y0
+        return py <= y1
+
+    def cross(a: Point, b: Point, edge: str) -> Point:
+        ax, ay = a
+        bx, by = b
+        if edge in ("left", "right"):
+            ex = x0 if edge == "left" else x1
+            t = (ex - ax) / ((bx - ax) or 1e-12)
+            return (ex, ay + t * (by - ay))
+        ey = y0 if edge == "top" else y1
+        t = (ey - ay) / ((by - ay) or 1e-12)
+        return (ax + t * (bx - ax), ey)
+
+    for edge in ("left", "right", "top", "bottom"):
+        if not output:
+            break
+        source, output = output, []
+        previous = source[-1]
+        previous_inside = inside(previous, edge)
+        for current in source:
+            current_inside = inside(current, edge)
+            if current_inside:
+                if not previous_inside:
+                    output.append(cross(previous, current, edge))
+                output.append(current)
+            elif previous_inside:
+                output.append(cross(previous, current, edge))
+            previous, previous_inside = current, current_inside
+    return output if len(output) >= 3 else []
+
+
 def hit_signature(view: ViewState) -> tuple:
     """命中缓存的“有效性签名”：视图或物件数量一变就失效。"""
     layout = view.layout
@@ -129,6 +246,7 @@ def click_bounds(note: MouseClick, chart: Chart, view: ViewState) -> Bounds:
 
 
 def region_polygon(note: MouseRegion, chart: Chart, view: ViewState, samples: int = REGION_SAMPLES) -> List[Point]:
+    """空域的屏幕多边形（已裁剪到鼠标平面的显示范围）。"""
     group = chart.group_by_id(note.group)
     left_edge: List[Point] = []
     right_edge: List[Point] = []
@@ -136,7 +254,8 @@ def region_polygon(note: MouseRegion, chart: Chart, view: ViewState, samples: in
         y = view.note_y(beat, group)
         left_edge.append((view.norm_to_x(note.left.value_at(progress)), y))
         right_edge.append((view.norm_to_x(note.right.value_at(progress)), y))
-    return left_edge + list(reversed(right_edge))
+    polygon = left_edge + list(reversed(right_edge))
+    return clip_polygon(polygon, mouse_pane_rect(view))
 
 
 def sample_beats(
@@ -165,23 +284,32 @@ def sample_beats(
     return [(beat, (beat - beat_start) / span) for beat in ordered]
 
 
-def region_bounds(note: MouseRegion, chart: Chart, view: ViewState) -> Bounds:
+def region_bounds(note: MouseRegion, chart: Chart, view: ViewState) -> Optional[Bounds]:
     points = region_polygon(note, chart, view, samples=16)
+    if not points:
+        return None
     xs = [p[0] for p in points]
     ys = [p[1] for p in points]
     return min(xs), min(ys), max(xs), max(ys)
 
 
-def note_bounds(note: Note, chart: Chart, view: ViewState) -> Bounds:
+def note_bounds(note: Note, chart: Chart, view: ViewState) -> Optional[Bounds]:
+    """物件在屏幕上的命中包围盒；完全被鼠标平面裁掉时返回 ``None``。
+
+    6K 物件不受裁剪；鼠标平面物件的真实几何可能超出显示范围，命中测试与渲染
+    一致地裁剪到 ``pane_mouse``。
+    """
     if isinstance(note, LaneNote):
         return lane_note_bounds(note, chart, view)
     if isinstance(note, MouseRegion):
         return region_bounds(note, chart, view)
     if isinstance(note, MouseClick):
-        return click_bounds(note, chart, view)
+        bounds = click_bounds(note, chart, view)
+        return clip_bounds(bounds, mouse_pane_rect(view))
     if isinstance(note, MouseSlide):
-        return slide_bounds(note, chart, view)
-    return 0.0, 0.0, 0.0, 0.0
+        bounds = slide_bounds(note, chart, view)
+        return clip_bounds(bounds, mouse_pane_rect(view))
+    return None
 
 
 def point_in_rect(px: float, py: float, bounds: Bounds, pad: float = 0.0) -> bool:
@@ -209,7 +337,8 @@ def point_in_polygon(px: float, py: float, points: Sequence[Point]) -> bool:
 def note_hit(note: Note, chart: Chart, view: ViewState, x: float, y: float) -> bool:
     if isinstance(note, MouseRegion):
         return point_in_polygon(x, y, region_polygon(note, chart, view))
-    return point_in_rect(x, y, note_bounds(note, chart, view), pad=config.HIT_PADDING_PX)
+    bounds = note_bounds(note, chart, view)
+    return bounds is not None and point_in_rect(x, y, bounds, pad=config.HIT_PADDING_PX)
 
 
 def note_in_time(note: Note, current_beat: float) -> bool:
@@ -262,7 +391,10 @@ def notes_in_box(
     for note in chart.all_notes():
         if not note_in_time(note, view.current_beat):
             continue
-        bx0, by0, bx1, by1 = note_bounds(note, chart, view)
+        bounds = note_bounds(note, chart, view)
+        if bounds is None:
+            continue
+        bx0, by0, bx1, by1 = bounds
         if bx1 < left or bx0 > right or by1 < top or by0 > bottom:
             continue
         found.append(note)

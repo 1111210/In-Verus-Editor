@@ -106,8 +106,8 @@ y_note  = judgment_y − D(t) × 每秒像素
   分别给出边界；`lane_rects` 只落在 6K 区域内，`mouse_left/mouse_right` 是鼠标区域里
   0..1 合法区域的左右界。两个区域共用 `judgment_y` 与 `beat_to_y()`，所以时间轴严格同步。
   6K 区域取 ``SPLIT_6K_RATIO = 0.25``；鼠标区域把 ``MOUSE_OVERFLOW_NORM = 0.45`` 的归一化
-  余量分给两侧，于是显示范围是 ``-0.45 .. 1.45``，而 ``norm_to_x()`` 会把更远的值截断在
-  区域边界上（只影响显示，不改数据）。
+  余量分给两侧，于是显示范围是 ``-0.45 .. 1.45``；``norm_to_x()`` 按真实值映射，
+  超出显示范围的部分由渲染层与命中测试裁剪到鼠标平面内（只影响显示，不改数据）。
 * `LAYOUT_OVERLAY`（演示模式）：`pane_mouse` 直接取中间四条轨道，鼠标平面叠加在 6K 上。
 
 `ViewState.set_layout_mode()` 切换时会 `recompute()`；`lane_at()` 在 6K 区域之外返回 `None`，

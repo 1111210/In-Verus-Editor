@@ -319,6 +319,88 @@ class EditorSmokeTest(unittest.TestCase):
         self.assertAlmostEqual(self.view.norm_to_x(0.0), layout.mouse_left, places=6)
         self.assertAlmostEqual(self.view.norm_to_x(1.0), layout.mouse_right, places=6)
 
+    def test_region_boundary_beyond_display_is_clipped(self) -> None:
+        """边界超出鼠标平面显示范围时：填充裁到面板边，**面板边不当作空域边界**。"""
+        note = MouseRegion(
+            "M1",
+            0.0,
+            4.0,
+            BoundaryCurve(-0.8, -0.8, config.EASE_LINEAR),
+            BoundaryCurve(0.6, 0.6, config.EASE_LINEAR),
+        )
+        self.chart.add(note)
+        self.view.set_beat(0.0)
+        self.draw()
+        pane_left, pane_right = self.view.layout.pane_mouse
+        fill = self.scene._items["region:M1"][2][0]
+        xs = fill[0::2]
+        self.assertGreaterEqual(min(xs), pane_left - 0.5)
+        self.assertAlmostEqual(min(xs), pane_left, delta=1.0, msg="填充应被裁到面板边")
+        # 左边界整体在显示范围之外：不画（不能在面板边缘画一条假边界）
+        self.assertNotIn("region-left:M1", self.scene._items)
+        # 右边界在范围内：照常画
+        self.assertIn("region-right:M1", self.scene._items)
+        right_xs = self.scene._items["region-right:M1"][2][0][0::2]
+        self.assertLess(max(right_xs), pane_right + 1)
+
+    def test_slide_beyond_display_is_clipped(self) -> None:
+        """滑键超出显示范围时裁到面板边，箭头同样裁断（不把面板边画成滑键边界）。"""
+        note = MouseSlide("S1", 3.0, -0.8, 0.4)
+        self.chart.add(note)
+        self.view.set_beat(0.0)
+        self.draw()
+        pane_left, _pane_right = self.view.layout.pane_mouse
+        box = self.scene._items["slide:S1"][2][0]
+        self.assertGreaterEqual(min(box[0::2]), pane_left - 0.5)
+        self.assertAlmostEqual(min(box[0::2]), pane_left, delta=1.0, msg="方框应裁到面板边")
+        arrow = self.scene._items["slide-arrow:S1"][2][0]
+        self.assertGreaterEqual(min(arrow[0], arrow[2]), pane_left - 0.5)
+        self.assertAlmostEqual(min(arrow[0], arrow[2]), pane_left, delta=1.0)
+
+    def test_click_beyond_display_does_not_cover_k6(self) -> None:
+        """点击按键超出显示范围时裁到面板内，不画进左侧 6K 区域。"""
+        left_over = MouseClick("C1", 3.0, -0.25, 0.4)   # 左边界超出显示范围
+        right_over = MouseClick("C2", 5.0, 1.25, 0.4)   # 右边界超出显示范围
+        self.chart.add(left_over)
+        self.chart.add(right_over)
+        self.view.set_beat(0.0)
+        self.draw()
+        pane_left, pane_right = self.view.layout.pane_mouse
+        for note_id in ("C1", "C2"):
+            for kind in ("click-left", "click-right", "click-line", "click-diamond"):
+                key = f"{kind}:{note_id}"
+                if key not in self.scene._items:
+                    continue
+                xs = self.scene._items[key][2][0][0::2]
+                self.assertGreaterEqual(
+                    min(xs), pane_left - 0.5, f"{key} 画进了 6K 区域"
+                )
+                self.assertLessEqual(max(xs), pane_right + 0.5, f"{key} 超出鼠标平面")
+        # 超出的一侧不画；范围内的一侧照常画
+        self.assertNotIn("click-left:C1", self.scene._items)
+        self.assertIn("click-right:C1", self.scene._items)
+        self.assertIn("click-left:C2", self.scene._items)
+        self.assertNotIn("click-right:C2", self.scene._items)
+
+    def test_clipped_mouse_notes_are_not_hittable_outside_pane(self) -> None:
+        """被裁掉的部分不参与命中：6K 区域点不到，可见部分照常命中。"""
+        from rhythm_editor.ui.geometry import notes_at
+
+        note = MouseClick("C1", 3.0, -0.25, 0.4)
+        self.chart.add(note)
+        self.view.set_beat(0.0)
+        self.draw()
+        pane_left, _pane_right = self.view.layout.pane_mouse
+        y = self.y_of_beat(3.0)
+        outside = notes_at(
+            self.chart, self.view, pane_left - 30.0, y, cache=self.state.hit_cache
+        )
+        self.assertNotIn(note, outside, "被裁掉的部分不该能点到")
+        inside = notes_at(
+            self.chart, self.view, pane_left + 30.0, y, cache=self.state.hit_cache
+        )
+        self.assertIn(note, inside, "可见部分应当可以点选")
+
     def test_region_draws_only_left_and_right_edges(self) -> None:
         """蓝色空域只绘制左右两条边界线，不画上下封口横线。"""
         note = MouseRegion("M1", 4.0, 8.0, BoundaryCurve(0.2, 0.1), BoundaryCurve(0.8, 0.9))

@@ -355,9 +355,13 @@ class ViewState:
 
     # ------------------------------------------------------------------ 横向
     def norm_to_x(self, value: float) -> float:
-        """0..1 的规范化横坐标 -> 鼠标平面像素坐标（超出显示范围的部分在边界截断）。"""
-        x = self.layout.mouse_left + float(value) * self.layout.mouse_width
-        return min(max(x, self.layout.pane_mouse[0]), self.layout.pane_mouse[1])
+        """0..1 的规范化横坐标 → 鼠标平面像素坐标（按真实值映射，不裁剪）。
+
+        鼠标平面的显示范围是 ``layout.pane_mouse``：超出它的部分由渲染层与命中
+        测试裁剪（见 ``ui/geometry.py`` 的裁剪工具）。把坐标夹到面板边界会让
+        物件的边界看起来落在屏幕边上。
+        """
+        return self.layout.mouse_left + float(value) * self.layout.mouse_width
 
     def x_to_norm(self, x: float) -> float:
         return (float(x) - self.layout.mouse_left) / max(1e-6, self.layout.mouse_width)

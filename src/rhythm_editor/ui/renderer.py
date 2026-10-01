@@ -48,7 +48,12 @@ from .geometry import (
     SLIDE_MIN_PX,
     TAP_MIN_PX,
     HitCache,
+    clip_bounds,
+    clip_polygon,
+    clip_polyline,
+    clip_segment,
     hit_signature,
+    mouse_pane_rect,
     note_in_time,
     sample_beats,
 )
@@ -661,52 +666,55 @@ class Renderer:
         # 高度与 6K 单键相同，且以判定时刻为垂直中点
         top, bottom = y - TAP_MIN_PX / 2.0, y + TAP_MIN_PX / 2.0
         x0, x1 = x - radius_px, x + radius_px
-        self._hit_entries.append(
-            (note, (x0, top, x1, bottom), None)
-        )
-        # 左右两条红色实线（= 范围边界），粗细与 6K 按键中心实线一致
-        self.scene.line(
-            f"click-left:{note.id}",
-            x0, top, x0, bottom,
-            fill=theme.click_edge,
-            width=theme.note_line_width,
-        )
-        self.scene.line(
-            f"click-right:{note.id}",
-            x1, top, x1, bottom,
-            fill=theme.click_edge,
-            width=theme.note_line_width,
-        )
+        pane = mouse_pane_rect(view)
+        bounds = clip_bounds((x0, top, x1, bottom), pane)
+        if bounds is None:
+            return
+        self._hit_entries.append((note, bounds, None))
+        # 左右两条红色实线（= 范围边界），粗细与 6K 按键中心实线一致；
+        # 超出鼠标平面显示范围的部分裁掉，不画进 6K 区域
+        for key, edge in (("click-left", x0), ("click-right", x1)):
+            segment = clip_segment((edge, top), (edge, bottom), pane)
+            if segment is not None:
+                self.scene.line(
+                    f"{key}:{note.id}",
+                    segment[0][0], segment[0][1], segment[1][0], segment[1][1],
+                    fill=theme.click_edge,
+                    width=theme.note_line_width,
+                )
         # 中间红色横线：连起左右两条竖线，粗细与 6K 单键的横线一致
-        self.scene.line(
-            f"click-line:{note.id}",
-            x0, y, x1, y,
-            fill=theme.click_edge,
-            width=theme.note_line_width,
-        )
+        segment = clip_segment((x0, y), (x1, y), pane)
+        if segment is not None:
+            self.scene.line(
+                f"click-line:{note.id}",
+                segment[0][0], segment[0][1], segment[1][0], segment[1][1],
+                fill=theme.click_edge,
+                width=theme.note_line_width,
+            )
         # 中央红色实心菱形：尺寸固定（不随按键大小变化），中心落在判定时刻上
         d = float(config.CLICK_DIAMOND_RADIUS_PX)
-        self.scene.polygon(
-            f"click-diamond:{note.id}",
-            [(x - d, y), (x, y - d), (x + d, y), (x, y + d)],
-            fill=theme.click_diamond,
-            outline="",
-        )
-        if selected:
-            self.scene.rect(
-                f"sel:{note.id}",
-                x0 - 4,
-                top - 4,
-                x1 + 4,
-                bottom + 4,
-                fill="",
-                outline=theme.select,
-                width=2,
-                dash=(4, 3),
+        diamond = clip_polygon([(x - d, y), (x, y - d), (x + d, y), (x, y + d)], pane)
+        if len(diamond) >= 3:
+            self.scene.polygon(
+                f"click-diamond:{note.id}",
+                diamond,
+                fill=theme.click_diamond,
+                outline="",
             )
+        if selected:
+            selection = clip_bounds((x0 - 4, top - 4, x1 + 4, bottom + 4), pane)
+            if selection is not None:
+                self.scene.rect(
+                    f"sel:{note.id}",
+                    *selection,
+                    fill="",
+                    outline=theme.select,
+                    width=2,
+                    dash=(4, 3),
+                )
             self.scene.text(
                 f"lbl:{note.id}",
-                x0,
+                bounds[0],
                 top - 18,
                 f"{note.id} · 点击按键 · 组{note.group}",
                 fill=theme.select,
@@ -790,21 +798,16 @@ class Renderer:
         ys = [p[1] for p in points]
         if max(ys) < y_min or min(ys) > y_max:
             return
-        self._hit_entries.append(
-            (
-                note,
-                (
-                    min(p[0] for p in points),
-                    min(ys),
-                    max(p[0] for p in points),
-                    max(ys),
-                ),
-                points,
-            )
-        )
+        pane = mouse_pane_rect(view)
+        visible = clip_polygon(points, pane)
+        if len(visible) < 3:
+            return
+        xs = [p[0] for p in visible]
+        bounds = (min(xs), min(ys), max(xs), max(ys))
+        self._hit_entries.append((note, bounds, visible))
         self.scene.polygon(
             f"region:{note.id}",
-            points,
+            visible,
             fill=theme.region_fill,
             outline="",
             stipple=theme.stipple_fill,
@@ -812,16 +815,19 @@ class Renderer:
         half = len(points) // 2
         left_edge = points[:half]
         right_edge = list(reversed(points[half:]))
-        # 空域只绘制**左右两条边界线**，不画上下封口横线
-        self.scene.polyline(f"region-left:{note.id}", left_edge, fill=theme.region_edge, width=3)
-        self.scene.polyline(f"region-right:{note.id}", right_edge, fill=theme.region_edge, width=3)
+        # 空域只绘制**左右两条边界线**（不画上下封口横线）；边界线同样裁剪到
+        # 鼠标平面的显示范围：整体在外的不画，跨界在面板边裁断
+        for prefix, edge in (("region-left", left_edge), ("region-right", right_edge)):
+            for index, run in enumerate(clip_polyline(edge, pane)):
+                key = f"{prefix}:{note.id}" if index == 0 else f"{prefix}:{note.id}#{index + 1}"
+                self.scene.polyline(key, run, fill=theme.region_edge, width=3)
         if selected:
             self.scene.rect(
                 f"sel:{note.id}",
-                min(p[0] for p in points) - 3,
-                min(ys) - 3,
-                max(p[0] for p in points) + 3,
-                max(ys) + 3,
+                bounds[0] - 3,
+                bounds[1] - 3,
+                bounds[2] + 3,
+                bounds[3] + 3,
                 fill="",
                 outline=theme.select,
                 width=2,
@@ -829,8 +835,8 @@ class Renderer:
             )
             self.scene.text(
                 f"lbl:{note.id}",
-                min(p[0] for p in points),
-                min(ys) - 16,
+                bounds[0],
+                bounds[1] - 16,
                 f"{note.id} · 空域 · 组{note.group}",
                 fill=theme.select,
                 font=theme.font(theme.font_small),
@@ -861,19 +867,19 @@ class Renderer:
         x0, x1 = min(x_start, x_end), max(x_start, x_end)
         if x1 - x0 < 3.0:
             x1 = x0 + 3.0
-        self._hit_entries.append(
-            (
-                note,
-                (x0 - 1.5, y - SLIDE_MIN_PX / 2, x1 + 1.5, y + SLIDE_MIN_PX / 2),
-                None,
-            )
+        pane = mouse_pane_rect(view)
+        bounds = clip_bounds(
+            (x0 - 1.5, y - SLIDE_MIN_PX / 2, x1 + 1.5, y + SLIDE_MIN_PX / 2), pane
         )
+        if bounds is None:
+            return
+        self._hit_entries.append((note, bounds, None))
         self.scene.rect(
             f"slide:{note.id}",
-            x0 - 1.5,
-            y - SLIDE_MIN_PX / 2,
-            x1 + 1.5,
-            y + SLIDE_MIN_PX / 2,
+            bounds[0],
+            bounds[1],
+            bounds[2],
+            bounds[3],
             fill=fill,
             outline=edge,
             width=2,
@@ -883,32 +889,35 @@ class Renderer:
         direction = 1.0 if x_end >= x_start else -1.0
         arrow_from = x_start
         arrow_to = x_start + direction * max(abs(x_end - x_start), min_dx)
-        self.scene.line(
-            f"slide-arrow:{note.id}",
-            arrow_from,
-            y,
-            arrow_to,
-            y,
-            fill=edge,
-            width=3,
-            arrow="last",
-            arrowshape=(12, 14, 5),
-        )
-        if selected:
-            self.scene.rect(
-                f"sel:{note.id}",
-                x0 - 6,
-                y - SLIDE_MIN_PX / 2 - 4,
-                x1 + 6,
-                y + SLIDE_MIN_PX / 2 + 4,
-                fill="",
-                outline=theme.select,
-                width=2,
+        segment = clip_segment((arrow_from, y), (arrow_to, y), pane)
+        if segment is not None:
+            self.scene.line(
+                f"slide-arrow:{note.id}",
+                segment[0][0],
+                segment[0][1],
+                segment[1][0],
+                segment[1][1],
+                fill=edge,
+                width=3,
+                arrow="last",
+                arrowshape=(12, 14, 5),
             )
+        if selected:
+            selection = clip_bounds(
+                (x0 - 6, y - SLIDE_MIN_PX / 2 - 4, x1 + 6, y + SLIDE_MIN_PX / 2 + 4), pane
+            )
+            if selection is not None:
+                self.scene.rect(
+                    f"sel:{note.id}",
+                    *selection,
+                    fill="",
+                    outline=theme.select,
+                    width=2,
+                )
             direction = "右" if note.direction > 0 else "左"
             self.scene.text(
                 f"lbl:{note.id}",
-                x0,
+                bounds[0],
                 y - SLIDE_MIN_PX / 2 - 20,
                 f"{note.id} · 滑键({direction}) · 组{note.group}",
                 fill=theme.select,
@@ -1023,36 +1032,42 @@ class Renderer:
                 y = view.note_y(beat)
                 left_points.append((view.norm_to_x(left.value_at(p)), y))
                 right_points.append((view.norm_to_x(right.value_at(p)), y))
-            self.scene.polygon(
-                "pending:region",
-                left_points + list(reversed(right_points)),
-                fill=theme.region_fill,
-                outline="",
-                stipple=theme.stipple_soft,
-            )
-            # 预览同样只画左右两条边界线
-            self.scene.polyline(
-                "pending:region-left", left_points, fill=theme.pending, width=2, dash=(4, 3)
-            )
-            self.scene.polyline(
-                "pending:region-right", right_points, fill=theme.pending, width=2, dash=(4, 3)
-            )
+            pane = mouse_pane_rect(view)
+            visible = clip_polygon(left_points + list(reversed(right_points)), pane)
+            if len(visible) >= 3:
+                self.scene.polygon(
+                    "pending:region",
+                    visible,
+                    fill=theme.region_fill,
+                    outline="",
+                    stipple=theme.stipple_soft,
+                )
+            # 预览同样只画左右两条边界线，并裁剪到鼠标平面的显示范围
+            for prefix, edge in (
+                ("pending:region-left", left_points),
+                ("pending:region-right", right_points),
+            ):
+                for index, run in enumerate(clip_polyline(edge, pane)):
+                    key = prefix if index == 0 else f"{prefix}#{index + 1}"
+                    self.scene.polyline(key, run, fill=theme.pending, width=2, dash=(4, 3))
         elif pending.tool == config.TOOL_MOUSE_SLIDE and pending.x_start is not None and pending.beat_start is not None:
             x0 = view.norm_to_x(pending.x_start)
             x1 = view.norm_to_x(pending.x_end if pending.x_end is not None else pending.x_start)
             min_dx = max(18.0, config.MIN_SLIDE_SPAN * view.layout.mouse_width)
+            pane = mouse_pane_rect(view)
             if pending.step == 0:
                 # 选起点：只画一根黄色虚线，标出即将放置的横向位置
-                self.scene.line(
-                    "pending:slide-guide",
-                    x0,
-                    layout.play_top,
-                    x0,
-                    layout.play_bottom,
-                    fill=theme.pending,
-                    width=2,
-                    dash=(6, 4),
+                segment = clip_segment(
+                    (x0, layout.play_top), (x0, layout.play_bottom), pane
                 )
+                if segment is not None:
+                    self.scene.line(
+                        "pending:slide-guide",
+                        segment[0][0], segment[0][1], segment[1][0], segment[1][1],
+                        fill=theme.pending,
+                        width=2,
+                        dash=(6, 4),
+                    )
             else:
                 # 选终点：按方向给出绿色（向右）/ 黄色（向左）预览
                 leftward = x1 < x0
@@ -1062,49 +1077,51 @@ class Renderer:
                 lo, hi = min(x0, x1), max(x0, x1)
                 if hi - lo < 3.0:
                     hi = lo + 3.0
-                self.scene.rect(
-                    "pending:slide",
-                    lo - 1.5,
-                    y - SLIDE_MIN_PX / 2,
-                    hi + 1.5,
-                    y + SLIDE_MIN_PX / 2,
-                    fill=fill,
-                    outline=edge,
-                    width=2,
-                    dash=(4, 3),
-                    stipple=theme.stipple_fill,
+                bounds = clip_bounds(
+                    (lo - 1.5, y - SLIDE_MIN_PX / 2, hi + 1.5, y + SLIDE_MIN_PX / 2), pane
                 )
+                if bounds is not None:
+                    self.scene.rect(
+                        "pending:slide",
+                        *bounds,
+                        fill=fill,
+                        outline=edge,
+                        width=2,
+                        dash=(4, 3),
+                        stipple=theme.stipple_fill,
+                    )
                 # 方框按实际长度显示；箭头保持最小长度以便看清方向
                 arrow_from = x0
                 arrow_to = x0 + (-1.0 if leftward else 1.0) * max(abs(x1 - x0), min_dx)
-                self.scene.line(
-                    "pending:slide-arrow",
-                    arrow_from,
-                    y,
-                    arrow_to,
-                    y,
-                    fill=edge,
-                    width=3,
-                    arrow="last",
-                    arrowshape=(12, 14, 5),
-                )
+                segment = clip_segment((arrow_from, y), (arrow_to, y), pane)
+                if segment is not None:
+                    self.scene.line(
+                        "pending:slide-arrow",
+                        segment[0][0], segment[0][1], segment[1][0], segment[1][1],
+                        fill=edge,
+                        width=3,
+                        arrow="last",
+                        arrowshape=(12, 14, 5),
+                    )
         elif pending.tool == config.TOOL_MOUSE_CLICK and pending.x_start is not None and pending.beat_start is not None:
             # 点击按键预览：选中心时给一根竖直虚线；选大小时给半透明红圆盘 + 实心菱形
             y = view.note_y(pending.beat_start)
             x = view.norm_to_x(pending.x_start)
             d = float(config.CLICK_DIAMOND_RADIUS_PX)
             top, bottom = y - TAP_MIN_PX / 2.0, y + TAP_MIN_PX / 2.0
+            pane = mouse_pane_rect(view)
             if pending.step == 0:
-                self.scene.line(
-                    "pending:click-guide",
-                    x,
-                    layout.play_top,
-                    x,
-                    layout.play_bottom,
-                    fill=theme.pending,
-                    width=2,
-                    dash=(6, 4),
+                segment = clip_segment(
+                    (x, layout.play_top), (x, layout.play_bottom), pane
                 )
+                if segment is not None:
+                    self.scene.line(
+                        "pending:click-guide",
+                        segment[0][0], segment[0][1], segment[1][0], segment[1][1],
+                        fill=theme.pending,
+                        width=2,
+                        dash=(6, 4),
+                    )
             else:
                 end = pending.x_end if pending.x_end is not None else pending.x_start
                 # 与真实放置保持一致：半径不小于 MIN_CLICK_RADIUS
@@ -1116,32 +1133,35 @@ class Renderer:
                     ("pending:click-left", x - radius_px),
                     ("pending:click-right", x + radius_px),
                 ):
+                    segment = clip_segment((edge, top), (edge, bottom), pane)
+                    if segment is None:
+                        continue
                     self.scene.line(
                         key,
-                        edge,
-                        top,
-                        edge,
-                        bottom,
+                        segment[0][0], segment[0][1], segment[1][0], segment[1][1],
                         fill=theme.click_edge,
                         width=theme.note_line_width,
                         dash=(4, 3),
                     )
-                self.scene.line(
-                    "pending:click-line",
-                    x - radius_px,
-                    y,
-                    x + radius_px,
-                    y,
-                    fill=theme.click_edge,
-                    width=theme.note_line_width,
-                    dash=(4, 3),
-                )
-            self.scene.polygon(
-                "pending:click-diamond",
-                [(x - d, y), (x, y - d), (x + d, y), (x, y + d)],
-                fill=theme.click_diamond,
-                outline="",
+                segment = clip_segment((x - radius_px, y), (x + radius_px, y), pane)
+                if segment is not None:
+                    self.scene.line(
+                        "pending:click-line",
+                        segment[0][0], segment[0][1], segment[1][0], segment[1][1],
+                        fill=theme.click_edge,
+                        width=theme.note_line_width,
+                        dash=(4, 3),
+                    )
+            diamond = clip_polygon(
+                [(x - d, y), (x, y - d), (x + d, y), (x, y + d)], pane
             )
+            if len(diamond) >= 3:
+                self.scene.polygon(
+                    "pending:click-diamond",
+                    diamond,
+                    fill=theme.click_diamond,
+                    outline="",
+                )
         if pending.hint:
             self.scene.text(
                 "pending:hint",
@@ -1176,24 +1196,33 @@ class Renderer:
             elif isinstance(note, MouseRegion):
                 y = view.note_y(note.beat_start)
                 y2 = view.note_y(note.beat_end)
-                self.scene.rect(
-                    key,
-                    view.norm_to_x(note.left.start),
-                    min(y, y2),
-                    view.norm_to_x(note.right.start),
-                    max(y, y2),
-                    fill="", outline=theme.pending, width=2, dash=(3, 3),
+                xa = view.norm_to_x(note.left.start)
+                xb = view.norm_to_x(note.right.start)
+                bounds = clip_bounds(
+                    (min(xa, xb), min(y, y2), max(xa, xb), max(y, y2)),
+                    mouse_pane_rect(view),
                 )
+                if bounds is not None:
+                    self.scene.rect(
+                        key, *bounds,
+                        fill="", outline=theme.pending, width=2, dash=(3, 3),
+                    )
             else:
                 y = view.note_y(note.beat)
-                self.scene.rect(
-                    key,
-                    view.norm_to_x(min(note.x_start, note.x_end)) - 4,
-                    y - SLIDE_MIN_PX / 2,
-                    view.norm_to_x(max(note.x_start, note.x_end)) + 4,
-                    y + SLIDE_MIN_PX / 2,
-                    fill="", outline=theme.pending, width=2, dash=(3, 3),
+                bounds = clip_bounds(
+                    (
+                        view.norm_to_x(min(note.x_start, note.x_end)) - 4,
+                        y - SLIDE_MIN_PX / 2,
+                        view.norm_to_x(max(note.x_start, note.x_end)) + 4,
+                        y + SLIDE_MIN_PX / 2,
+                    ),
+                    mouse_pane_rect(view),
                 )
+                if bounds is not None:
+                    self.scene.rect(
+                        key, *bounds,
+                        fill="", outline=theme.pending, width=2, dash=(3, 3),
+                    )
 
     def _draw_rubber_band(self, state: RenderState) -> None:
         if not state.rubber_band:
