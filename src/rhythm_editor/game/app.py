@@ -1062,6 +1062,13 @@ class PlayerApp:
         surface = self._tex(name)
         if surface is None or len(corners) != 4:
             return False
+        return self._blit_surface_quad(surface, corners, flip_x, key_prefix=name)
+
+    def _blit_surface_quad(self, surface, corners, flip_x: bool = False,
+                           key_prefix: str = "") -> bool:
+        """仿射贴图的实际实现（允许直接给 surface，供分片透视用）。"""
+        if surface is None or len(corners) != 4:
+            return False
         points = [(float(p[0]), float(p[1])) for p in corners]
         (x0, y0), (x1, y1), (x2, y2), (x3, y3) = points
         edge_x = (x1 - x0, y1 - y0)
@@ -1069,7 +1076,8 @@ class PlayerApp:
         width = max(1.0, math.hypot(*edge_x))
         height = max(1.0, math.hypot(*edge_y))
         angle = -math.degrees(math.atan2(edge_x[1], edge_x[0]))
-        key = (name, int(round(width)), int(round(height)), round(angle * 2) / 2.0, flip_x)
+        key = (key_prefix or id(surface), int(round(width)), int(round(height)),
+               round(angle * 2) / 2.0, flip_x)
         cached = self._quad_cache.get(key)
         if cached is None:
             base = pygame.transform.flip(surface, True, False) if flip_x else surface
@@ -1086,6 +1094,42 @@ class PlayerApp:
             cached,
             (center_x - cached.get_width() / 2.0, center_y - cached.get_height() / 2.0),
         )
+        return True
+
+    def _blit_lane_tex(self, name: str, x0: float, x1: float, z_near: float, z_far: float,
+                       slices: int = 8, flip_x: bool = False) -> bool:
+        """把贴图按**透视正确**的方式铺在 6K 平面的一块区域里。
+
+        直接 ``_blit_tex_quad`` 只能做仿射（旋转 + 缩放），而轨道平面上的矩形在屏幕上
+        是**梯形**：左右边应该跟着轨道收敛。只按“上边角度 + 左边长度”贴，就会画成一个
+        **竖直矩形** —— 看起来像按键竖在平面里。这里沿 z 分片，每片再取贴图对应的
+        子块（v 从近端的 0 到远端的 1），逐片仿射，误差只有片内那一点点。
+        """
+        surface = self._tex(name)
+        if surface is None or z_far <= z_near:
+            return False
+        tex_w, tex_h = surface.get_size()
+        if tex_w < 1 or tex_h < 1:
+            return False
+        slices = max(1, int(slices))
+        for index in range(slices):
+            za = z_near + (z_far - z_near) * index / slices          # 近端 -> 远端
+            zb = z_near + (z_far - z_near) * (index + 1) / slices
+            # 贴图 v：0 = 近端（判定线一侧，图像的**下**边），1 = 远端
+            v0 = index / slices
+            v1 = (index + 1) / slices
+            y1 = int(round((1.0 - v1) * tex_h))
+            y0 = int(round((1.0 - v0) * tex_h))
+            rect = pygame.Rect(0, y1, tex_w, max(1, y0 - y1))
+            piece = surface.subsurface(rect)
+            corners = [
+                self._proj(x0, 0.0, zb), self._proj(x1, 0.0, zb),     # 左上 / 右上（远边）
+                self._proj(x1, 0.0, za), self._proj(x0, 0.0, za),     # 右下 / 左下（近边）
+            ]
+            self._blit_surface_quad(
+                piece, corners, flip_x,
+                key_prefix=f"{name}#{index}/{slices}",
+            )
         return True
 
     @staticmethod
@@ -2583,13 +2627,8 @@ class PlayerApp:
                 self._line_scaled(mid_near, mid_far, WHITE, 2.4, min(near[2], far[2]))
             # 开头盖在主体上面（有意让一部分主体被开头覆盖）
             head_top = max(0.0, head_z) + max(0.4, self.settings.note_thickness)
-            head_quad = [
-                self._proj(x0, 0.0, min(START_Z, head_top)),
-                self._proj(x1, 0.0, min(START_Z, head_top)),
-                self._proj(x1, 0.0, max(0.0, head_z)),
-                self._proj(x0, 0.0, max(0.0, head_z)),
-            ]
-            if not self._blit_tex_quad(f"hold_head_{tex_index}", head_quad):
+            if not self._blit_lane_tex(f"hold_head_{tex_index}", x0, x1,
+                                       max(0.0, head_z), min(START_Z, head_top)):
                 self._quad(
                     [
                         self._proj(x0, 0.0, max(0.0, head_z)),
@@ -2607,13 +2646,9 @@ class PlayerApp:
                 else self.settings.note_thickness
             )
             far_z = min(START_Z, max(0.0, head_z) + thickness)
-            tap_quad = [
-                self._proj(x0, 0.0, far_z),
-                self._proj(x1, 0.0, far_z),
-                self._proj(x1, 0.0, max(0.0, head_z)),
-                self._proj(x0, 0.0, max(0.0, head_z)),
-            ]
-            if self._blit_tex_quad(f"tap_{tex_index}", tap_quad):
+            # 用**分片透视**贴（左右边界跟着轨道收敛），否则仿射会把按键画成竖直矩形
+            if self._blit_lane_tex(f"tap_{tex_index}", x0, x1,
+                                   max(0.0, head_z), far_z):
                 return
             near, near2 = self._proj(x0, 0.0, max(0.0, head_z)), self._proj(x1, 0.0, max(0.0, head_z))
             far, far2 = self._proj(x0, 0.0, far_z), self._proj(x1, 0.0, far_z)
