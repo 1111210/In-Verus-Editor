@@ -50,7 +50,7 @@ python -m unittest discover -s tests -t .
 ```
 
 本机（Windows + Python 3.14.7 + Tk 9.0 + pygame-ce 2.5.8 + Panda3D 1.10）：
-**352 项全部通过**（约 16 秒），其中包含真实 Tk 画布与 headless pygame 的界面测试。
+**355 项全部通过**（约 16 秒），其中包含真实 Tk 画布与 headless pygame 的界面测试。
 
 | 测试文件 | 覆盖内容 |
 | --- | --- |
@@ -69,7 +69,7 @@ python -m unittest discover -s tests -t .
 | `test_dialogs.py` | BPM 第 0 拍项、默认速度组、物件编辑与缓动写入 |
 | `test_editor_smoke.py` | 真实 Tk 画布：全部放置工具、图层、空域、滚动 / 缩放、拖拽 |
 | `test_app_flow.py` | 应用级：菜单、播放 / 暂停、演示模式、设置与保存、窗口模式 |
-| `test_audio_rate.py` | 倍速与重采样、延迟补偿、分窗口调度、连续播放 |
+| `test_audio_rate.py` | 倍速档位（含 0.01 ~ 0.1 细档）与重采样、延迟补偿、分窗口调度、连续播放 |
 | `test_metronome.py` | 节拍音与打击音效、音量、慢放不改变音效长度 |
 | `test_launcher.py` | 启动脚本、启动日志、音频后端诊断 |
 | `test_game_judge.py` | 游玩器判定窗口、长按 / 空域区间、滑键、准度与分数 |

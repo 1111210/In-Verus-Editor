@@ -301,7 +301,7 @@ class AppFlowTest(unittest.TestCase):
         self.assertEqual(self.app.document.selection, {"L900", "L901"})
 
     def test_rate_buttons_step_and_clamp(self) -> None:
-        """倍速按钮：[−] 减 0.1x、[+] 加 0.1x，范围 0.1 ~ 1.0x。"""
+        """倍速按钮：≥0.1x 每档 0.1，从 0.1x 继续减速进入 0.01 一档，直到 0.01x。"""
         toolbar = self.app.toolbar
         plus = minus = None
         for child in toolbar.winfo_children():
@@ -322,12 +322,21 @@ class AppFlowTest(unittest.TestCase):
         # 上限：1.0x 再加不上去
         plus.invoke()
         self.assertAlmostEqual(self.app.audio.rate, 1.0, places=6)
-        # 下限：一路减到 0.1x 就停住
+        # 0.9 → … → 0.1
+        for _ in range(9):
+            minus.invoke()
+        self.assertAlmostEqual(self.app.audio.rate, 0.1, places=6)
+        # 0.1x 再减一档进入细档 0.09x
+        minus.invoke()
+        self.assertAlmostEqual(self.app.audio.rate, 0.09, places=6)
+        toolbar.sync()
+        self.assertEqual(str(toolbar.lbl_rate.cget("text")), "0.09x")
+        # 下限：一路减到 0.01x 就停住
         for _ in range(20):
             minus.invoke()
         self.assertAlmostEqual(self.app.audio.rate, config.RATE_MIN, places=6)
         toolbar.sync()
-        self.assertEqual(str(toolbar.lbl_rate.cget("text")), "0.1x")
+        self.assertEqual(str(toolbar.lbl_rate.cget("text")), "0.01x")
         self.app.set_playback_rate(1.0)
 
     def test_menu_not_reconfigured_every_frame(self) -> None:
@@ -602,12 +611,47 @@ class AppFlowTest(unittest.TestCase):
             sub_labels = [
                 sub.entrycget(j, "label")
                 for j in range(sub.index("end") + 1)
-                if sub.type(j) == "command"
+                if sub.type(j) in ("command", "checkbutton")
             ]
             self.assertTrue(
                 any("自定义" in label for label in sub_labels),
                 f"{name} 子菜单应有自定义项：{sub_labels}",
             )
+
+    def test_custom_grid_shows_current_division_in_menu(self) -> None:
+        """自定义时间网格时，菜单里的“自定义…”项显示当前细分并被勾选。"""
+        view_menu = self.app.toolbar._menus["视图"]
+        index = next(
+            i
+            for i in range(view_menu.index("end") + 1)
+            if view_menu.type(i) == "cascade"
+            and view_menu.entrycget(i, "label") == "时间网格细分"
+        )
+        sub = self.app.root.nametowidget(view_menu.entrycget(index, "menu"))
+        custom = [
+            (menu, idx, var)
+            for menu, idx, entry, var, _is_check in self.app.toolbar._registered
+            if entry.label_fn is not None
+        ]
+        self.assertEqual(len(custom), 1, "动态标题的菜单项应当只有时间网格的自定义项")
+        menu, idx, var = custom[0]
+
+        self.app.set_grid_division("5")
+        self.app.toolbar.sync()
+        self.assertIn("1/5", menu.entrycget(idx, "label"))
+        self.assertTrue(bool(var.get()), "自定义值不在预置列表里时应勾选“自定义…”")
+
+        self.app.set_grid_division("4")
+        self.app.toolbar.sync()
+        self.assertIn("1/4", menu.entrycget(idx, "label"))
+        self.assertFalse(bool(var.get()))
+        # 预置项 1/4 此时应当是勾选状态
+        checked_labels = [
+            entry.label
+            for item_menu, _idx, entry, item_var, is_check in self.app.toolbar._registered
+            if str(item_menu) == str(sub) and is_check and bool(item_var.get())
+        ]
+        self.assertIn("1/4", checked_labels)
 
     def test_horizontal_grid_has_no_separate_switch(self) -> None:
         """横向辅助网格只要设置了等分就必然显示（没有单独的显示开关）。"""

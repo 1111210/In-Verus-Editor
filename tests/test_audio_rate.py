@@ -34,9 +34,46 @@ class RateSettingsTests(unittest.TestCase):
         self.assertAlmostEqual(settings.audio_latency_ms, config.AUDIO_LATENCY_MAX_MS)
 
     def test_rate_constants(self) -> None:
-        self.assertAlmostEqual(config.RATE_MIN, 0.1)
+        self.assertAlmostEqual(config.RATE_MIN, 0.01)
         self.assertAlmostEqual(config.RATE_MAX, 1.0)
         self.assertAlmostEqual(config.RATE_STEP, 0.1)
+        self.assertAlmostEqual(config.RATE_FINE_STEP, 0.01)
+        self.assertAlmostEqual(config.RATE_FINE_MAX, 0.1)
+
+    def test_slow_zone_uses_fine_steps(self) -> None:
+        """0.1x 继续减速进入 0.01 一档：0.1 → 0.09 … 0.01；反向逐档回到 0.1 → 0.2。"""
+        rate = 0.2
+        rate = config.step_rate(rate, -1)
+        self.assertAlmostEqual(rate, 0.1)
+        rate = config.step_rate(rate, -1)
+        self.assertAlmostEqual(rate, 0.09)
+        for _ in range(8):
+            rate = config.step_rate(rate, -1)
+        self.assertAlmostEqual(rate, config.RATE_MIN)
+        self.assertAlmostEqual(config.step_rate(rate, -1), config.RATE_MIN)
+        rate = config.step_rate(rate, 1)
+        self.assertAlmostEqual(rate, 0.02)
+        for _ in range(8):
+            rate = config.step_rate(rate, 1)
+        self.assertAlmostEqual(rate, 0.1)
+        self.assertAlmostEqual(config.step_rate(rate, 1), 0.2)
+        self.assertEqual(config.format_rate(0.09), "0.09x")
+        self.assertEqual(config.format_rate(0.1), "0.1x")
+        self.assertEqual(config.format_rate(1.0), "1.0x")
+
+    def test_stretch_window_bounds_output_at_very_low_rate(self) -> None:
+        """极慢倍速下窗口按输出时长控制：0.01x 的输出也不超过 30 秒。"""
+        from rhythm_editor.audio import (
+            STRETCH_WINDOW_MAX_MS,
+            STRETCH_SOURCE_MIN_MS,
+            stretch_window_ms,
+        )
+
+        self.assertAlmostEqual(stretch_window_ms(1.0), STRETCH_WINDOW_MAX_MS)
+        self.assertAlmostEqual(stretch_window_ms(0.01), STRETCH_SOURCE_MIN_MS)
+        for rate in (0.01, 0.03, 0.05, 0.1, 0.25, 0.5, 1.0):
+            output_s = stretch_window_ms(rate) / 1000.0 / rate
+            self.assertLessEqual(output_s, 30.0, f"{rate}x 的窗口输出过长")
 
 
 class SilentClockRateTests(unittest.TestCase):
@@ -66,8 +103,10 @@ class AudioPlayerRateTests(unittest.TestCase):
         player = AudioPlayer()
         player.set_rate(0.7)
         self.assertAlmostEqual(player.rate, 0.7)
-        player.set_rate(0.04)          # 低于下限 -> 夹到 0.1
-        self.assertAlmostEqual(player.rate, 0.1)
+        player.set_rate(0.04)          # 细档：0.01 ~ 0.09 之间的倍速直接可用
+        self.assertAlmostEqual(player.rate, 0.04)
+        player.set_rate(0.004)         # 低于下限 -> 夹到 0.01
+        self.assertAlmostEqual(player.rate, config.RATE_MIN)
         player.set_rate(2.0)           # 加速：>1x 也走重采样后端
         self.assertAlmostEqual(player.rate, 2.0)
         player.set_rate(9.0)           # 高于上限 -> 夹到 RATE_LIMIT_MAX = 3.0
@@ -354,12 +393,12 @@ class TimeStretchTests(unittest.TestCase):
 
         old = (
             audio_module.STRETCH_TARGET_OUTPUT_MS,
-            audio_module.STRETCH_WINDOW_MIN_MS,
+            audio_module.STRETCH_SOURCE_MIN_MS,
             audio_module.STRETCH_WINDOW_MAX_MS,
         )
         # 每段约 2 秒输出：测试跑满负载时也不会因为“主线程被饿死”而假报断音
         audio_module.STRETCH_TARGET_OUTPUT_MS = 2000.0
-        audio_module.STRETCH_WINDOW_MIN_MS = 1000.0
+        audio_module.STRETCH_SOURCE_MIN_MS = 1000.0
         audio_module.STRETCH_WINDOW_MAX_MS = 2000.0
         try:
             freq = 44100

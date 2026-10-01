@@ -37,6 +37,8 @@ class Entry:
     checked: Optional[Callable[[], bool]] = None
     separator: bool = False
     options: Optional[List["Entry"]] = None
+    # 动态标题：菜单每次同步时重新求值（例如显示当前自定义值）
+    label_fn: Optional[Callable[[], str]] = None
 
 
 @dataclass
@@ -66,6 +68,7 @@ class Toolbar(ttk.Frame):
         self._open_group: Optional[str] = None
         # 缓存上一次真正写入菜单/按钮的值：每帧无脑 entryconfigure 会导致菜单频闪
         self._last_entry_state: List[Optional[Tuple[str, Optional[bool]]]] = []
+        self._last_entry_labels: List[Optional[str]] = []
         self._last_labels: Dict[Tuple[str, int], str] = {}
         self._last_play_text: Optional[str] = None
         self._last_place_text: Optional[str] = None
@@ -130,18 +133,23 @@ class Toolbar(ttk.Frame):
             Entry("缩小", lambda: app.zoom(config.ZOOM_STEP), "-"),
             Entry("重置缩放", app.reset_zoom),
         ]
+        grid_choices = (1, 2, 3, 4, 6, 8, 12, 16, 24, 32, 48, 64)
         grid_options = [
             Entry(
                 f"1/{value}",
                 (lambda v=value: app.set_grid_division(str(v))),
                 checked=(lambda v=value: app.document.chart.settings.grid_division == v),
             )
-            for value in (1, 2, 3, 4, 6, 8, 12, 16, 24, 32, 48, 64)
+            for value in grid_choices
         ] + [
             Entry(separator=True),
             Entry(
-                f"自定义…（当前 1/{app.document.chart.settings.grid_division}）",
+                "",
                 app.set_grid_division_custom,
+                checked=lambda: app.document.chart.settings.grid_division not in grid_choices,
+                label_fn=lambda: (
+                    f"自定义…（当前 1/{app.document.chart.settings.grid_division}）"
+                ),
             ),
         ]
         hgrid_options = [Entry("关闭", lambda: app.set_horizontal_divisions("0"),
@@ -243,13 +251,14 @@ class Toolbar(ttk.Frame):
             self._right, text="▶ 播放", style="Accent.TButton", command=app.toggle_play
         )
         self.btn_play.pack(side="right", padx=(8, 0))
-        # 播放倍速：［−］［当前倍速］［＋］，0.1x 一档，范围 0.1 ~ 1.0x（慢放音调变低）
+        # 播放倍速：［−］［当前倍速］［＋］；0.1x 一档，0.1x 以下细到 0.01x
+        # （范围 0.01 ~ 1.0x，慢放音调变低）
         ttk.Button(
             self._right, text="+", width=3, command=app.increase_playback_rate
         ).pack(side="right", padx=(4, 0))
         self.lbl_rate = ttk.Label(
             self._right,
-            text=f"{config.DEFAULT_RATE:.1f}x",
+            text=config.format_rate(config.DEFAULT_RATE),
             width=5,
             anchor="center",
         )
@@ -372,12 +381,13 @@ class Toolbar(ttk.Frame):
                 self._fill_menu(submenu, entry.options)
                 menu.add_cascade(label=entry.label, menu=submenu)
                 continue
+            label = entry.label_fn() if entry.label_fn is not None else entry.label
             accelerator = entry.accelerator or None
             if entry.checked is not None:
                 var = tk.BooleanVar(value=bool(entry.checked()))
                 index = menu.index("end")
                 menu.add_checkbutton(
-                    label=entry.label,
+                    label=label,
                     command=self._wrap_command(entry.command),
                     variable=var,
                     accelerator=accelerator,
@@ -386,7 +396,7 @@ class Toolbar(ttk.Frame):
             else:
                 index = menu.index("end")
                 menu.add_command(
-                    label=entry.label,
+                    label=label,
                     command=self._wrap_command(entry.command),
                     accelerator=accelerator,
                 )
@@ -500,11 +510,18 @@ class Toolbar(ttk.Frame):
         view = app.view
         if len(self._last_entry_state) != len(self._registered):
             self._last_entry_state = [None] * len(self._registered)
+        if len(self._last_entry_labels) != len(self._registered):
+            self._last_entry_labels = [None] * len(self._registered)
         for position, (menu, index, entry, var, is_check) in enumerate(self._registered):
             state = "normal"
             if entry.enabled is not None and not entry.enabled():
                 state = "disabled"
             checked = bool(entry.checked()) if (is_check and entry.checked is not None) else None
+            if entry.label_fn is not None:
+                text = entry.label_fn()
+                if self._last_entry_labels[position] != text:
+                    menu.entryconfigure(index, label=text)
+                    self._last_entry_labels[position] = text
             desired = (state, checked)
             previous = self._last_entry_state[position]
             if previous == desired:
@@ -531,7 +548,7 @@ class Toolbar(ttk.Frame):
             if text != self._last_play_text:
                 self.btn_play.configure(text=text)
                 self._last_play_text = text
-        rate_text = f"{app.audio.rate:.1f}x"
+        rate_text = config.format_rate(app.audio.rate)
         if rate_text != self._last_rate_text:
             self.lbl_rate.configure(text=rate_text)
             self._last_rate_text = rate_text

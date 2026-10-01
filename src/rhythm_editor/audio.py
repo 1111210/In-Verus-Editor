@@ -27,7 +27,7 @@ from . import config
 
 
 def _fmt_rate(rate: float) -> str:
-    return f"{rate:.1f}x"
+    return config.format_rate(rate)
 
 
 _PYGAME = None
@@ -59,8 +59,17 @@ STRETCH_OVERLAP = 4           # 75% 重叠
 # 通道只支持一个排队块（见 StretchedSoundBackend.poll），所以窗口取长一点：
 # 8 秒的余量足够 16ms 的 tick 从容补窗口，单次重采样也只有 ~15ms。
 STRETCH_TARGET_OUTPUT_MS = 8_000.0
-STRETCH_WINDOW_MIN_MS = 2_000.0    # 原始窗口下限
-STRETCH_WINDOW_MAX_MS = 8_000.0   # 原始窗口上限
+# 源窗口下限：极慢倍速下也至少给插值这么多样本（否则一次插值的跨度太大）
+STRETCH_SOURCE_MIN_MS = 250.0
+STRETCH_WINDOW_MAX_MS = 8_000.0   # 源窗口上限
+
+
+def stretch_window_ms(rate: float) -> float:
+    """一个窗口覆盖多少**源**音频：按“输出约 8 秒”换算，再取源窗口下限。"""
+    return min(
+        STRETCH_WINDOW_MAX_MS,
+        max(STRETCH_SOURCE_MIN_MS, STRETCH_TARGET_OUTPUT_MS * max(0.0, float(rate))),
+    )
 
 
 def audio_backend_name() -> str:
@@ -167,7 +176,7 @@ def time_stretch(
     if _NP is None:  # pragma: no cover - 无 numpy 时直接原样返回
         return samples
     np = _NP
-    rate = max(0.05, float(rate))
+    rate = max(config.RATE_MIN, float(rate))
     if abs(rate - 1.0) < 1e-6:
         return samples
     data = np.asarray(samples)
@@ -217,7 +226,7 @@ class SilentBackend:
         # 变速时保持“当前位置”不变
         self._base_ms = self.position_ms()
         self._start = time.perf_counter()
-        self.rate = max(0.05, float(rate))
+        self.rate = max(config.RATE_MIN, float(rate))
 
     def play(self, start_ms: float) -> None:
         self._base_ms = float(start_ms)
@@ -304,7 +313,7 @@ class PygameBackend:  # pragma: no cover - 依赖 pygame
     def set_rate(self, rate: float) -> None:
         # 流式后端不支持变速；倍速由 StretchedSoundBackend 负责
         self._seek_base_ms = self.position_ms()
-        self.rate = max(0.05, float(rate))
+        self.rate = max(config.RATE_MIN, float(rate))
 
     def play(self, start_ms: float) -> None:
         self._seek_base_ms = max(0.0, float(start_ms))
@@ -388,7 +397,7 @@ class StretchedSoundBackend:  # pragma: no cover - 依赖 pygame + numpy
 
     def set_rate(self, rate: float) -> None:
         self._paused_ms = self.position_ms()
-        self.rate = max(0.05, float(rate))
+        self.rate = max(config.RATE_MIN, float(rate))
         self._queued = None
         self._handed_end_ms = 0.0
 
@@ -399,11 +408,8 @@ class StretchedSoundBackend:  # pragma: no cover - 依赖 pygame + numpy
         start = max(0, int(round(start_ms / 1000.0 * self.freq)))
         if start >= self._samples.shape[0]:
             return None
-        # 原始窗口大小随倍速缩放：输出窗口长度大致固定，单次合成开销可控
-        window_ms = min(
-            STRETCH_WINDOW_MAX_MS,
-            max(STRETCH_WINDOW_MIN_MS, STRETCH_TARGET_OUTPUT_MS * self.rate),
-        )
+        # 源窗口大小随倍速缩放：输出窗口长度大致固定，单次合成开销可控
+        window_ms = stretch_window_ms(self.rate)
         stop = min(
             int(self._samples.shape[0]),
             start + int(round(window_ms / 1000.0 * self.freq)),
@@ -578,7 +584,7 @@ class AudioPlayer:
     def _select_backend(self, path: Optional[str] = None):
         # ``path`` 传入“即将载入的歌曲”：load() 会先把 self.path 清空，
         # 只按 self.path 判断会把刚载入的歌曲误判成“没有歌曲”而退回静音时钟
-        # （表现就是打开谱面后第一次播放没有声音，随便改一次倍速又正常了）。
+        # （表现就是打开谱面后第一次播放没有声音）。
         target = self.path if path is None else path
         if not target:
             return self._silent_clock
@@ -682,7 +688,7 @@ class AudioPlayer:
 
     # ------------------------------------------------------------------ 倍速
     def set_rate(self, rate: float) -> None:
-        """设置播放倍速（0.1 ~ 1.0x，步进 0.1）：慢放通过重采样实现，音调随之变低。"""
+        """设置播放倍速（下限 :data:`config.RATE_MIN`）：慢放通过重采样实现，音调随之变低。"""
         rate = round(max(config.RATE_MIN, min(config.RATE_LIMIT_MAX, float(rate))), 2)
         if abs(rate - self.rate) < 1e-9:
             return

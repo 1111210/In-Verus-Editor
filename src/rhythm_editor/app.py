@@ -374,7 +374,7 @@ class EditorApp:
         layout_name = "分栏（6K / 鼠标）" if self.view.split_layout else "叠加（演示）"
         info = (
             f"布局：{layout_name}"
-            f"　|　倍速 {self.audio.rate:.1f}x"
+            f"　|　倍速 {config.format_rate(self.audio.rate)}"
             f"　|　物件：6K {counts['lane']} · 区域 {counts['region']} · 滑键 {counts['slide']}"
             f" · 点击 {counts['click']}"
             f"　|　判定线：第 {self.view.current_beat:.3f} 拍"
@@ -603,10 +603,11 @@ class EditorApp:
 
     # ------------------------------------------------------------------ 倍速
     def set_playback_rate(self, rate: float, announce: bool = True) -> None:
-        """播放倍速（0.1 ~ 1.0x，0.1 一档）：同时改变谱面推进速度与音频速度（慢放音调变低）。"""
-        step = config.RATE_STEP
-        rate = round(round(float(rate) / step) * step, 1)
-        rate = max(config.RATE_MIN, min(config.RATE_MAX, rate))
+        """播放倍速（0.01 ~ 1.0x）：≥0.1x 每 0.1 一档，0.1x 以下每 0.01 一档。
+
+        倍速同时改变谱面推进速度与音频速度（慢放音调随之变低）。
+        """
+        rate = config.quantize_rate(rate)
         if abs(rate - self.audio.rate) < 1e-9:
             self.toolbar.sync()
             return
@@ -616,14 +617,14 @@ class EditorApp:
             tone = "（变调：重采样）" if self.audio.stretch_active else ""
             extra = "" if self.audio.usable_audio else "（静音时钟）"
             note = "，已自动暂停（按空格继续）" if paused else ""
-            self.status(f"播放倍速：{rate:.1f}x{tone}{extra}{note}")
+            self.status(f"播放倍速：{config.format_rate(rate)}{tone}{extra}{note}")
         self.toolbar.sync()
 
     def increase_playback_rate(self) -> None:
-        self.set_playback_rate(self.audio.rate + config.RATE_STEP)
+        self.set_playback_rate(config.step_rate(self.audio.rate, 1))
 
     def decrease_playback_rate(self) -> None:
-        self.set_playback_rate(self.audio.rate - config.RATE_STEP)
+        self.set_playback_rate(config.step_rate(self.audio.rate, -1))
 
     def cancel_pending(self) -> None:
         self.controller.cancel_pending()

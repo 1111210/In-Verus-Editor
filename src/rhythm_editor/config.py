@@ -58,13 +58,42 @@ SCROLL_WHEEL_SNAP = True          # 滚轮滚动后仍然吸附到时间网格�
 SCROLL_WHEEL_FAST_BEATS = 1.0     # Shift + 滚轮：一次滚动 1 拍
 PENDING_COLOR = "#ffd166"
 
-# 播放倍速：0.1 ~ 1.0，每 0.1 一档（慢放用重采样，音调随之变低）；
-# 音频引擎本身允许到 RATE_LIMIT_MAX（游玩器可以把倍速开到 3x = 加速）
-RATE_MIN = 0.1
+# 播放倍速：0.01 ~ 1.0（慢放用重采样，音调随之变低）。
+# ≥ RATE_FINE_MAX 时每 0.1 一档；从 0.1x 继续减速进入 0.01 一档的细档（0.09 … 0.01）。
+# 音频引擎本身允许到 RATE_LIMIT_MAX（游玩器可以把倍速开到 3x = 加速）。
+RATE_MIN = 0.01
 RATE_MAX = 1.0
 RATE_LIMIT_MAX = 3.0
 RATE_STEP = 0.1
+RATE_FINE_STEP = 0.01
+RATE_FINE_MAX = 0.1
 DEFAULT_RATE = 1.0
+
+
+def quantize_rate(rate: float) -> float:
+    """把倍速夹进允许范围并按所在档位取整（细档 0.01、常规档 0.1）。"""
+    value = max(RATE_MIN, min(RATE_MAX, float(rate)))
+    if value < RATE_FINE_MAX - 1e-9:
+        return round(round(value / RATE_FINE_STEP) * RATE_FINE_STEP, 2)
+    return round(round(value / RATE_STEP) * RATE_STEP, 1)
+
+
+def step_rate(rate: float, direction: int) -> float:
+    """步进一档：0.2x → 0.1x → 0.09x … 0.01x；反向 0.01x → … → 0.1x → 0.2x。"""
+    value = quantize_rate(rate)
+    if direction < 0:
+        if value > RATE_FINE_MAX + 1e-9:
+            return round(max(RATE_FINE_MAX, value - RATE_STEP), 2)
+        return round(max(RATE_MIN, value - RATE_FINE_STEP), 2)
+    if value < RATE_FINE_MAX - 1e-9:
+        return round(min(RATE_FINE_MAX, value + RATE_FINE_STEP), 2)
+    return round(min(RATE_MAX, value + RATE_STEP), 2)
+
+
+def format_rate(rate: float) -> str:
+    """倍速文本：常规档保留一位小数，细档保留两位。"""
+    value = float(rate)
+    return f"{value:.2f}x" if value < RATE_FINE_MAX - 1e-9 else f"{value:.1f}x"
 
 # 系统音频延迟允许为负（负值 = 声音比软件位置更早），这里给出合理范围防止误填
 AUDIO_LATENCY_MIN_MS = -5000.0
