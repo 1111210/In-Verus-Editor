@@ -3,7 +3,7 @@
 谱面就是**普通的 JSON 文本文件**（UTF-8、缩进 2 空格，扩展名 `.json`），可以放在任意目录；
 音频会复制到**谱面文件所在的文件夹**，谱面中用文件名（相对路径）引用。
 
-> 编辑器只支持这一种格式：保存时一律写成 `.json`（写成别的后缀会被自动改成 `.json`）。
+> 编辑器只支持这一种格式：保存时一律写成 `.json`（其它后缀会被改写成 `.json`）。
 
 ## 1. 顶层结构
 
@@ -13,7 +13,6 @@
   "version": 1,
   "metadata": { "...": "见 1.1" },
   "timing": { "...": "见 1.2" },
-  "editor": { "...": "见 1.3" },
   "speed_groups": [ { "...": "见 1.4" } ],
   "lanes": [ { "...": "见 1.5" } ],
   "mouse": [ { "...": "见 1.6" } ]
@@ -54,19 +53,19 @@
 * BPM 决定**时间轴格子的大小**（纵向按秒线性：高 BPM 段落每拍更短），
   也决定“拍 ↔ 秒 / 歌曲位置”的换算；流速（速度组）则是在此之上的倍率。
 
-## 1.3 editor（**已废弃**：视图 / 音效 / 编辑器设置改为全局保存）
+## 1.3 editor（旧字段，读取时兼容）
 
 `zoom_seconds` / `grid_division` / `horizontal_divisions` / `audio_latency_ms` /
 `metronome` / `hit_enabled` / `side_lane_highlight` / `music_volume` /
-`metronome_volume` / `hit_volume` 这些**只影响编辑器**的偏好不再写进谱面，
-而是存在用户配置目录的 `settings.json` 里（Windows 为
+`metronome_volume` / `hit_volume` 这些**只影响编辑器**的偏好不属于谱面，保存在用户
+配置目录的 `settings.json` 里（Windows 为
 `%APPDATA%/InVerus/settings.json`，其他系统为 `~/.config/inverus/settings.json`；
 可用环境变量 `VERUS_SETTINGS` 指定别的路径）。
 
 * 换谱面 / 新建谱面都沿用同一份全局设置；
-* 读**老谱面**时，如果里面还有 `editor` 段、而全局文件尚未建立，
-  会把它**迁移**进全局设置一次（之后就以全局文件为准）；
-* 写谱面时不再输出 `editor` 段（`tools/acceptance.py` 会断言这一点）。
+* 读取带 `editor` 段的旧谱面时，如果全局设置文件尚未建立，会把它并入全局设置一次
+  （之后以全局文件为准）；
+* 写出的谱面不含 `editor` 段（`tools/acceptance.py` 会检查这一点）。
 
 ## 1.4 speed_groups
 
@@ -108,7 +107,7 @@
 
 ## 1.6 mouse（鼠标平面物件）
 
-### 停留区域
+### 空域
 
 ```json
 {
