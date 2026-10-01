@@ -522,6 +522,9 @@ class Renderer:
 
         唯一的例外是**判定时间**：一旦判定线越过了物件的判定时刻（长按 / 空域按结束
         时刻算），该物件就不再显示 —— 这是显示规则，与它的位置无关。
+
+        这一条可以用视图菜单的「显示更早的物件」关掉：开启后不再做时间过滤，
+        已判过的物件照样按真实位置画在判定线下方；仍然只画落在可见区域里的物件。
         """
         margin = 80.0
         y_min = view.layout.play_top - margin
@@ -536,6 +539,7 @@ class Renderer:
         self._hit_entries = cache.entries
         self._hit_entries.clear()
         cache.signature = hit_signature(view)
+        show_past = bool(chart.settings.show_past_notes) and not state.demo
         # 图层顺序（自下而上）：多轨长按 → 单轨长按 → 多轨单键 → 单轨单键 → 空域 → 滑键
         # 这样即使谱面故意写成非法重叠，小按键也压在长按之上、空域与滑键再压在最上面，交叠处依然可读。
         layers = (
@@ -553,7 +557,8 @@ class Renderer:
             visible = [
                 note
                 for note in notes
-                if layer_rank(note) == rank and note_in_time(note, view.current_beat)
+                if layer_rank(note) == rank
+                and note_in_time(note, view.current_beat, show_past)
             ]
             if rank in (LAYER_MULTI_HOLD, LAYER_MULTI_TAP):
                 # 多轨物件：跨的轨道越多越先画（越靠下层），同跨度保持时间顺序

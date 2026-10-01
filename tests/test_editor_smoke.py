@@ -708,6 +708,49 @@ class EditorSmokeTest(unittest.TestCase):
         )
         self.assertFalse(any(note.id == "L1" for note in hits))
 
+    def test_show_past_notes_option(self) -> None:
+        """「显示更早的物件」：已判过的物件继续画在判定线下方，仍只画可见区域。"""
+        from rhythm_editor.ui.geometry import notes_at
+
+        tap = LaneNote("P1", 1, 1, 3.5)
+        far = LaneNote("P2", 2, 2, -20.0)          # 远在可见窗口之外
+        self.chart.add(tap)
+        self.chart.add(far)
+        self.view.set_beat(4.0)
+        self.draw()
+        self.assertNotIn("note:P1", self.scene._items)
+        self.assertNotIn("note:P2", self.scene._items)
+
+        self.chart.settings.show_past_notes = True
+        self.draw()
+        self.assertIn("note:P1", self.scene._items)
+        coords = self.scene._items["note:P1"][2][0]
+        center_y = (coords[1] + coords[3]) / 2.0
+        self.assertGreater(center_y, self.view.layout.judgment_y, "应画在判定线下方")
+        self.assertLessEqual(center_y, self.view.layout.play_bottom + 1, "仍在可见区域内")
+        self.assertNotIn("note:P2", self.scene._items, "可见窗口之外的物件仍然不画")
+
+        # 命中测试与渲染一致：开启后可以点选已判过的物件（复用渲染缓存）
+        hits = notes_at(
+            self.chart,
+            self.view,
+            (coords[0] + coords[2]) / 2.0,
+            center_y,
+            cache=self.state.hit_cache,
+        )
+        self.assertTrue(any(n.id == "P1" for n in hits))
+
+        # 演示模式不受影响：仍然只显示尚未判过的物件
+        self.state.demo = True
+        self.draw()
+        self.assertNotIn("note:P1", self.scene._items)
+        self.state.demo = False
+
+        # 关掉选项后恢复原来的显示规则
+        self.chart.settings.show_past_notes = False
+        self.draw()
+        self.assertNotIn("note:P1", self.scene._items)
+
     # -------------------------------------------------------------- 放置
     def test_place_lane_tap(self) -> None:
         self.controller.set_tool(config.TOOL_LANE_TAP)

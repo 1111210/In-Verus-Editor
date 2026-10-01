@@ -657,6 +657,21 @@ class AppFlowTest(unittest.TestCase):
         self.app.set_horizontal_divisions("-3")
         self.assertEqual(self.app.document.chart.settings.horizontal_divisions, 0)
 
+    def test_show_past_notes_menu_toggle(self) -> None:
+        """视图菜单提供「显示更早的物件」，切换后可撤销。"""
+        view_menu = self.app.toolbar._menus["视图"]
+        labels = [
+            view_menu.entrycget(i, "label")
+            for i in range(view_menu.index("end") + 1)
+            if view_menu.type(i) == "checkbutton"
+        ]
+        self.assertIn("显示更早的物件", labels)
+        self.assertFalse(self.app.document.chart.settings.show_past_notes)
+        self.app.toggle_show_past_notes()
+        self.assertTrue(self.app.document.chart.settings.show_past_notes)
+        self.app.undo()
+        self.assertFalse(self.app.document.chart.settings.show_past_notes)
+
     def test_settings_and_save(self) -> None:
         self.app.set_grid_division("3")
         self.assertEqual(self.app.document.chart.settings.grid_division, 3)

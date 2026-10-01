@@ -86,6 +86,7 @@ def adopt_legacy_settings(settings: EditorSettings, legacy: Optional[Dict[str, A
         "metronome_volume",
         "hit_volume",
         "side_lane_highlight",
+        "show_past_notes",
     ):
         setattr(settings, field, getattr(merged, field))
     settings.normalize()

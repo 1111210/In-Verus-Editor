@@ -921,6 +921,20 @@ class EditorApp:
             lambda: setattr(chart.settings, "side_lane_highlight", value),
         )
         self.status("侧轨高亮：" + ("开启（第 1 / 6 轨暗紫）" if value else "关闭"))
+
+    def toggle_show_past_notes(self) -> None:
+        """视图菜单：判定时刻已经过去的物件是否继续绘制（判定线下方）。"""
+        chart = self.document.chart
+        value = not chart.settings.show_past_notes
+        self.document.apply(
+            "显示更早的物件",
+            lambda: setattr(chart.settings, "show_past_notes", value),
+        )
+        self.status(
+            "显示更早的物件：开启（判定线下方继续绘制）"
+            if value
+            else "显示更早的物件：关闭（到判定时刻即消失）"
+        )
         self.toolbar.sync()
 
     def edit_volumes(self) -> None:

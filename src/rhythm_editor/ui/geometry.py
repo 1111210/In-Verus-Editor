@@ -341,13 +341,17 @@ def note_hit(note: Note, chart: Chart, view: ViewState, x: float, y: float) -> b
     return bounds is not None and point_in_rect(x, y, bounds, pad=config.HIT_PADDING_PX)
 
 
-def note_in_time(note: Note, current_beat: float) -> bool:
+def note_in_time(note: Note, current_beat: float, show_past: bool = False) -> bool:
     """物件是否还没到判定时间（或正在判定中）。
 
     显示规则：**判定线越过物件的判定时刻后就不再显示**。
     长按与空域按结束时刻（``tail_beat``）计算，
     因此按住期间整条长按 / 整个区域依然可见。
+    ``show_past=True`` 时（视图菜单「显示更早的物件」）不做这条过滤，
+    已经判过的物件照样绘制在判定线下方。
     """
+    if show_past:
+        return True
     return float(current_beat) <= float(note.tail_beat) + 1e-9
 
 
@@ -363,10 +367,11 @@ def notes_at(
     if cache is not None and cache.valid_for(view):
         hits = cache.query_point(x, y)
         return hits[:limit] if limit is not None else hits
+    show_past = bool(getattr(view.chart.settings, "show_past_notes", False))
     hits = [
         n
         for n in chart.all_notes()
-        if note_in_time(n, view.current_beat) and note_hit(n, chart, view, x, y)
+        if note_in_time(n, view.current_beat, show_past) and note_hit(n, chart, view, x, y)
     ]
     hits.sort(key=lambda n: (layer_rank(n), n.head_beat), reverse=True)
     if limit is not None:
@@ -387,9 +392,10 @@ def notes_in_box(
         return cache.query_box(x0, y0, x1, y1)
     left, right = min(x0, x1), max(x0, x1)
     top, bottom = min(y0, y1), max(y0, y1)
+    show_past = bool(getattr(view.chart.settings, "show_past_notes", False))
     found: List[Note] = []
     for note in chart.all_notes():
-        if not note_in_time(note, view.current_beat):
+        if not note_in_time(note, view.current_beat, show_past):
             continue
         bounds = note_bounds(note, chart, view)
         if bounds is None:

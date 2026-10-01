@@ -34,6 +34,7 @@ class GlobalSettingsTests(unittest.TestCase):
         settings.grid_division = 8
         settings.zoom_seconds = 6.0
         settings.side_lane_highlight = True
+        settings.show_past_notes = True
         settings.hit_volume = 0.3
         global_settings.save_settings(settings)
         self.assertTrue(os.path.isfile(self.path))
@@ -41,6 +42,7 @@ class GlobalSettingsTests(unittest.TestCase):
         self.assertEqual(restored.grid_division, 8)
         self.assertAlmostEqual(restored.zoom_seconds, 6.0)
         self.assertTrue(restored.side_lane_highlight)
+        self.assertTrue(restored.show_past_notes)
         self.assertAlmostEqual(restored.hit_volume, 0.3)
 
     def test_broken_file_falls_back_to_defaults(self) -> None:

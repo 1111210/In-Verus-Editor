@@ -179,6 +179,11 @@ class Toolbar(ttk.Frame):
                 app.toggle_side_lane_highlight,
                 checked=lambda: app.document.chart.settings.side_lane_highlight,
             ),
+            Entry(
+                "显示更早的物件",
+                app.toggle_show_past_notes,
+                checked=lambda: app.document.chart.settings.show_past_notes,
+            ),
             Entry(separator=True),
             Entry("跳到开头", lambda: app.jump(0.0), "Home"),
             Entry("跳到结尾", lambda: app.jump(app.document.chart.beat_bounds()[1]), "End"),
