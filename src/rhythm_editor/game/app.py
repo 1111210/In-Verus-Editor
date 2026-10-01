@@ -51,6 +51,9 @@ SCREEN_W, SCREEN_H = 1280, 800
 LEAD_MS = 1500.0
 END_DELAY_S = 3.0                   # 谱面结束后至少等这么久再进结算
 REGION_PAD = 0.01
+# 6K 按键左右各留多少轨宽（越小越"填满轨道"）。贴图两侧本来就有透明收边，
+# 这里再留一点点，免得相邻轨道的按键边缘贴在一起。
+NOTE_SIDE_INSET = 0.02
 MENU_WINDOW = 8                     # 主界面谱面列表一次显示多少行（其余滚动显示）
 ROOT = os.path.dirname(                       # 仓库根目录（src/rhythm_editor/game/app.py → ../..）
     os.path.dirname(os.path.dirname(os.path.dirname(os.path.abspath(__file__))))
@@ -2450,8 +2453,8 @@ class PlayerApp:
                 if head < -0.4:
                     continue
                 low, high = min(note.lane_start, note.lane_end), max(note.lane_start, note.lane_end)
-                x0 = K6_LEFT + low * LANE_WIDTH + LANE_WIDTH * 0.18
-                x1 = K6_LEFT + (high + 1) * LANE_WIDTH - LANE_WIDTH * 0.18
+                x0 = K6_LEFT + low * LANE_WIDTH + LANE_WIDTH * NOTE_SIDE_INSET
+                x1 = K6_LEFT + (high + 1) * LANE_WIDTH - LANE_WIDTH * NOTE_SIDE_INSET
                 lane = min(LANE_COUNT, max(1, low + 1))
                 center_x = (x0 + x1) / 2.0
                 if note.is_hold:
@@ -2551,8 +2554,8 @@ class PlayerApp:
             return
         low, high = min(note.lane_start, note.lane_end), max(note.lane_start, note.lane_end)
         tex_index = min(LANE_COUNT, max(1, low + 1))
-        x0 = K6_LEFT + low * LANE_WIDTH + LANE_WIDTH * 0.18
-        x1 = K6_LEFT + (high + 1) * LANE_WIDTH - LANE_WIDTH * 0.18
+        x0 = K6_LEFT + low * LANE_WIDTH + LANE_WIDTH * NOTE_SIDE_INSET
+        x1 = K6_LEFT + (high + 1) * LANE_WIDTH - LANE_WIDTH * NOTE_SIDE_INSET
         if note.is_hold:
             tail_z = self._note_z(self.chart.timing.beat_to_song_ms(note.tail_beat), now_ms)
             body = f"hold_body_{tex_index}"

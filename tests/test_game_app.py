@@ -1176,7 +1176,7 @@ class PlayerAppSmokeTests(unittest.TestCase):
         mouse_line_y = app._proj(0.0, MOUSE_PLANE_HEIGHT, 0.0)[1]
         self.assertAlmostEqual(rect.bottom, mouse_line_y, delta=4.0, msg="渐变贴着判定线")
         self.assertLess(rect.top, mouse_line_y - 100, "渐变一路铺到远处")
-        self.assertAlmostEqual(START_Z, 12.0, places=6)
+        self.assertGreaterEqual(START_Z, 12.0, "轨道比原来更长")
         # 6K 平面底色仍然只有一个四边形
         # 贴图版轨道不再画底色四边形（缺贴图时才会退回程序绘制）
         self.assertLessEqual(len(quads), 1)

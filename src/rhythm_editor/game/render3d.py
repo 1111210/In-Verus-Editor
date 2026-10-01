@@ -253,9 +253,10 @@ class Scene3D:
         self.root.setDepthTest(False)
         self.root.setDepthWrite(False)
         self.build_static()
-        # 取景标定：以**构图贴近软件版**为目标（两个平面的 8 个角点平均误差 31px），
-        # 由 tools/fit_panda_composition.py 搜索得到。
-        self.set_camera(pitch=18.0, fov=36.0, back=1.8, height=1.15)
+        # 取景标定：以**构图贴近软件版**为目标，由 tools/fit_panda_composition2.py
+        # 用 Scene3D.project()（官方 Lens.project，与渲染差 <1px）解析搜出，
+        # 8 个角点平均误差 13.7px。
+        self.set_camera(pitch=20.0, fov=39.0, back=1.85, height=1.50)
 
     # ------------------------------------------------------------------ 设置
     def _make_buffer(self, width: int, height: int) -> None:

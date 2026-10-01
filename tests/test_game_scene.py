@@ -15,16 +15,17 @@ W, H = 1600, 900
 
 class LayoutTests(unittest.TestCase):
     def test_unit_is_mouse_width_and_middle_four_lanes(self) -> None:
-        """1 单位 = 鼠标合法区域宽度 = 6K 中间四条轨道宽度。"""
-        self.assertAlmostEqual(S.MOUSE_LEGAL_WIDTH, S.UNIT)
+        """鼠标合法区域宽度 = 6K 中间四条轨道宽度（= 基础单位 × 轨道加宽系数）。"""
+        self.assertAlmostEqual(S.MOUSE_LEGAL_WIDTH, S.UNIT * S.TRACK_WIDTH_SCALE)
         middle_four = S.PlayerScene.lane_span(1, 4)
-        self.assertAlmostEqual(middle_four[1] - middle_four[0], S.UNIT)
+        self.assertAlmostEqual(middle_four[1] - middle_four[0], S.MOUSE_LEGAL_WIDTH)
         self.assertAlmostEqual(S.MOUSE_LEFT, middle_four[0])
         self.assertAlmostEqual(S.MOUSE_RIGHT, middle_four[1])
 
     def test_k6_is_six_lanes(self) -> None:
-        self.assertAlmostEqual(S.PlayerScene.lane_span(0, 5)[1] - S.PlayerScene.lane_span(0, 5)[0], 1.5)
-        self.assertAlmostEqual(S.K6_WIDTH, 1.5)
+        span = S.PlayerScene.lane_span(0, 5)
+        self.assertAlmostEqual(span[1] - span[0], S.LANE_COUNT * S.LANE_WIDTH)
+        self.assertAlmostEqual(S.K6_WIDTH, S.LANE_COUNT * S.LANE_WIDTH)
 
     def test_mouse_plane_is_above_k6_plane(self) -> None:
         self.assertAlmostEqual(S.MOUSE_PLANE_HEIGHT, 0.4)

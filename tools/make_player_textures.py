@@ -76,7 +76,7 @@ def tap_lane(width: int = 96, height: int = 160) -> np.ndarray:
     fade_mid = bottom ** 1.9                                          # 中间掉得快
     fade_edge = bottom ** 0.9                                         # 两端掉得慢
     fade = fade_mid * (1.0 - mid_weight) + fade_edge * mid_weight
-    side = 1.0 - _smoothstep((edge - 0.80) / 0.20)                    # 横向收边
+    side = 1.0 - _smoothstep((edge - 0.94) / 0.06)                    # 横向收边（尽量铺满轨道）
     alpha = (0.30 + 0.70 * fade) * side                               # 顶部也留 0.30（适中透明）
     color = _mix(WHITE[None, None, :], BRIGHT_BLUE[None, None, :],
                  np.clip(top * 1.5, 0.0, 1.0))                        # 底白 -> 顶亮蓝

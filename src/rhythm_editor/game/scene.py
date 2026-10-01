@@ -25,14 +25,18 @@ from typing import Dict, Tuple
 UNIT = 1.0
 MOUSE_PLANE_HEIGHT = 0.4        # 鼠标平面在 6K 平面上方 0.4 单位
 LANE_COUNT = 6
-LANE_WIDTH = 1.0 / 4            # 中间四条轨道合计 1 单位 -> 每条 0.25
-K6_WIDTH = LANE_COUNT * LANE_WIDTH          # 1.5 单位
+# 「放大轨道」：把轨道横向整体加宽（x 方向）——轨道在屏幕上更宽、更铺得开，
+# 而物件纵深方向的尺寸（厚度 / 判定线间距）不变。数值由
+# tools/fit_player_framing.py 搜出来（近端尺寸不变、远端更小、两条判定线更近）。
+TRACK_WIDTH_SCALE = 1.4
+LANE_WIDTH = TRACK_WIDTH_SCALE / 4          # 中间四条轨道合计 1.4 单位 -> 每条 0.35
+K6_WIDTH = LANE_COUNT * LANE_WIDTH          # 2.1 单位
 K6_LEFT = -K6_WIDTH / 2.0
-MOUSE_LEFT = -0.25 / 2 - 0.5 + 0.25         # 中间四条轨道左边界 = -0.5
-MOUSE_LEFT = -0.5
-MOUSE_RIGHT = 0.5
-MOUSE_LEGAL_WIDTH = MOUSE_RIGHT - MOUSE_LEFT   # = 1 单位
-START_Z = 12.0                  # 物件起点：离判定平面多远（两个平面相同）
+MOUSE_LEFT = -TRACK_WIDTH_SCALE / 2         # 中间四条轨道左边界 = -0.7
+MOUSE_RIGHT = TRACK_WIDTH_SCALE / 2
+MOUSE_LEGAL_WIDTH = MOUSE_RIGHT - MOUSE_LEFT   # = 1.4 单位
+# 轨道更长了：远端更远 -> 刚出现的按键显得更小（近端观感不变、斜面更陡）
+START_Z = 26.0                  # 物件起点：离判定平面多远（两个平面相同）
 NOTE_HEIGHT_UNIT = 0.03         # 滑键 / 点击按键图案高度
 
 
@@ -41,9 +45,13 @@ class Camera:
     """针孔相机：位于判定平面后方、鼠标平面上方。"""
 
     x: float = 0.0
-    y: float = 1.15             # 在鼠标平面（0.4）上方
-    z: float = -1.7             # 判定平面后方
-    pitch_deg: float = 20.0     # 略微向下俯视
+    # 相机「更靠后、更高」：物件刚出现时更小、接近判定线时与原来差不多，
+    # 同时两条判定线（鼠标平面 / 6K 平面）看起来更近。
+    # 这组数由 tools/fit_player_framing.py 搜出来（近端 ×1.00 / 远端 ×0.62 /
+    # 判定线间距 ×0.70）。
+    y: float = 1.60             # 在鼠标平面（0.4）上方
+    z: float = -2.20            # 判定平面后方
+    pitch_deg: float = 16.0     # 略微向下俯视
     fov_deg: float = 55.0
 
     def project(self, point: Tuple[float, float, float], width: int, height: int) -> Tuple[float, float, float]:
