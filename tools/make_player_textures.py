@@ -131,18 +131,18 @@ def region_area(width: int = 256, height: int = 256) -> np.ndarray:
 def slide_body(direction: int, width: int = 256, height: int = 128) -> np.ndarray:
     """滑键主体：直角三角形（direction=+1 右滑）。
 
-    **贴图顶边就是判定线**（渲染时贴图顶边贴判定线、楔形朝判定线下方收尖）：
-    水平直角边在顶边、最不透明；宽的一侧朝向滑动方向（直角顶点在那一侧），
-    斜边向下渐隐；左滑镜像。
+    **贴图底边就是判定线**（渲染时楔形挂在判定线**上方**）：
+    水平直角边贴着判定线、最不透明；宽的一侧朝向滑动方向（直角顶点在那一侧），
+    斜面朝相反方向落下；左滑镜像。
     """
     xs = np.linspace(0.0, 1.0, width, dtype=np.float32)[None, :]
-    top = np.linspace(1.0, 0.0, height, dtype=np.float32)[:, None]      # 1 = 图顶（判定线）
+    top = np.linspace(1.0, 0.0, height, dtype=np.float32)[:, None]      # 1 = 图顶，0 = 判定线
     thick = xs if direction >= 0 else 1.0 - xs                          # 朝向侧 = 1
-    # 顶边（判定线）整行填满，向下收成尖；宽的一侧 = 滑动方向那一侧
-    inside = top >= 1.0 - thick
+    # 底边（判定线）整行填满，向上收成尖；宽的一侧 = 滑动方向那一侧
+    inside = top <= thick
     span = np.maximum(thick, 1e-3)
-    # 顶边（判定线）最实，斜边最虚；朝向侧整体更实一点
-    alpha = np.where(inside, 1.0 - 0.85 * ((1.0 - top) / span), 0.0)
+    # 底边（判定线）最实，斜边最虚；朝向侧整体更实一点
+    alpha = np.where(inside, 1.0 - 0.85 * (top / span), 0.0)
     alpha = np.clip(alpha, 0.0, 1.0) * (0.85 + 0.15 * thick)
     color = np.broadcast_to(
         (np.array([110, 230, 160], dtype=np.float32) if direction >= 0
