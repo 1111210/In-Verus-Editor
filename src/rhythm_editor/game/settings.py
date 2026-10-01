@@ -32,8 +32,7 @@ class PlayerSettings:
     player_name: str = "Player"
     keys: List[str] = field(default_factory=lambda: list(DEFAULT_KEYS))
     # 各物件的厚度（**世界单位**：鼠标合法区域宽 = 1，与编辑器一致，见 scene.py）。
-    # 长按和空域没有厚度，所以只有下面四种。默认值是旧单位（合法区宽 1.4）下的
-    # 0.35 / 0.03 换算过来的，屏幕上看到的厚度与以前完全相同。
+    # 长按和空域没有厚度，所以只有下面四种。
     note_thickness: float = 0.35 * UNIT_SCALE          # 单键
     multi_thickness: float = 0.35 * UNIT_SCALE         # 多轨单键
     slide_thickness: float = 0.03 * UNIT_SCALE         # 滑键图案高度

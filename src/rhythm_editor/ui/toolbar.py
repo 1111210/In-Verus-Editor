@@ -238,7 +238,7 @@ class Toolbar(ttk.Frame):
         # 右侧固定区（不参与横向滚动）：快速缩放 + 帮助，保证窗口再窄也不会被挤掉
         self._right = ttk.Frame(self)
         self._right.pack(side="right", fill="y")
-        # 播放按钮固定在工具栏最右端（原来「帮助」的位置）
+        # 播放按钮固定在工具栏最右端
         self.btn_play = ttk.Button(
             self._right, text="▶ 播放", style="Accent.TButton", command=app.toggle_play
         )

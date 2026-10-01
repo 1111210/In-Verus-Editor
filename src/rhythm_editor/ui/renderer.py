@@ -28,12 +28,20 @@ from .. import config
 from ..model.chart import Chart
 from ..model.notes import (
     BoundaryCurve,
+    LAYER_CLICK,
+    LAYER_MULTI_HOLD,
+    LAYER_MULTI_TAP,
+    LAYER_REGION,
+    LAYER_SINGLE_HOLD,
+    LAYER_SINGLE_TAP,
+    LAYER_SLIDE,
     LaneNote,
     MouseClick,
     MouseNote,
     MouseRegion,
     MouseSlide,
     Note,
+    layer_rank,
 )
 from ..model.speed import SpeedGroup
 from .geometry import (
@@ -496,7 +504,7 @@ class Renderer:
         因此**判定时刻很远的物件可能被速度叠加推回判定线附近，判定时刻很近的物件也可能
         被甩出画面**。所以这里绝不能用“拍差”做剔除，只能按实际算出的像素位置判断可见性。
 
-        唯一的例外是**判定时间**：一旦判定线越过了物件的判定时刻（长按 / 停留区域按结束
+        唯一的例外是**判定时间**：一旦判定线越过了物件的判定时刻（长按 / 空域按结束
         时刻算），该物件就不再显示 —— 这是显示规则，与它的位置无关。
         """
         margin = 80.0
@@ -514,38 +522,24 @@ class Renderer:
         cache.signature = hit_signature(view)
         # 图层顺序（自下而上）：多轨长按 → 单轨长按 → 多轨单键 → 单轨单键 → 空域 → 滑键
         # 这样即使谱面故意写成非法重叠，小按键也压在长按之上、空域与滑键再压在最上面，交叠处依然可读。
-        def multi_hold(note: Note) -> bool:
-            return isinstance(note, LaneNote) and note.is_hold and note.is_multi
-
-        def single_hold(note: Note) -> bool:
-            return isinstance(note, LaneNote) and note.is_hold and not note.is_multi
-
-        def multi_tap(note: Note) -> bool:
-            return isinstance(note, LaneNote) and not note.is_hold and note.is_multi
-
-        def single_tap(note: Note) -> bool:
-            return isinstance(note, LaneNote) and not note.is_hold and not note.is_multi
-
         layers = (
-            (4, multi_hold, lambda n, s: self._draw_lane_note(n, chart, view, s, y_min, y_max)),
-            (5, single_hold, lambda n, s: self._draw_lane_note(n, chart, view, s, y_min, y_max)),
-            (6, multi_tap, lambda n, s: self._draw_lane_note(n, chart, view, s, y_min, y_max)),
-            (7, single_tap, lambda n, s: self._draw_lane_note(n, chart, view, s, y_min, y_max)),
-            (8, lambda n: isinstance(n, MouseRegion),
-                lambda n, s: self._draw_region(n, chart, view, s, y_min, y_max, region_samples)),
-            (9, lambda n: isinstance(n, MouseSlide),
-                lambda n, s: self._draw_slide(n, chart, view, s, y_min, y_max)),
-            (10, lambda n: isinstance(n, MouseClick),
-                lambda n, s: self._draw_click(n, chart, view, s, y_min, y_max)),
+            (LAYER_MULTI_HOLD, lambda n, s: self._draw_lane_note(n, chart, view, s, y_min, y_max)),
+            (LAYER_SINGLE_HOLD, lambda n, s: self._draw_lane_note(n, chart, view, s, y_min, y_max)),
+            (LAYER_MULTI_TAP, lambda n, s: self._draw_lane_note(n, chart, view, s, y_min, y_max)),
+            (LAYER_SINGLE_TAP, lambda n, s: self._draw_lane_note(n, chart, view, s, y_min, y_max)),
+            (LAYER_REGION,
+             lambda n, s: self._draw_region(n, chart, view, s, y_min, y_max, region_samples)),
+            (LAYER_SLIDE, lambda n, s: self._draw_slide(n, chart, view, s, y_min, y_max)),
+            (LAYER_CLICK, lambda n, s: self._draw_click(n, chart, view, s, y_min, y_max)),
         )
-        for layer, matches, draw in layers:
-            self.scene.set_layer(layer)
+        for rank, draw in layers:
+            self.scene.set_layer(4 + rank)
             visible = [
                 note
                 for note in notes
-                if matches(note) and note_in_time(note, view.current_beat)
+                if layer_rank(note) == rank and note_in_time(note, view.current_beat)
             ]
-            if layer in (4, 6):
+            if rank in (LAYER_MULTI_HOLD, LAYER_MULTI_TAP):
                 # 多轨物件：跨的轨道越多越先画（越靠下层），同跨度保持时间顺序
                 visible.sort(key=lambda n: n.lane_end - n.lane_start, reverse=True)
             for note in visible:
@@ -818,7 +812,7 @@ class Renderer:
         half = len(points) // 2
         left_edge = points[:half]
         right_edge = list(reversed(points[half:]))
-        # 按需求：蓝色停留区域只绘制**左右两条边界线**，不画上下封口横线
+        # 空域只绘制**左右两条边界线**，不画上下封口横线
         self.scene.polyline(f"region-left:{note.id}", left_edge, fill=theme.region_edge, width=3)
         self.scene.polyline(f"region-right:{note.id}", right_edge, fill=theme.region_edge, width=3)
         if selected:
@@ -863,7 +857,7 @@ class Renderer:
         x_start = view.norm_to_x(note.x_start)
         x_end = view.norm_to_x(note.x_end)
         min_dx = max(18.0, config.MIN_SLIDE_SPAN * view.layout.mouse_width)
-        # 方框按实际长度显示（只留 1.5px 的可见下限），不再为了好看把方框拉长
+        # 方框按实际长度显示（只留 1.5px 的可见下限）
         x0, x1 = min(x_start, x_end), max(x_start, x_end)
         if x1 - x0 < 3.0:
             x1 = x0 + 3.0
@@ -1003,7 +997,7 @@ class Renderer:
             y_tail = view.note_y(end)
             top, bottom = min(y_head, y_tail), max(y_head, y_tail)
             if bottom - top < TAP_MIN_PX:
-                # 起始位置的预览向上补足，落在它的时间网格线上方（原来画到了下方）
+                # 起始位置的预览向上补足，落在它的时间网格线上方
                 top = bottom - TAP_MIN_PX
             self.scene.rect(
                 "pending:hold",

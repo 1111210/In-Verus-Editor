@@ -159,7 +159,7 @@ class EditorApp:
     def _build_layout(self) -> None:
         self.toolbar = Toolbar(self.root, self, self.theme)
         self.toolbar.pack(side="top", fill="x")
-        # 画布区：右侧是一条朴素的竖向滚动条（替代原来的底部总览条）
+        # 画布区：右侧是一条朴素的竖向滚动条
         self.vscroll = ttk.Scrollbar(
             self.body,
             orient="vertical",

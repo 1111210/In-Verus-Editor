@@ -100,7 +100,7 @@ TOOL_LABELS = {
     TOOL_SELECT: "选择/区域选择",
     TOOL_LANE_TAP: "单轨按键",
     TOOL_LANE_MULTI: "多轨按键",
-    # 长按与多轨长按已合并：同一个工具既可单轨也可跨轨
+    # 长按工具同时支持单轨与多轨
     TOOL_LANE_HOLD: "长按（含多轨）",
     TOOL_MOUSE_REGION: "空域",
     TOOL_MOUSE_SLIDE: "左右滑键",

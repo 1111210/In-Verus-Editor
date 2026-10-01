@@ -20,7 +20,7 @@ def ensure_chart_suffix(path: str) -> str:
     root, ext = os.path.splitext(path)
     if ext.lower() == config.CHART_EXTENSION:
         return path
-    # 写成别的后缀（含旧的 .ivchart）时统一改成 .json
+    # 其它后缀（含 .ivchart）统一写成 .json
     return root + config.CHART_EXTENSION
 
 

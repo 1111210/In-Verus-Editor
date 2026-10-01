@@ -24,12 +24,13 @@ from .. import config
 from ..audio import AudioPlayer
 from ..io.chart_io import chart_audio_path, load_chart
 from ..model.chart import Chart
-from ..model.notes import LaneNote, MouseClick, MouseRegion, MouseSlide, Note
+from ..model.notes import LaneNote, MouseClick, MouseRegion, MouseSlide, Note, layer_rank
 from ..metronome import Metronome
 from . import settings as psettings
 from . import glview
 from . import textures
 from . import render3d
+from . import frame
 from .judge import BREAK, EXACT, EXACT_MIXED, GRADES, NEAR, Judge
 from .scene import (
     K6_LEFT,
@@ -54,13 +55,10 @@ END_DELAY_S = 3.0                   # 谱面结束后至少等这么久再进结
 # 空域判定范围两边各放宽多少（**归一化横坐标**，合法区域宽 = 1，与 judge.py 一致）
 REGION_PAD = 0.01
 # 空域左右边线的半宽（**世界单位**）：软件渲染与 Panda 的 ribbon 共用这一个值，
-# 两边看起来一样粗（按透视：远处窄）。0.006 是旧单位下的调参，见 scene.UNIT_SCALE。
+# 两边看起来一样粗（按透视：远处窄）。0.006 是与 scene.UNIT_SCALE 配套的基准比例。
 REGION_EDGE_HALF_WORLD = 0.006 * UNIT_SCALE
 # 越过了判定线（z < 0）之后还继续绘制多长：过去得太多就该消失
 PAST_LINE_KEEP = 0.4 * UNIT_SCALE
-# 6K 按键左右各留多少轨宽（越小越"填满轨道"）。贴图两侧本来就有透明收边，
-# 这里再留一点点，免得相邻轨道的按键边缘贴在一起。
-NOTE_SIDE_INSET = 0.02
 MENU_WINDOW = 8                     # 主界面谱面列表一次显示多少行（其余滚动显示）
 ROOT = os.path.dirname(                       # 仓库根目录（src/rhythm_editor/game/app.py → ../..）
     os.path.dirname(os.path.dirname(os.path.dirname(os.path.abspath(__file__))))
@@ -111,7 +109,7 @@ def main_chart_in(directory: str, names: List[str]) -> str:
 
 
 def chart_files(root: str, folder: str = "charts") -> List[str]:
-    """``charts/`` 下**每个含 json 的文件夹**算一张谱面（不再是一个 json 一行）。
+    """``charts/`` 下**每个含 json 的文件夹**算一张谱面。
 
     一个文件夹里有多个 json 时取其中的“主谱面”（见 :func:`main_chart_in`）；
     ``_`` 开头的文件（临时 / 自动保存）忽略；不含 json 的文件夹不算谱面。
@@ -208,7 +206,7 @@ class PlayerApp:
         self._maximize_now()
         self.base_size = (self.w, self.h)          # 最大化后的客户区尺寸（通常 = 屏幕 - 任务栏）
         self.clock = pygame.time.Clock()
-        # 固定成 DPI 感知后，窗口是物理像素；字号按缩放比放大，观感和原来一致
+        # 固定成 DPI 感知后，窗口是物理像素；字号按缩放比放大
         self.ui_scale = self._dpi_scale()
         font = "microsoftyaheiui,arial"
         self.f_big = pygame.font.SysFont(font, int(round(40 * self.ui_scale)), bold=True)
@@ -838,7 +836,7 @@ class PlayerApp:
         if self._restore_window_state(self._window_ref, "Panda3D 建场景时"):
             self.scene3d.resize(self.w, self.h)
         self.renderer_name = "panda3d"
-        # 顺带用 Panda 自己的 API 报一次屏幕尺寸（文档：GraphicsPipe.getDisplayWidth）
+        # 同时用 Panda 自己的 API 报一次屏幕尺寸（文档：GraphicsPipe.getDisplayWidth）
         pipe = getattr(self.scene3d.base, "pipe", None)
         display = ""
         if pipe is not None:
@@ -1004,9 +1002,8 @@ class PlayerApp:
     def _compute_texture_averages(self) -> None:
         """算好"平均色"贴图（软件绘制长条 / 轨道 / 边界时用它们填透视正确的多边形）。
 
-        以前只在**渲染回退**时才算，正常从加载页进游戏时 `texture_avg` 是空的，
-        于是长按主体走了"切片重复贴图"的兜底分支 —— 看起来就是锯齿状。现在在
-        加载阶段就算好（`_load_textures` 里调用）。
+        在加载阶段一次性算好（`_load_textures` 里调用），渲染时直接取用；
+        缺图的情况才即时计算。
         """
         self.texture_avg = {}
         surface = self.textures.get("region_area")
@@ -1148,8 +1145,7 @@ class PlayerApp:
         整像素对齐**（上一片的下边界 == 下一片的上边界）：同一个 z 的屏幕 y 与 x 无关，
         所以只要按同一条 y 取整，片与片之间既不会留缝也不会重叠。
 
-        以前每片各按自己的外接矩形取整，片与片之间会漏出 1px 的下层颜色 —— 长按开头、
-        单键上看到的那条横线就是这么来的。
+        所有分片共用同一条 y 取整，因此片与片之间既不会漏出下层颜色，也不会重叠。
         """
         pieces = []
         count = max(1, len(zs) - 1)
@@ -1824,17 +1820,16 @@ class PlayerApp:
     def _popup_anchor(self, note: Optional[Note]) -> Tuple[float, float]:
         """判定飘字锚点：单键 / 多轨在 6K 线上，鼠标物件在鼠标线上（瞬时物件也要有字符）。"""
         if isinstance(note, LaneNote):
-            low, high = min(note.lane_start, note.lane_end), max(note.lane_start, note.lane_end)
-            world_x = K6_LEFT + (low + high + 1) / 2.0 * LANE_WIDTH
+            shape = frame.lane_shape(note)
+            world_x = (shape.x0 + shape.x1) / 2.0
             world_y = 0.0
         else:
             world_x, world_y = 0.0, MOUSE_PLANE_HEIGHT
-            if note is not None:
-                try:
-                    lo, hi = note.x_range()
-                except Exception:                    # pragma: no cover - 兜底
-                    lo, hi = 0.5, 0.5
-                world_x = MOUSE_LEFT + (min(lo, hi) + max(lo, hi)) / 2.0 * MOUSE_LEGAL_WIDTH
+            if isinstance(note, MouseClick):
+                world_x = frame.click_shape(note).center
+            elif isinstance(note, MouseSlide):
+                shape = frame.slide_shape(note)
+                world_x = (shape.start_x + shape.end_x) / 2.0
         return self._screen_point(world_x, world_y, 0.0)
 
     def _update(self, dt: float) -> None:
@@ -2417,8 +2412,7 @@ class PlayerApp:
                 continue
             edge_half = 0.008 * UNIT_SCALE          # 轨道边界贴图的半宽（世界单位）
             # 边界是一条**等宽**的斜窄条：整条就是一个梯形，一个多边形画完。
-            # （以前按屏幕高度切成 10 片、逐片画，片与片之间会留下 1px 横线。
-            #   颜色取自贴图平均色，本来就是平的，不需要切片。）
+            # 颜色取自贴图平均色，本来就是平的，不需要切片。
             quad = [
                 self._proj(x - edge_half, 0.0, START_Z),
                 self._proj(x + edge_half, 0.0, START_Z),
@@ -2453,8 +2447,7 @@ class PlayerApp:
     def _draw_mouse_plane_gradient(self) -> None:
         """鼠标平面的蓝底渐变（靠近判定线略蓝 → 轨道尽头完全透明）。
 
-        以前切成 48 条四边形逐条画，条与条之间的接缝就是屏幕上那一道道**横线条纹**。
-        现在按"屏幕行"烘一张一维渐变，再用梯形掩码裁形，一次性贴上去：既没有接缝，
+        按"屏幕行"烘一张一维渐变，再用梯形掩码裁形，一次性贴上去：既没有横向接缝，
         也不用每帧重画几十个多边形（同一窗口尺寸只烘一次，之后每帧一次 blit）。
         """
         overlay = self._mouse_plane_overlay
@@ -2507,31 +2500,14 @@ class PlayerApp:
         self._mouse_plane_value = (surface, rect)
         return self._mouse_plane_value
 
-    @staticmethod
-    def _layer_of(note: Note) -> int:
-        """与编辑器一致的图层顺序（小 = 先画 = 在下层）。"""
-        if isinstance(note, LaneNote):
-            if note.is_hold:
-                return 0 if note.is_multi else 1
-            return 2 if note.is_multi else 3
-        if isinstance(note, MouseRegion):
-            return 4
-        if isinstance(note, MouseClick):
-            return 5
-        return 6
-
     def _head_ms(self, note: Note) -> float:
         assert self.chart is not None
-        return self.chart.timing.beat_to_song_ms(note.head_beat)
+        return frame.head_ms(self.chart.timing, note)
 
     def _note_visible(self, note: Note, now_ms: float) -> bool:
         """判定时刻已过的物件不再显示（长按 / 空域画到它们的末尾过去为止）。"""
         assert self.chart is not None
-        if isinstance(note, LaneNote) and note.is_hold:
-            return now_ms <= self.chart.timing.beat_to_song_ms(note.tail_beat) + 1e-6
-        if isinstance(note, MouseRegion):
-            return now_ms <= self.chart.timing.beat_to_song_ms(note.beat_end) + 1e-6
-        return now_ms <= self._head_ms(note) + 1e-6
+        return frame.note_visible(self.chart.timing, note, now_ms)
 
     def _note_ahead(self, note: Note, now_ms: float) -> bool:
         """物件是否已经进入可视范围。
@@ -2543,17 +2519,12 @@ class PlayerApp:
         用未缩放的 ``scroll_ms`` 时，低倍速下 750~1500ms 的物件会被画出来并贴在起点，
         高倍速下物件则要等到半程才出现（不是从轨道尽头出现）。
         """
-        return self._head_ms(note) - now_ms <= self._visible_span_ms()
+        assert self.chart is not None
+        return frame.note_ahead(self.chart.timing, note, now_ms, self._visible_span_ms())
 
     def _draw_notes(self, now_ms: float) -> None:
         assert self.chart is not None
-        visible = [
-            n
-            for n in self.chart.all_notes()
-            if self._note_ahead(n, now_ms) and self._note_visible(n, now_ms)
-        ]
-        visible.sort(key=lambda n: (self._layer_of(n), n.head_beat))
-        for note in visible:
+        for note in frame.visible_notes(self.chart, now_ms, self._visible_span_ms()):
             if isinstance(note, LaneNote):
                 self._draw_lane_note(note, now_ms)
             elif isinstance(note, MouseRegion):
@@ -2596,68 +2567,57 @@ class PlayerApp:
             self._note_z(timing.beat_to_song_ms(line), now_ms)
             for line in timing.bar_lines(beat, beat + span_beats)
         ])
-        visible = [
-            note for note in self.chart.all_notes()
-            if self._note_ahead(note, now_ms) and self._note_visible(note, now_ms)
-        ]
-        # 图层顺序与编辑器一致（多轨长按 < 单轨长按 < 多轨单键 < 单键 < 空域 < 滑键 < 点击）
-        visible.sort(key=lambda note: (self._layer_of(note), note.head_beat))
-        for note in visible:
-            layer = f"note{self._layer_of(note)}"
+        # 可见物件与图层顺序由 game/frame.py 统一给出，软件渲染路径用同一份结果
+        for note in frame.visible_notes(self.chart, now_ms, self._visible_span_ms()):
+            layer = f"note{layer_rank(note)}"
             if isinstance(note, LaneNote):
                 head = self._note_z(self._head_ms(note), now_ms)
                 if head < -PAST_LINE_KEEP:
                     continue
-                low, high = min(note.lane_start, note.lane_end), max(note.lane_start, note.lane_end)
-                x0 = K6_LEFT + low * LANE_WIDTH + LANE_WIDTH * NOTE_SIDE_INSET
-                x1 = K6_LEFT + (high + 1) * LANE_WIDTH - LANE_WIDTH * NOTE_SIDE_INSET
-                lane = min(LANE_COUNT, max(1, low + 1))
-                center_x = (x0 + x1) / 2.0
+                shape = frame.lane_shape(note)
+                lane = shape.texture_index
+                center_x = (shape.x0 + shape.x1) / 2.0
                 if note.is_hold:
                     tail = self._note_z(timing.beat_to_song_ms(note.tail_beat), now_ms)
                     body_center = (max(0.0, head) + max(0.0, tail)) / 2.0
-                    scene.quad(f"hold_body_{lane}", center_x, body_center, x1 - x0,
+                    scene.quad(f"hold_body_{lane}", center_x, body_center, shape.x1 - shape.x0,
                                max(0.2 * UNIT_SCALE, abs(tail - head)), 0.0, (1, 1, 1, 1.0),
                                layer=layer)
-                    head_size = max(0.25 * UNIT_SCALE, self.settings.note_thickness)
+                    head_size = frame.hold_head_height(self.settings.note_thickness)
                     scene.quad(f"hold_head_{lane}", center_x, max(0.0, head) + head_size / 2.0,
-                               x1 - x0, head_size, 0.0, layer=layer)
+                               shape.x1 - shape.x0, head_size, 0.0, layer=layer)
                 else:
                     thickness = (self.settings.multi_thickness if note.is_multi
                                  else self.settings.note_thickness)
                     scene.quad(f"tap_{lane}", center_x, max(0.0, head) + thickness / 2.0,
-                               x1 - x0, thickness, 0.0, layer=layer)
+                               shape.x1 - shape.x0, thickness, 0.0, layer=layer)
             elif isinstance(note, MouseRegion):
                 self._draw_region3d(note, now_ms)
             elif isinstance(note, MouseSlide):
                 z = max(0.0, self._note_z(self._head_ms(note), now_ms))
-                direction = 1 if note.direction >= 0 else -1
-                name = "right" if direction > 0 else "left"
-                x_start = MOUSE_LEFT + note.x_start * MOUSE_LEGAL_WIDTH
-                x_end = MOUSE_LEFT + note.x_end * MOUSE_LEGAL_WIDTH
+                shape = frame.slide_shape(note)
+                name = "right" if shape.direction > 0 else "left"
                 thick = self.settings.slide_thickness
                 # 贴图底边 = 判定线：楔形挂在判定线上方
                 center_y = MOUSE_PLANE_HEIGHT + thick / 2.0
-                scene.quad(f"slide_body_{name}", (x_start + x_end) / 2.0, z,
-                           abs(x_end - x_start), thick, center_y, (1, 1, 1, 1),
+                scene.quad(f"slide_body_{name}", (shape.start_x + shape.end_x) / 2.0, z,
+                           abs(shape.end_x - shape.start_x), thick, center_y, (1, 1, 1, 1),
                            vertical=True, layer=layer)
-                scene.quad(f"slide_arrow_{name}", x_end, z, thick, thick, center_y,
+                scene.quad(f"slide_arrow_{name}", shape.end_x, z, thick, thick, center_y,
                            (1, 1, 1, 1), vertical=True, layer=layer)
             elif isinstance(note, MouseClick):
                 z = max(0.0, self._note_z(self._head_ms(note), now_ms))
-                lo, hi = note.x_range()
-                x0 = MOUSE_LEFT + min(lo, hi) * MOUSE_LEGAL_WIDTH
-                x1 = MOUSE_LEFT + max(lo, hi) * MOUSE_LEGAL_WIDTH
+                shape = frame.click_shape(note)
                 height = self.settings.click_thickness
                 center_y = MOUSE_PLANE_HEIGHT + height / 2.0
-                scene.quad("click_range", (x0 + x1) / 2.0, z, x1 - x0, height, center_y,
+                scene.quad("click_range", (shape.x0 + shape.x1) / 2.0, z,
+                           shape.x1 - shape.x0, height, center_y,
                            (1, 1, 1, 1), vertical=True, layer=layer)
-                cx = MOUSE_LEFT + note.center * MOUSE_LEGAL_WIDTH
-                scene.quad("click_diamond", cx, z, height, height, center_y,
+                scene.quad("click_diamond", shape.center, z, height, height, center_y,
                            (1, 1, 1, 1), vertical=True, angle=45.0, layer=layer)
-                scene.quad("click_edge", x0, z, height / 2.0, height, center_y,
+                scene.quad("click_edge", shape.x0, z, height / 2.0, height, center_y,
                            (1, 1, 1, 1), vertical=True, layer=layer)
-                scene.quad("click_edge", x1, z, height / 2.0, height, center_y,
+                scene.quad("click_edge", shape.x1, z, height / 2.0, height, center_y,
                            (1, 1, 1, 1), vertical=True, angle=180.0, layer=layer)
         self._scene_marker()
         return scene.render()
@@ -2686,8 +2646,9 @@ class PlayerApp:
             song_ms = near_ms + (far_ms - near_ms) * index / samples
             beat = timing.song_ms_to_beat(song_ms)
             z = min(START_Z, max(0.0, self._note_z(song_ms, now_ms)))
-            left.append((MOUSE_LEFT + note.left_at(beat) * MOUSE_LEGAL_WIDTH, z))
-            right.append((MOUSE_LEFT + note.right_at(beat) * MOUSE_LEGAL_WIDTH, z))
+            left_x, right_x = frame.region_bounds(note, beat)
+            left.append((left_x, z))
+            right.append((right_x, z))
         if len(left) < 2:
             return
         y = MOUSE_PLANE_HEIGHT
@@ -2708,10 +2669,8 @@ class PlayerApp:
         head_z = self._note_z(self._head_ms(note), now_ms)
         if head_z < -PAST_LINE_KEEP:
             return
-        low, high = min(note.lane_start, note.lane_end), max(note.lane_start, note.lane_end)
-        tex_index = min(LANE_COUNT, max(1, low + 1))
-        x0 = K6_LEFT + low * LANE_WIDTH + LANE_WIDTH * NOTE_SIDE_INSET
-        x1 = K6_LEFT + (high + 1) * LANE_WIDTH - LANE_WIDTH * NOTE_SIDE_INSET
+        shape = frame.lane_shape(note)
+        tex_index, x0, x1 = shape.texture_index, shape.x0, shape.x1
         if note.is_hold:
             tail_z = self._note_z(self.chart.timing.beat_to_song_ms(note.tail_beat), now_ms)
             body = f"hold_body_{tex_index}"
@@ -2738,7 +2697,7 @@ class PlayerApp:
                 mid_far = self._proj((x0 + x1) / 2, 0.0, max(0.0, tail_z))
                 self._line_scaled(mid_near, mid_far, WHITE, 2.4, min(near[2], far[2]))
             # 开头盖在主体上面（有意让一部分主体被开头覆盖）
-            head_top = max(0.0, head_z) + max(0.4 * UNIT_SCALE, self.settings.note_thickness)
+            head_top = max(0.0, head_z) + frame.hold_head_height(self.settings.note_thickness)
             if not self._blit_lane_tex(f"hold_head_{tex_index}", x0, x1,
                                        max(0.0, head_z), min(START_Z, head_top)):
                 self._quad(
@@ -2791,8 +2750,7 @@ class PlayerApp:
     def _blit_hold_center_line(self, x0: float, x1: float, head_z: float, tail_z: float) -> bool:
         """长按主体中间那条纯白竖线（占键宽 = 贴图的 ``HOLD_LINE_FRACTION``，与开头一致）。
 
-        画成**透视正确的梯形**（近端宽、远端窄）：以前用 ``_line_scaled`` 画等宽直线，
-        看起来比贴图版的开头粗，接缝处会突然变粗。
+        画成**透视正确的梯形**（近端宽、远端窄），与开头贴图的线宽一致。
         """
         center = (x0 + x1) / 2.0
         half = (x1 - x0) * textures.HOLD_LINE_FRACTION / 2.0
@@ -2811,9 +2769,8 @@ class PlayerApp:
     def _draw_region(self, note: MouseRegion, now_ms: float) -> None:
         """空域：画在鼠标物件运动的水平面内（**同一种颜色**的半透明底 + 左右两条边线）。
 
-        只采样**看得见的那一段**：以前按 beat 全段采样、z 用 ``note_z`` 夹到
-        ``[0, START_Z]``，远端的采样点会全挤在 ``z = START_Z`` 上——画出来就是
-        "不该出现的空域堆积在平面远端"。
+        只采样**看得见的那一段**：超出轨道尽头的部分如果也采样，点会全挤在
+        ``z = START_Z`` 上相互重叠，叠出的 alpha 更实，看起来像空域堆在平面远端。
         """
         assert self.chart is not None
         timing = self.chart.timing
@@ -2830,8 +2787,7 @@ class PlayerApp:
             song_ms = near_ms + (far_ms - near_ms) * index / samples
             beat = timing.song_ms_to_beat(song_ms)
             z = min(START_Z, max(0.0, self._note_z(song_ms, now_ms)))
-            left_x = MOUSE_LEFT + note.left_at(beat) * MOUSE_LEGAL_WIDTH
-            right_x = MOUSE_LEFT + note.right_at(beat) * MOUSE_LEGAL_WIDTH
+            left_x, right_x = frame.region_bounds(note, beat)
             left_points.append(self._proj(left_x, MOUSE_PLANE_HEIGHT, z))
             right_points.append(self._proj(right_x, MOUSE_PLANE_HEIGHT, z))
         if len(left_points) < 2:
@@ -2857,8 +2813,7 @@ class PlayerApp:
             surface = self._tex("region_edge")
             if surface is not None:
                 edge_color = textures.average_color(surface)
-        # 边线的**屏幕线宽按透视缩放**（判定线处最宽、远端最细）：以前不管远近都画
-        # 2px，远处的空域看上去反而比近处更粗（近大远小的直觉相反）。
+        # 边线的**屏幕线宽按透视缩放**：判定线处最宽、远端最细。
         for index in range(len(left_points) - 1):
             for points in (left_points, right_points):
                 a, b = points[index], points[index + 1]
@@ -2918,15 +2873,15 @@ class PlayerApp:
     def _draw_pattern_textured(self, note: Note, z: float) -> bool:
         """贴图版滑键 / 点击按键（缺贴图时返回 False，走旧的程序绘制）。"""
         if isinstance(note, MouseSlide):
-            direction = 1 if note.direction >= 0 else -1
+            shape = frame.slide_shape(note)
+            direction = shape.direction
             name = "right" if direction > 0 else "left"
-            height = max(0.006 * UNIT_SCALE, self.settings.slide_thickness)
-            start_x = MOUSE_LEFT + note.x_start * MOUSE_LEGAL_WIDTH
-            end_x = MOUSE_LEFT + note.x_end * MOUSE_LEGAL_WIDTH
+            height = frame.pattern_height(self.settings.slide_thickness)
+            start_x, end_x = shape.start_x, shape.end_x
             # 贴图的左边界要绑**屏幕左边**（不是"起点"）：左滑键的起点在右、
             # 终点在左，若按起点绑就会把整张贴图左右镜像（Panda 路径按中心+宽度画，
             # 本来就是绑屏幕左边的，两条路径必须一致）
-            left_x, right_x = min(start_x, end_x), max(start_x, end_x)
+            left_x, right_x = shape.left_x, shape.right_x
             body_quad = [
                 self._proj(left_x, MOUSE_PLANE_HEIGHT + height, z),
                 self._proj(right_x, MOUSE_PLANE_HEIGHT + height, z),
@@ -2949,9 +2904,9 @@ class PlayerApp:
                 self._blit_tex_quad(f"slide_arrow_{name}", arrow_quad, flip_x=direction < 0)
             return True
         assert isinstance(note, MouseClick)
-        height = max(0.006 * UNIT_SCALE, self.settings.click_thickness)
-        x0 = MOUSE_LEFT + min(note.x_range()) * MOUSE_LEGAL_WIDTH
-        x1 = MOUSE_LEFT + max(note.x_range()) * MOUSE_LEGAL_WIDTH
+        height = frame.pattern_height(self.settings.click_thickness)
+        shape = frame.click_shape(note)
+        x0, x1, cx = shape.x0, shape.x1, shape.center
         middle = MOUSE_PLANE_HEIGHT + height / 2.0
         range_quad = [
             self._proj(x0, MOUSE_PLANE_HEIGHT + height, z),
@@ -2962,7 +2917,6 @@ class PlayerApp:
         if not self._blit_tex_quad("click_range", range_quad):
             return False
         d = height / 2.0                              # 菱形 / 边界的半高
-        cx = MOUSE_LEFT + note.center * MOUSE_LEGAL_WIDTH
         self._blit_tex_quad(
             "click_diamond",
             [
@@ -2995,13 +2949,13 @@ class PlayerApp:
         return True
 
     def _draw_pattern_legacy(self, note: Note, z: float) -> None:
-        """程序绘制的旧版样式（缺贴图时的兜底）。"""
+        """程序绘制的样式（缺贴图时的兜底）。"""
         if isinstance(note, MouseSlide):
             color = (110, 230, 160) if note.direction >= 0 else (235, 210, 110)
             height = self.settings.slide_thickness
             # 滑动朝向的一侧更厚、不透明度更高：起点 -> 终点 **厚度与透明度都渐变**
-            start_x = MOUSE_LEFT + note.x_start * MOUSE_LEGAL_WIDTH
-            end_x = MOUSE_LEFT + note.x_end * MOUSE_LEGAL_WIDTH
+            shape = frame.slide_shape(note)
+            start_x, end_x = shape.start_x, shape.end_x
             thin = max(0.004 * UNIT_SCALE, height * 0.25)
             # 切成细条逐条插值出真正的渐变；条数按屏幕宽度取，宽的时候不会看到色带
             span_px = abs(
@@ -3030,11 +2984,10 @@ class PlayerApp:
                 )
             return
         assert isinstance(note, MouseClick)
-        lo, hi = note.x_range()
         color = (235, 90, 80)
         height = self.settings.click_thickness
-        x0 = MOUSE_LEFT + min(lo, hi) * MOUSE_LEGAL_WIDTH
-        x1 = MOUSE_LEFT + max(lo, hi) * MOUSE_LEGAL_WIDTH
+        shape = frame.click_shape(note)
+        x0, x1 = shape.x0, shape.x1
         middle = MOUSE_PLANE_HEIGHT + height / 2.0
         # 形状是**中间厚、两边薄的菱形**，并且透明度一起渐变（中间实、两端淡）
         span_px = abs(
@@ -3068,7 +3021,7 @@ class PlayerApp:
             self._proj(x0, middle, z), self._proj(x1, middle, z), (255, 70, 60), 2
         )
         # 中央实心菱形标记（固定大小，不随按键尺寸变化）
-        cx = MOUSE_LEFT + note.center * MOUSE_LEGAL_WIDTH
+        cx = shape.center
         d = NOTE_HEIGHT_UNIT / 2
         self._quad(
             [
@@ -3252,7 +3205,7 @@ class PlayerApp:
         return f"倍速：{_fmt_num(self.settings.rate)}x"
 
     def _result_accuracy_line(self) -> str:
-        """准度（取代原来的“判定数 a / 总数”）。"""
+        """准度。"""
         assert self.judge is not None
         return f"准度：{self.judge.accuracy * 100:.3f}%"
 

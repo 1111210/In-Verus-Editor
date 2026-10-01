@@ -352,7 +352,7 @@ class Chart:
         chart = cls(
             metadata=Metadata.from_dict(data.get("metadata")),  # type: ignore[arg-type]
             timing=TimingMap.from_dict(data.get("timing")),  # type: ignore[arg-type]
-            # 谱面文件里的 editor 段已废弃：只在读老文件时留作迁移参考
+            # editor 段是旧格式：读取时用于迁移到全局设置，不再写出
             settings=EditorSettings(),
         )
         groups_data = data.get("speed_groups") or [SpeedGroup.default().to_dict()]

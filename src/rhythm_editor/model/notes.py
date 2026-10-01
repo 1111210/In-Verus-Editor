@@ -2,7 +2,7 @@
 
 三件套：
 * ``LaneNote``     —— 6K 下落式物件：单轨 / 多轨（横跨相邻多条轨道）以及对应的长按。
-* ``MouseRegion``  —— 鼠标停留区域：左/右两条边界曲线（首尾位置 + 线型）。
+* ``MouseRegion``  —— 空域：左/右两条边界曲线（首尾位置 + 线型）。
 * ``MouseSlide``   —— 鼠标滑键：到达判定线时需在范围内朝指定方向滑动。
 
 所有物件都记录 ``group``（所属速度组 id），速度组同时记录自己包含的物件 id，
@@ -194,7 +194,7 @@ class MouseNote(Note):
 
 
 class MouseRegion(MouseNote):
-    """鼠标停留区域：从 ``beat_start`` 出现到 ``beat_end`` 消失，期间鼠标需留在区域内。"""
+    """空域：从 ``beat_start`` 出现到 ``beat_end`` 消失，期间鼠标需留在区域内。"""
 
     kind = NOTE_REGION
 
@@ -394,6 +394,35 @@ class MouseClick(MouseNote):
             "radius": round(self.radius, 6),
             "group": self.group,
         }
+
+
+# ---------------------------------------------------------------- 图层顺序
+# 渲染（编辑器画布 / 游玩器两条渲染路径）与命中测试共用这唯一一份定义。
+# 数值越小越先画（越靠下层），越大越靠上层：
+# 多轨长按 < 单轨长按 < 多轨单键 < 单轨单键 < 空域 < 滑键 < 鼠标点击。
+LAYER_MULTI_HOLD = 0
+LAYER_SINGLE_HOLD = 1
+LAYER_MULTI_TAP = 2
+LAYER_SINGLE_TAP = 3
+LAYER_REGION = 4
+LAYER_SLIDE = 5
+LAYER_CLICK = 6
+LAYER_MAX = LAYER_CLICK
+
+
+def layer_rank(note: Note) -> int:
+    """物件所属图层（0 = 最底层，:data:`LAYER_MAX` = 最顶层）。"""
+    if isinstance(note, LaneNote):
+        if note.is_hold:
+            return LAYER_MULTI_HOLD if note.is_multi else LAYER_SINGLE_HOLD
+        return LAYER_MULTI_TAP if note.is_multi else LAYER_SINGLE_TAP
+    if isinstance(note, MouseRegion):
+        return LAYER_REGION
+    if isinstance(note, MouseSlide):
+        return LAYER_SLIDE
+    if isinstance(note, MouseClick):
+        return LAYER_CLICK
+    return LAYER_MULTI_HOLD
 
 
 def note_from_dict(data: Dict[str, Any]) -> Note:

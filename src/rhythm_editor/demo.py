@@ -82,7 +82,7 @@ def build_demo_chart() -> Chart:
     for lane, beat in ((0, 72.0), (1, 73.0), (2, 74.0)):
         tap(lane, beat)
 
-    # 鼠标停留区域
+    # 空域
     region_specs = [
         (16.0, 20.0, BoundaryCurve(0.25, 0.05, config.EASE_LINEAR), BoundaryCurve(0.75, 0.95, config.EASE_OUT)),
         (24.0, 27.0, BoundaryCurve(0.0, 0.4, config.EASE_IN), BoundaryCurve(1.0, 0.6, config.EASE_IN)),

@@ -10,7 +10,15 @@ from typing import List, Optional, Sequence, Tuple
 
 from .. import config
 from ..model.chart import Chart
-from ..model.notes import LaneNote, MouseClick, MouseNote, MouseRegion, MouseSlide, Note
+from ..model.notes import (
+    LaneNote,
+    MouseClick,
+    MouseNote,
+    MouseRegion,
+    MouseSlide,
+    Note,
+    layer_rank,
+)
 from ..model.speed import SpeedGroup
 from .view import ViewState
 
@@ -38,28 +46,6 @@ def hit_signature(view: ViewState) -> tuple:
     )
 
 
-def _depth(note: Note) -> int:
-    """命中优先级 = 渲染图层顺序（越大越靠上）：
-
-    点击按键 > 滑键 > 空域 > 单轨单键 > 多轨单键 > 单轨长按 > 多轨长按。
-    """
-    if isinstance(note, MouseClick):
-        return 7
-    if isinstance(note, MouseSlide):
-        return 6
-    if isinstance(note, MouseRegion):
-        return 5
-    if isinstance(note, LaneNote):
-        if not note.is_hold and not note.is_multi:
-            return 4
-        if not note.is_hold and note.is_multi:
-            return 3
-        if note.is_hold and not note.is_multi:
-            return 2
-        return 1
-    return 0
-
-
 @dataclass
 class HitCache:
     """上一帧渲染时算好的可见物件几何，供点击 / 框选复用。
@@ -83,7 +69,7 @@ class HitCache:
                     hits.append(note)
             elif point_in_rect(x, y, bounds, pad=config.HIT_PADDING_PX):
                 hits.append(note)
-        hits.sort(key=lambda n: (_depth(n), n.head_beat), reverse=True)
+        hits.sort(key=lambda n: (layer_rank(n), n.head_beat), reverse=True)
         return hits
 
     def query_box(self, x0: float, y0: float, x1: float, y1: float) -> List[Note]:
@@ -230,7 +216,7 @@ def note_in_time(note: Note, current_beat: float) -> bool:
     """物件是否还没到判定时间（或正在判定中）。
 
     显示规则：**判定线越过物件的判定时刻后就不再显示**。
-    长按与鼠标停留区域按结束时刻（``tail_beat``）计算，
+    长按与空域按结束时刻（``tail_beat``）计算，
     因此按住期间整条长按 / 整个区域依然可见。
     """
     return float(current_beat) <= float(note.tail_beat) + 1e-9
@@ -253,7 +239,7 @@ def notes_at(
         for n in chart.all_notes()
         if note_in_time(n, view.current_beat) and note_hit(n, chart, view, x, y)
     ]
-    hits.sort(key=lambda n: (_depth(n), n.head_beat), reverse=True)
+    hits.sort(key=lambda n: (layer_rank(n), n.head_beat), reverse=True)
     if limit is not None:
         return hits[:limit]
     return hits

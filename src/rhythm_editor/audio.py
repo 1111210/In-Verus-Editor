@@ -162,7 +162,7 @@ def time_stretch(
 
     实现是线性插值重采样 —— 等价于“把采样率按 rate 倍降低后再按原速播放”：
     慢放 0.5x 时长度翻倍、频率减半。比 WSOLA 便宜得多（一次 O(n) 查表），
-    单个窗口的合成开销从几十毫秒降到几毫秒，也不再需要相似度搜索。
+    单个窗口的合成开销为几毫秒，不需要相似度搜索。
     """
     if _NP is None:  # pragma: no cover - 无 numpy 时直接原样返回
         return samples
@@ -436,8 +436,8 @@ class StretchedSoundBackend:  # pragma: no cover - 依赖 pygame + numpy
         """每帧调用：维护“当前 + 一个排队”的窗口，保证连续、不重不漏。
 
         关键：**必须等排队的那一段真的开始播了**，才把槽位让给下一段。
-        以前用“到点前 50ms 就换锚点”的近似判断，于是下一段还没开始播就又被
-        ``Channel.queue()`` 顶掉 —— 那一段就再也听不到了（表现就是音乐漏片段）。
+        只看时间近似判断会让下一段还没开始播就被 ``Channel.queue()`` 顶掉，
+        那一段就再也听不到（表现就是音乐漏片段），所以以实际播放位置为准。
         """
         if not self._playing or self._channel is None or self._anchor is None:
             return
@@ -667,7 +667,7 @@ class AudioPlayer:
     def retry_backend(self) -> bool:
         """重新初始化音频设备（插好耳机 / 关掉独占声卡的软件后可以重试）。
 
-        返回重试后是否可用；原来载入的歌曲会自动重新载入。
+        返回重试后是否可用；已载入的歌曲会自动重新载入。
         """
         path = self.path
         rate = self.rate
@@ -718,7 +718,7 @@ class AudioPlayer:
             self.backend.play(start)
         except Exception as exc:  # pragma: no cover - 后端异常
             # 拉伸合成失败时退回**普通播放**（听得见，只是不慢放），
-            # 而不是直接变成静音 —— 以前这里会静默切成静音时钟，音乐就“没了”
+            # 不静默切成静音时钟（那样音乐就“没了”）
             self._fallback_plain(f"慢放合成失败（{exc}），已回到 1.0x 播放")
             try:
                 self.backend.play(start)
@@ -745,9 +745,9 @@ class AudioPlayer:
     def _stop_all_backends(self) -> None:
         """把**所有**后端都停掉。
 
-        以前只停当前后端：切换倍速（拉伸后端 ↔ 普通后端）时，被换下的那个还在出声，
-        听感就是“按了暂停/停止以后声音还响一会儿”。这里连同队列里的窗口一起清掉，
-        并且直接把混音器里所有通道停掉，确保立刻静音。
+        切换倍速（拉伸后端 ↔ 普通后端）时，被换下的后端也要停：只停当前后端的话
+        它还会继续出声（听感是“按了暂停 / 停止以后声音还响一会儿”）。这里连同
+        队列里的窗口一起清掉，并停掉混音器里所有通道，确保立刻静音。
         """
         for backend in (self.backend, self._plain_backend, self._stretch_backend):
             if backend is None:

@@ -269,8 +269,8 @@ class Scene3D:
         # 画家算法：整棵树关掉深度测试，层序完全由图层父节点的顺序决定
         self.root.setDepthTest(False)
         self.root.setDepthWrite(False)
-        # 取景标定：以**构图贴近软件版**为目标，由 tools/fit_panda_composition2.py
-        # 用 Scene3D.project()（官方 Lens.project，与渲染差 <1px）解析搜出，
+        # 取景标定：以**构图贴近软件版**为目标，用 Scene3D.project()
+        # （官方 Lens.project，与渲染差 <1px）解析搜索相机参数，
         # 8 个角点平均误差 13.7px。
         self.set_camera(pitch=20.0, fov=39.0, back=1.85 * UNIT_SCALE,
                         height=1.50 * UNIT_SCALE)
@@ -451,7 +451,7 @@ class Scene3D:
     def _apply_layer(self, node, layer: str) -> None:
         """画家算法：关掉深度测试，并用 **fixed bin 的 draw_order** 显式定层。
 
-        实测（tools/diag_panda_render.py 的 "绘制顺序检查"）：
+        实测（绘制顺序检查）：
         * 不加 bin 时，带透明的物体会被 Panda 按**深度**排序（近的后画），
           图层结构会被无视；
         * ``setBin("fixed", n)`` 的 draw_order 是生效的（n 大的后画，压在上面）；
@@ -495,8 +495,7 @@ class Scene3D:
         """世界坐标 -> 屏幕像素。
 
         **直接问 Panda 的镜头**（`Lens.project`，输入相机空间点，输出 (-1,1) 的
-        NDC，(-1,-1) 是左下角）。实测这条路径与渲染画面相差 < 1px
-        （tools/diag_panda_render.py 的 "官方 Lens.project 校验"），比手写
+        NDC，(-1,-1) 是左下角）。实测这条路径与渲染画面相差 < 1px（官方 Lens.project 校验），比手写
         投影公式 + 线性校准可靠得多：镜头参数（FOV / 纵横比 / 俯角）怎么改都跟得上。
         """
         if self.camera is None:                      # pragma: no cover - 未初始化
@@ -611,7 +610,7 @@ class Scene3D:
              layer: str = "note") -> None:
         """放一张卡片：水平面（默认）或平行判定平面（``vertical=True``）。
 
-        等价于旧版的"一张卡片一个 NodePath + 十几次 setXXX"，但会按
+        等价于"一张卡片一个 NodePath"的写法，但会按
         （图层, 贴图, 颜色）归组，交给 :class:`QuadBatch` 一次性上传顶点缓冲。
         """
         self._batch(layer, name, color).add_quad(x, z, sx, sz, y, vertical, angle)
