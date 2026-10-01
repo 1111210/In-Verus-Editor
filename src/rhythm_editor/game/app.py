@@ -2203,6 +2203,16 @@ class PlayerApp:
         """鼠标平面渐变用的 z 分界（按屏幕高度均匀切）。"""
         return self._plane_strip_z(strips, MOUSE_PLANE_HEIGHT)
 
+    # 空域边线在**判定线处**的半宽（像素）：共 2px，越远按透视越细
+    REGION_EDGE_HALF_PX = 1.0
+
+    def _region_edge_half_px(self, scale: float) -> float:
+        """空域边线的屏幕半宽：随透视缩放（远处的线更细，不会看着比近处粗）。"""
+        ref = self._proj(0.0, MOUSE_PLANE_HEIGHT, 0.0)[2]
+        if ref <= 1e-6 or scale <= 0.0:                  # pragma: no cover - 退化情形
+            return self.REGION_EDGE_HALF_PX
+        return max(0.6, self.REGION_EDGE_HALF_PX * scale / ref)
+
     def _plane_strip_z(self, strips: int, world_y: float = 0.0) -> List[float]:
         """某个水平面上按**屏幕高度**均匀切出来的 z 分界。
 
@@ -2833,13 +2843,17 @@ class PlayerApp:
             surface = self._tex("region_edge")
             if surface is not None:
                 edge_color = textures.average_color(surface)
+        # 边线的**屏幕线宽按透视缩放**（判定线处最宽、远端最细）：以前不管远近都画
+        # 2px，远处的空域看上去反而比近处更粗（近大远小的直觉相反）。
         for index in range(len(left_points) - 1):
             for points in (left_points, right_points):
+                a, b = points[index], points[index + 1]
+                scale = (a[2] + b[2]) / 2.0             # 这一段的透视缩放
+                half = self._region_edge_half_px(scale)
                 if edge_color is not None:
-                    a, b = points[index], points[index + 1]
                     dx, dy = b[0] - a[0], b[1] - a[1]
                     length = max(1.0, math.hypot(dx, dy))
-                    nx, ny = -dy / length, dx / length      # 法线方向
+                    nx, ny = -dy / length * half, dx / length * half     # 法线方向 × 半宽
                     quad = [
                         (a[0] + nx, a[1] + ny),
                         (b[0] + nx, b[1] + ny),
@@ -2848,7 +2862,7 @@ class PlayerApp:
                     ]
                     self._alpha_quad(quad, edge_color[:3], edge_color[3])
                 else:
-                    self._line(points[index], points[index + 1], MOUSE_TINT, 2)
+                    self._line_scaled(a, b, MOUSE_TINT, 2, scale)
         # 空域判定线：单像素图铺在判定线处
         line_color = self.texture_avg.get("region_line")
         if line_color is None:
