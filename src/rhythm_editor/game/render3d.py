@@ -16,6 +16,7 @@ from __future__ import annotations
 
 import os
 import math
+import struct
 from typing import Dict, List, Optional, Tuple
 
 _IMPORT_ERROR: Optional[str] = None
@@ -82,6 +83,98 @@ def make_gradient_texture(direction: str = "area") -> "Texture":  # pragma: no c
     return texture
 
 
+def quad_corners(x: float, z: float, sx: float, sz: float, y: float,
+                 vertical: bool, angle: float):
+    """一张卡片的 4 个角（Panda 世界坐标 ``(X, Y, Z)``）——和 NodePath 变换等价。
+
+    顺序对应 UV ``(0,0) (1,0) (1,1) (0,1)``。水平卡片（``vertical=False``）落在
+    ``X-Y`` 平面（纵深是 Y），平行判定平面的卡片落在 ``X-Z`` 平面；``angle`` 绕卡片
+    法线旋转（Roll）。
+    """
+    radians = math.radians(angle)
+    cos_a, sin_a = math.cos(radians), math.sin(radians)
+    corners = []
+    for u, v in ((0.0, 0.0), (1.0, 0.0), (1.0, 1.0), (0.0, 1.0)):
+        local_x = (u - 0.5) * sx
+        local_z = (v - 0.5) * sz
+        rot_x = local_x * cos_a + local_z * sin_a
+        rot_z = -local_x * sin_a + local_z * cos_a
+        if vertical:                       # 平行判定平面：横向 X、竖向 Z
+            corners.append((x + rot_x, z, y + rot_z))
+        else:                              # 水平面：横向 X、纵深 Y
+            corners.append((x + rot_x, z + rot_z, y))
+    return corners
+
+
+class QuadBatch:
+    """一帧里"同图层 + 同贴图 + 同颜色"的四边形合成**一个动态 Geom**。
+
+    每个四边形写 6 个顶点（两个三角形，不用索引），整块 ``setData()`` 一次性上传：
+    每帧的 Panda API 调用从"每个物件十几次"降到"每组几次"。
+    顶点布局用 ``GeomVertexFormat.getV3t2()``（stride 20：3 个 float 位置 + 2 个 float UV），
+    和 numpy / struct 打包出来的字节完全一致。
+    """
+
+    _FORMAT = GeomVertexFormat.getV3t2()
+
+    def __init__(self, parent: "NodePath", name: str, texture, color, draw_order: int) -> None:
+        self.vdata = GeomVertexData(name, self._FORMAT, Geom.UHDynamic)
+        self.vdata.setNumRows(0)
+        self.primitive = GeomTriangles(Geom.UHDynamic)
+        self.geom = Geom(self.vdata)
+        self.geom.addPrimitive(self.primitive)
+        self.node = GeomNode(name)
+        self.node.addGeom(self.geom)
+        self.path = NodePath(self.node)
+        self.path.setTransparency(TransparencyAttrib.MAlpha)
+        self.path.setDepthTest(False)
+        self.path.setDepthWrite(False)
+        self.path.setBin("fixed", draw_order)
+        self.path.setColor(*color)
+        if texture is not None:
+            self.path.setTexture(texture)
+        self.path.reparentTo(parent)
+        self.path.hide()
+        self.parts: List[bytes] = []
+        self.count = 0
+
+    # ------------------------------------------------------------------ 每帧
+    def reset(self) -> None:
+        self.parts.clear()
+        self.count = 0
+
+    def add_quad(self, x: float, z: float, sx: float, sz: float, y: float,
+                 vertical: bool, angle: float) -> None:
+        """把一张卡片写进本组的顶点列表。
+
+        坐标直接用**分析式**算（不再走 NodePath 变换）：先取卡片局部 ``(lx, lz)``，
+        绕法线转 ``angle``，再按卡片朝向落到世界坐标 —— 水平卡片 ``(x, z 远)``、
+        平行判定平面的卡片 ``(x, y 上)``；最后换成 Panda 的 ``(X=x, Y=z, Z=y)``。
+        """
+        corners = quad_corners(x, z, sx, sz, y, vertical, angle)
+        values = []
+        for index, (u, v) in ((0, (0.0, 0.0)), (1, (1.0, 0.0)), (2, (1.0, 1.0)),
+                              (0, (0.0, 0.0)), (2, (1.0, 1.0)), (3, (0.0, 1.0))):
+            px, py, pz = corners[index]
+            values.extend((px, py, pz, u, v))
+        self.parts.append(struct.pack("<30f", *values))
+        self.count += 1
+
+    def flush(self) -> None:
+        """把这一帧攒的四边形整块传上去；本帧没用到就藏起来。"""
+        if not self.count:
+            self.path.hide()
+            return
+        data = b"".join(self.parts)
+        rows = self.count * 6
+        self.vdata.setNumRows(rows)
+        self.vdata.modifyArray(0).modifyHandle().setData(data)
+        self.primitive.clearVertices()
+        self.primitive.addConsecutiveVertices(0, rows)
+        self.primitive.closePrimitive()
+        self.path.show()
+
+
 class Scene3D:
     """离屏 Panda3D 场景：静态轨道 + 每帧物件。"""
 
@@ -136,8 +229,7 @@ class Scene3D:
         self.height = height
         self.decorations = decorations
         self._textures: Dict[str, "Texture"] = {}
-        self._pools: Dict[str, List["NodePath"]] = {}
-        self._used: Dict[str, int] = {}
+        self._batches: Dict[tuple, "QuadBatch"] = {}
         self._extra: List["NodePath"] = []      # 每帧重建的网格（空域）
         self._static_nodes: List["NodePath"] = []
         self.card = CardMaker("quad")
@@ -391,8 +483,8 @@ class Scene3D:
         return point[1] if point else self.height * 0.5
 
     def begin(self) -> None:
-        for layer in self._pools:
-            self._used[layer] = 0
+        for group in self._batches.values():
+            group.reset()
         for node in self._extra:                # 上一帧的空域网格整体丢掉重建
             node.removeNode()
         self._extra.clear()
@@ -482,35 +574,25 @@ class Scene3D:
 
     def quad(self, name: str, x: float, z: float, sx: float, sz: float, y: float,
              color=(1, 1, 1, 1), vertical: bool = False, angle: float = 0.0,
-             layer: str = "note") -> "NodePath":
-        """放一张卡片：水平面（默认）或平行判定平面（``vertical=True``）。"""
-        layer = self._layer_of(layer)
-        node = self._next_node(layer)
-        node.clearTexture()
-        loaded = self.texture(name)
-        if loaded is not None:
-            node.setTexture(loaded)
-        node.setTransparency(TransparencyAttrib.MAlpha)
-        node.setColor(*color)
-        node.setPos(x, z, y)
-        # 水平面（轨道/平面/长条）= P -90；平行判定平面（滑键/点击）= P 0
-        node.setHpr(0.0, 0.0 if vertical else -90.0, angle)
-        self._apply_layer(node, layer)
-        node.setScale(sx, 1.0, sz)   # 卡片宽高在局部 X / Z 上
-        node.show()
-        return node
+             layer: str = "note") -> None:
+        """放一张卡片：水平面（默认）或平行判定平面（``vertical=True``）。
 
-    def _next_node(self, layer: str) -> "NodePath":
-        pool = self._pools.setdefault(layer, [])
-        used = self._used.get(layer, 0)
-        if used < len(pool):
-            node = pool[used]
-        else:
-            node = NodePath(self.card.generate())
-            node.reparentTo(self.layers[layer])
-            pool.append(node)
-        self._used[layer] = used + 1
-        return node
+        等价于旧版的"一张卡片一个 NodePath + 十几次 setXXX"，但会按
+        （图层, 贴图, 颜色）归组，交给 :class:`QuadBatch` 一次性上传顶点缓冲。
+        """
+        self._batch(layer, name, color).add_quad(x, z, sx, sz, y, vertical, angle)
+
+    def _batch(self, layer: str, name: str, color) -> "QuadBatch":
+        layer = self._layer_of(layer)
+        key = (layer, name, tuple(round(float(channel), 4) for channel in color))
+        group = self._batches.get(key)
+        if group is None:
+            group = QuadBatch(self.layers[layer],
+                              f"batch_{layer}_{name or 'flat'}",
+                              self.texture(name) if name else None, key[2],
+                              (self.LAYER_SEQUENCE.index(layer) + 1) * 10)
+            self._batches[key] = group
+        return group
 
     def mouse_marker(self, norm_x: float, plane_y: float, thickness: float,
                      outline_x: float = None) -> None:
@@ -537,14 +619,14 @@ class Scene3D:
         """渲染一帧并返回 ``pygame.Surface``（RGB）。"""
         import pygame
 
-        # 这一帧没用到的池节点必须藏起来：否则上一帧的物件会「残影」留在画面上
-        # （物件过线后数量减少时尤其明显）
-        for layer, pool in self._pools.items():
-            for index in range(self._used.get(layer, 0), len(pool)):
-                pool[index].hide()
+        for group in self._batches.values():     # 每帧只更新用到的组，没用到的藏起来
+            group.flush()
         self.base.graphicsEngine.render_frame()
+        # 零拷贝建表面：frombuffer 共享内存（比 fromstring 少一次 3MB 的整帧复制），
+        # 代价是必须自己保持缓冲区引用不被回收
         raw = bytes(self.frame_texture.getRamImageAs("RGB"))
-        surface = pygame.image.fromstring(raw, (self.width, self.height), "RGB")
+        self._raw_keepalive = raw
+        surface = pygame.image.frombuffer(raw, (self.width, self.height), "RGB")
         return pygame.transform.flip(surface, False, True)   # Panda 的行序是自下而上
 
     def resize(self, width: int, height: int) -> None:
