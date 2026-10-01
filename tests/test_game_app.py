@@ -694,11 +694,10 @@ class PlayerAppSmokeTests(unittest.TestCase):
 
     def test_region_edge_line_thins_with_distance(self) -> None:
         """软渲染的空域边线要按透视变细：远处的线不能和近处一样粗。"""
+        from rhythm_editor.game import app as game_app
         from rhythm_editor.game.scene import MOUSE_PLANE_HEIGHT
         from rhythm_editor.model.chart import Chart
         from rhythm_editor.model.notes import BoundaryCurve, MouseRegion
-
-        import numpy as np
 
         pygame = self.pygame
         app = self.app
@@ -706,62 +705,70 @@ class PlayerAppSmokeTests(unittest.TestCase):
         app._compute_texture_averages()
         app.settings.rate, app.settings.side_lane_highlight = 1.0, False
         app.scene3d = None
-        region = MouseRegion("R", 0.0, 24.0, BoundaryCurve(0.2, 0.0), BoundaryCurve(0.8, 0.0))
 
-        def frame(notes):
-            app.chart = Chart()
-            app.chart.lane_notes = []
-            app.chart.mouse_notes = list(notes)
-            app.chart.invalidate_order()
-            now = app.chart.timing.beat_to_song_ms(0.0)
-            app.screen.fill((10, 10, 14))
-            app._draw_planes(now)
-            app._draw_notes(now)
-            return now, pygame.surfarray.array3d(app.screen).astype(np.int16)
-
-        _now, with_region = frame([region])
-
+        half_world = game_app.REGION_EDGE_HALF_WORLD
+        self.assertAlmostEqual(half_world, 0.006 * game_app.UNIT_SCALE, places=9)
         ref = app._proj(0.0, MOUSE_PLANE_HEIGHT, 0.0)[2]     # 判定线处（最近）的缩放
         near_half, near_fade = app._region_edge_style(ref)
         far_half, far_fade = app._region_edge_style(
             app._proj(0.0, MOUSE_PLANE_HEIGHT, 12.0)[2])
-        self.assertAlmostEqual(near_half, app.REGION_EDGE_HALF_PX)
+        self.assertAlmostEqual(near_half, half_world * ref, places=6)
         self.assertAlmostEqual(near_fade, 1.0)
         self.assertGreater(near_half, far_half, "远处的空域边线必须更细")
         self.assertGreater(near_fade, far_fade, "远处的空域边线必须更淡")
         self.assertGreaterEqual(far_half, app.REGION_EDGE_MIN_HALF_PX)
-        self.assertAlmostEqual(app.REGION_EDGE_HALF_PX, 2.0, places=6)   # 比原来粗一倍
+        # 判定线处整条边线约 5.6px（与 Panda 那条 ribbon 同宽）
+        self.assertGreater(2 * near_half, 5.0)
 
-        # 实际画出来也必须是近粗远细：边线是青色（绿远大于红），比底图"青"得多，
-        # 用"绿 - 红"这个判据在边界附近量它占了几像素。
-        def measured(z: float) -> int:
-            point = app._proj(-0.3, 0.0, z)
-            row = int(round(point[1]))
-            if not 0 <= row < app.h:                       # pragma: no cover
-                return 0
-            center = int(round(point[0]))
-            window = range(max(1, center - 30), min(app.w - 1, center + 31))
-            score = {x: int(with_region[x, row, 1]) - int(with_region[x, row, 0]) for x in window}
-            if not score:                                  # pragma: no cover
-                return 0
-            fill = score[max(window.start, min(window.stop - 1, center + 12))]
-            peak = max(score.values())
-            threshold = fill + (peak - fill) * 0.5
-            best = 0
-            for x in window:
-                if score[x] < threshold:
-                    continue
-                left = right = x
-                while left > window.start and score[left - 1] >= threshold:
-                    left -= 1
-                while right < window.stop - 1 and score[right + 1] >= threshold:
-                    right += 1
-                best = max(best, right - left + 1)
-            return best
+        # 空域还得真的画出来（不抛异常、覆盖到边界处）
+        app.chart = Chart()
+        app.chart.lane_notes = []
+        app.chart.mouse_notes = [
+            MouseRegion("R", 0.0, 24.0, BoundaryCurve(0.2, 0.0), BoundaryCurve(0.8, 0.0))
+        ]
+        app.chart.invalidate_order()
+        now = app.chart.timing.beat_to_song_ms(0.0)
+        app.screen.fill((10, 10, 14))
+        app._draw_planes(now)
+        app._draw_notes(now)
+        edge_color = game_app.textures.average_color(app._tex("region_edge"))
+        boundary = app._proj(-0.3, MOUSE_PLANE_HEIGHT, 2.0)
+        row = int(round(boundary[1]))
+        seen = False
+        for x in range(max(0, int(boundary[0]) - 6), min(app.w, int(boundary[0]) + 7)):
+            pixel = app.screen.get_at((x, row))
+            if pixel[1] - pixel[0] >= edge_color[1] - edge_color[0] - 40:
+                seen = True
+        self.assertTrue(seen, "空域边线没画出来")
 
-        near_px, far_px = measured(2.0), measured(12.0)
-        self.assertGreaterEqual(near_px, far_px, "远处的空域边线不能比近处更粗")
-        self.assertGreaterEqual(far_px, 1, "远处边线仍要看得见")
+    def test_region_edge_thickness_matches_panda(self) -> None:
+        """同一段空域在两种渲染器里的边线**像素宽度**要一致（同一个世界宽度常量）。"""
+        from rhythm_editor.game import app as game_app
+        from rhythm_editor.game import render3d
+        from rhythm_editor.game.scene import MOUSE_PLANE_HEIGHT
+
+        if not render3d.available():
+            self.skipTest("没有 Panda3D")
+        app = self.app
+        app._load_textures()
+        app._compute_texture_averages()
+        half_world = game_app.REGION_EDGE_HALF_WORLD
+        x, z = -0.3, 2.0
+        scene = render3d.Scene3D(app.w, app.h, app.texture_dir)
+        try:
+            left = scene.project(x - half_world, MOUSE_PLANE_HEIGHT, z)
+            right = scene.project(x + half_world, MOUSE_PLANE_HEIGHT, z)
+            panda_px = abs(right[0] - left[0])
+        finally:
+            scene.close()
+        soft_left = app._proj(x - half_world, MOUSE_PLANE_HEIGHT, z)
+        soft_right = app._proj(x + half_world, MOUSE_PLANE_HEIGHT, z)
+        soft_px = abs(soft_right[0] - soft_left[0])
+        self.assertAlmostEqual(panda_px, soft_px, delta=1.0,
+                               msg=f"Panda {panda_px:.2f}px vs 软件 {soft_px:.2f}px")
+        # 软件侧画出来的线宽就是这个像素宽度（±1px 取整）
+        half, _fade = app._region_edge_style(app._proj(0.0, MOUSE_PLANE_HEIGHT, z)[2])
+        self.assertAlmostEqual(2 * half, soft_px, delta=1.0)
 
     def test_sliced_texture_pieces_tile_without_gaps(self) -> None:
         """分片贴图（单键 / 长按开头）的相邻分片必须共用整数边界。"""

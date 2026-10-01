@@ -53,6 +53,9 @@ LEAD_MS = 1500.0
 END_DELAY_S = 3.0                   # 谱面结束后至少等这么久再进结算
 # 空域判定范围两边各放宽多少（**归一化横坐标**，合法区域宽 = 1，与 judge.py 一致）
 REGION_PAD = 0.01
+# 空域左右边线的半宽（**世界单位**）：软件渲染与 Panda 的 ribbon 共用这一个值，
+# 两边看起来一样粗（按透视：远处窄）。0.006 是旧单位下的调参，见 scene.UNIT_SCALE。
+REGION_EDGE_HALF_WORLD = 0.006 * UNIT_SCALE
 # 越过了判定线（z < 0）之后还继续绘制多长：过去得太多就该消失
 PAST_LINE_KEEP = 0.4 * UNIT_SCALE
 # 6K 按键左右各留多少轨宽（越小越"填满轨道"）。贴图两侧本来就有透明收边，
@@ -2203,20 +2206,20 @@ class PlayerApp:
         """鼠标平面渐变用的 z 分界（按屏幕高度均匀切）。"""
         return self._plane_strip_z(strips, MOUSE_PLANE_HEIGHT)
 
-    # 空域边线在**判定线处**的半宽（像素）：共 4px（比原来粗一倍）
-    REGION_EDGE_HALF_PX = 2.0
     REGION_EDGE_MIN_HALF_PX = 0.35     # 再远也留一点，别整条看不见
 
     def _region_edge_style(self, scale: float):
         """空域边线在某个透视缩放下的 ``(半宽像素, 不透明度系数)``。
 
-        两者都随透视缩小：远处又细又淡。只缩宽度是不够的 —— pygame 的多边形填充
-        最小也要占满 1 像素，远看还是跟近处一样实，所以同时按比例降不透明度
-        （Panda 路径那条世界宽度的 ribbon 在远处本来就细到发虚，这里保持一致）。
+        半宽 = ``REGION_EDGE_HALF_WORLD``（**与 Panda 的 ribbon 同一个世界单位值**）
+        × 该处的透视缩放，所以远近粗细与 Panda 完全一致；再按同样的比例降一点
+        不透明度 —— pygame 的多边形填充最小也要占满 1 像素，只缩宽度的话远看还是
+        跟近处一样实（Panda 那边细到亚像素时也会自然发虚）。
         """
         ref = self._proj(0.0, MOUSE_PLANE_HEIGHT, 0.0)[2]
         ratio = 1.0 if ref <= 1e-6 else max(0.0, scale) / ref
-        half = max(self.REGION_EDGE_MIN_HALF_PX, self.REGION_EDGE_HALF_PX * ratio)
+        half = max(self.REGION_EDGE_MIN_HALF_PX,
+                   REGION_EDGE_HALF_WORLD * max(0.0, scale))
         fade = min(1.0, 0.3 + 0.7 * ratio)
         return half, fade
 
@@ -2695,7 +2698,7 @@ class PlayerApp:
         ))
         edge = self.texture_avg.get("region_edge") or (90, 220, 255, 255)
         for points in (left, right):
-            scene.ribbon(points, y, 0.006 * UNIT_SCALE,
+            scene.ribbon(points, y, REGION_EDGE_HALF_WORLD,
                          (edge[0] / 255.0, edge[1] / 255.0, edge[2] / 255.0, 0.85),
                          layer="region_top")
 
