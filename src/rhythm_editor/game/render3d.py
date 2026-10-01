@@ -19,6 +19,11 @@ import math
 import struct
 from typing import Dict, List, Optional, Tuple
 
+# 轨道几何只有一处真相：game/scene.py 里的常量。以前这里写死了 0.25 / 12.0，
+# 后来把轨道加长加宽（0.35 / 26）时只改了 scene.py，于是 Panda 画出来的轨道
+# 还是旧尺寸 —— 按键看着就像"浮在轨道上方的一层"。
+from .scene import LANE_COUNT as _LANE_COUNT, LANE_WIDTH as _LANE_WIDTH, START_Z as _START_Z
+
 _IMPORT_ERROR: Optional[str] = None
 try:  # pragma: no cover - 依赖可选依赖
     import panda3d  # noqa: F401
@@ -195,8 +200,9 @@ class Scene3D:
         "line",          # 判定线
     )
 
-    def __init__(self, width: int, height: int, texture_dir: str, lane_count: int = 6,
-                 lane_width: float = 0.25, start_z: float = 12.0,
+    def __init__(self, width: int, height: int, texture_dir: str,
+                 lane_count: int = _LANE_COUNT,
+                 lane_width: float = _LANE_WIDTH, start_z: float = _START_Z,
                  camera_height: float = 1.15, camera_back: float = 1.7,
                  pitch: float = 20.0, fov: float = 55.0, decorations: bool = True) -> None:
         if not _AVAILABLE:  # pragma: no cover - 由调用方先检查
