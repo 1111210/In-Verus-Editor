@@ -357,15 +357,18 @@ class Scene3D:
         self.set_lane_state(frozenset(), False)
         # 判定线（6K 白 / 鼠标青）
         judge_y = 0.4
-        self._static_quad("", 0.0, 0.004, width, 0.008, 0.004, (1, 1, 1, 1), layer="line")
-        self._static_quad("", 0.0, 0.004, 1.0, 0.008, judge_y + 0.004,
+        # 深度测试已关闭（画家算法），所有东西都可以**正好落在自己的平面上**，
+        # 不需要为了躲 z-fighting 抬高 —— 抬高在屏幕上等于整体平移几个像素，
+        # 看起来就像"按键浮在轨道上方的一层"。
+        self._static_quad("", 0.0, 0.004, width, 0.008, 0.0, (1, 1, 1, 1), layer="line")
+        self._static_quad("", 0.0, 0.004, 1.0, 0.008, judge_y,
                           (0.35, 0.86, 1.0, 1.0), layer="line")
         # 鼠标平面渐变 + 合法区域边线
         gradient = getattr(self, "_gradient", None)
         if gradient is None:
             gradient = make_gradient_texture("mouse")
             self._gradient = gradient
-        self._static_quad("", 0.0, self.start_z / 2, width, self.start_z, judge_y + 0.002,
+        self._static_quad("", 0.0, self.start_z / 2, width, self.start_z, judge_y,
                           (1, 1, 1, 1), texture=gradient, layer="mouse_plane")
 
     def set_lane_state(self, pressed, side_highlight: bool = False,
@@ -495,7 +498,7 @@ class Scene3D:
         width = self.lane_count * self.lane_width
         for z in zs:
             if 0.0 <= z <= self.start_z:
-                self.quad("", 0.0, z, width, half * 2.0, 0.001,
+                self.quad("", 0.0, z, width, half * 2.0, 0.0,
                           (color[0] / 255, color[1] / 255, color[2] / 255, 1.0),
                           layer="bar")
 
@@ -607,8 +610,7 @@ class Scene3D:
         width = MOUSE_LEGAL_WIDTH * 0.26
         x = MOUSE_LEFT + norm_x * MOUSE_LEGAL_WIDTH
         # 贴图“上”= 顶点；卡片铺在水平面里、绕法线转 180° 让顶点指向远处（屏幕上方）。
-        # 只抬 0.004 单位：既仍算“在物件运动的水平面内”，又避免和平面共面闪烁。
-        lifted = plane_y + 0.004
+        lifted = plane_y            # 深度测试已关，直接落在鼠标平面里
         self.quad("mouse_marker_solid", x, length * 0.5, width, length, lifted,
                   (1, 1, 1, 1), angle=180.0, layer="marker")
         if outline_x is not None:

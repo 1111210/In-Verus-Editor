@@ -2461,16 +2461,16 @@ class PlayerApp:
                     tail = self._note_z(timing.beat_to_song_ms(note.tail_beat), now_ms)
                     body_center = (max(0.0, head) + max(0.0, tail)) / 2.0
                     scene.quad(f"hold_body_{lane}", center_x, body_center, x1 - x0,
-                               max(0.2, abs(tail - head)), 0.004, (1, 1, 1, 1.0),
+                               max(0.2, abs(tail - head)), 0.0, (1, 1, 1, 1.0),
                                layer=layer)
                     head_size = max(0.25, self.settings.note_thickness)
                     scene.quad(f"hold_head_{lane}", center_x, max(0.0, head) + head_size / 2.0,
-                               x1 - x0, head_size, 0.006, layer=layer)
+                               x1 - x0, head_size, 0.0, layer=layer)
                 else:
                     thickness = (self.settings.multi_thickness if note.is_multi
                                  else self.settings.note_thickness)
                     scene.quad(f"tap_{lane}", center_x, max(0.0, head) + thickness / 2.0,
-                               x1 - x0, thickness, 0.006, layer=layer)
+                               x1 - x0, thickness, 0.0, layer=layer)
             elif isinstance(note, MouseRegion):
                 self._draw_region3d(note, now_ms)
             elif isinstance(note, MouseSlide):
@@ -2534,7 +2534,7 @@ class PlayerApp:
             right.append((MOUSE_LEFT + note.right_at(beat) * MOUSE_LEGAL_WIDTH, z))
         if len(left) < 2:
             return
-        y = MOUSE_PLANE_HEIGHT + 0.002
+        y = MOUSE_PLANE_HEIGHT
         fill = self.texture_avg.get("region_fill") or (60, 110, 200, 104)
         scene.region_shape(left, right, y, "", (
             fill[0] / 255.0, fill[1] / 255.0, fill[2] / 255.0,
@@ -2542,7 +2542,7 @@ class PlayerApp:
         ))
         edge = self.texture_avg.get("region_edge") or (90, 220, 255, 255)
         for points in (left, right):
-            scene.ribbon(points, y + 0.002, 0.006,
+            scene.ribbon(points, y, 0.006,
                          (edge[0] / 255.0, edge[1] / 255.0, edge[2] / 255.0, 0.85),
                          layer="region_top")
 
