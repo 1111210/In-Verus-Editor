@@ -1136,7 +1136,7 @@ class PlayerAppSmokeTests(unittest.TestCase):
                 self.assertLess(thickest, middle, "左滑键的宽端应在屏幕左侧")
 
     def test_mouse_plane_has_blue_gradient_and_no_side_lines(self) -> None:
-        """鼠标平面：不画边线；靠近判定线略蓝，向轨道尽头渐变为完全透明。"""
+        """鼠标平面：不画边线；靠近判定线略蓝，远端保留很淡的一层（不彻底消失）。"""
         from rhythm_editor.game.app import MOUSE_PLANE_HEIGHT
         from rhythm_editor.game.scene import START_Z
 
@@ -1171,7 +1171,10 @@ class PlayerAppSmokeTests(unittest.TestCase):
         self.assertGreater(near[3], middle[3], "靠近判定线更实、远处更透")
         self.assertGreater(middle[3], far[3], "越远越透")
         self.assertLessEqual(near[3], 100, "只是『略微不透明』")
-        self.assertLess(far[3], 12, "轨道尽头接近完全透明")
+        # 远端保留一点底透明度（26/255），否则在黑底上渐隐到看不见，
+        # 看上去像背景只画到 6K 轨道远端那一行
+        self.assertLess(far[3], 40, "轨道尽头要有很淡的一层，而不是完全消失")
+        self.assertGreater(far[3], 4, "轨道尽头仍应看得到一点点蓝")
         # 贴着判定线的那一端就在判定线上，另一端一路铺到轨道尽头
         mouse_line_y = app._proj(0.0, MOUSE_PLANE_HEIGHT, 0.0)[1]
         self.assertAlmostEqual(rect.bottom, mouse_line_y, delta=4.0, msg="渐变贴着判定线")

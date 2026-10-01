@@ -2395,7 +2395,9 @@ class PlayerApp:
         span = max(1, rect.height - 1)
         for row in range(rect.height):
             from_bottom = (span - row) / span                 # 0 = 判定线，1 = 尽头
-            alpha = int(round(96 * (1.0 - from_bottom)))
+            # 远端保留一点底透明度（26/255）：否则在黑色背景下"渐隐到看不见"，
+            # 看上去像只画到 6K 轨道远端那一行
+            alpha = int(round(26 + 70 * (1.0 - from_bottom)))
             column.set_at((0, row), (58, 108, 200, max(0, alpha)))
         surface = pygame.transform.smoothscale(column, (rect.width, rect.height))
         mask = pygame.Surface((rect.width, rect.height), pygame.SRCALPHA)

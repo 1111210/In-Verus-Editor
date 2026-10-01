@@ -77,8 +77,11 @@ def make_gradient_texture(direction: str = "area") -> "Texture":  # pragma: no c
     height, width = 256, 256
     top = np.linspace(1.0, 0.0, height, dtype=np.float32)[:, None]
     bottom = 1.0 - top
-    # row 0 = 判定线一侧 -> 用 top（1 → 0）做衰减；峰值对齐软件渲染器（≈0.38）
-    alpha = np.clip(top ** 1.15 * 0.32 if direction == "area" else (top ** 1.6) * 0.38, 0, 1)
+    # row 0 = 判定线一侧 -> 用 top（1 → 0）做衰减；峰值对齐软件渲染器（≈0.38）。
+    # 远端**保留一点底透明度**（0.10）：否则鼠标平面在黑色背景上"渐隐到看不见"，
+    # 看上去像是只画到 6K 轨道远端那一行为止。
+    alpha = np.clip(top ** 1.15 * 0.32 if direction == "area"
+                    else 0.10 + (top ** 1.35) * 0.28, 0, 1)
     rgba = np.zeros((height, width, 4), dtype=np.uint8)
     rgba[..., 0], rgba[..., 1], rgba[..., 2] = 70, 130, 225
     rgba[..., 3] = (alpha * 255).astype(np.uint8)
@@ -367,7 +370,10 @@ class Scene3D:
         # 不需要为了躲 z-fighting 抬高 —— 抬高在屏幕上等于整体平移几个像素，
         # 看起来就像"按键浮在轨道上方的一层"。
         self._static_quad("", 0.0, 0.004, width, 0.008, 0.0, (1, 1, 1, 1), layer="line")
-        self._static_quad("", 0.0, 0.004, 1.0, 0.008, judge_y,
+        # 鼠标判定线要**对准鼠标合法区域边界**（宽度 = MOUSE_LEGAL_WIDTH）
+        from .scene import MOUSE_LEFT, MOUSE_LEGAL_WIDTH
+        self._static_quad("", MOUSE_LEFT + MOUSE_LEGAL_WIDTH / 2.0, 0.004,
+                          MOUSE_LEGAL_WIDTH, 0.008, judge_y,
                           (0.35, 0.86, 1.0, 1.0), layer="line")
         # 鼠标平面渐变 + 合法区域边线
         gradient = getattr(self, "_gradient", None)
