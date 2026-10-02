@@ -17,11 +17,15 @@
   完全没滑动 → Break。滑动方向不要求，只要**鼠标位移区间与滑键范围相交**即可。
 * 空域：每半拍一个判定区间；区间内离开空域 ≤50ms → EXACT，≤100ms → Exact，
   超过 100ms 但只要有一瞬间在空域内 → Near，整段都不在 → Break。
+* **输入带时间戳**：按键 / 鼠标事件用自身时间戳（``event.timestamp``）写进一条
+  “状态时间线”，每帧再补一次采样兜底；长按 / 空域的区间评级在这条时间线上做
+  分段常数积分。因此一帧跨过多个区间（极高 BPM、掉帧）也不会把区间误判成 Break。
 * 空域 / 滑键的判定范围在谱面基础上**两边各放宽 0.01 单位**（0 宽度物件也能判定）。
 """
 
 from __future__ import annotations
 
+import bisect
 from dataclasses import dataclass, field
 from typing import Dict, List, Optional, Tuple
 
@@ -113,6 +117,23 @@ class _IntervalState:
     end_beat: float = 0.0           # 物件本身的结束拍（最后一个区间在这里截断）
 
 
+@dataclass(frozen=True)
+class _State:
+    """输入时间线上的一个“分段常数”状态。
+
+    ``t`` 是**歌曲毫秒**；从这一刻起，``held`` 里的轨道被按住、鼠标在 ``inside``
+    这个空域里（``None`` = 不在任何空域）。按键 / 鼠标事件用自身时间戳写入，
+    每帧再补一条采样兜底，因此区间评级不再依赖“哪一帧刚好落在区间里”。
+    """
+
+    t: float
+    held: frozenset = frozenset()
+    inside: Optional[str] = None
+
+
+_KEEP = object()      # _push() 的哨兵：保持当前的空域状态不变
+
+
 class Judge:
     """一张谱面的判定状态机（按“听到的歌曲毫秒”推进）。"""
 
@@ -151,16 +172,15 @@ class Judge:
                     clicks.append(_ClickState(note))
         self._clicks = clicks
         self._intervals = [s for s in intervals if s is not None]
-        self._hovered = None
-        self._active = []
-        self._last_ms = 0.0
         self._slide_best: Dict[str, str] = {}
         self._slide_track: Dict[str, bool] = {}
         self._mouse_x = 0.0
         self._mouse_prev = 0.0
         self._mouse_seen = False
-        self._held_prev: set = set(range(config.LANE_COUNT))
-        self._samples: List[Tuple[float, frozenset, Optional[str]]] = []
+        # 输入时间线（见 _State）：事件带精确时间戳，帧采样兜底
+        self._timeline: List[_State] = []
+        self._held: set = set()
+        self._inside: Optional[str] = None
 
     # ------------------------------------------------------------ 输入
     def on_press(self, now_ms: float, lane: Optional[int] = None, x: Optional[float] = None) -> Optional[Judged]:
@@ -168,7 +188,12 @@ class Judge:
 
         **类型必须匹配**：按 6K 键（``lane=``）只判 6K 按键，鼠标点击（``x=``）只判
         鼠标点击按键 —— 否则两种输入会互相“抢判”，出现该判的没判、不该判的判了。
+
+        ``now_ms`` 应当是该**输入事件**的时间戳换算出的歌曲毫秒（不是处理它的那一帧）。
         """
+        if lane is not None:
+            self._held.add(int(lane))
+            self._push(now_ms)
         best: Optional[Tuple[float, float, _ClickState]] = None   # (判定时刻, 偏差, 状态)
         for state in self._clicks:
             note = state.note
@@ -201,6 +226,18 @@ class Judge:
                 if interval.note.id == state.note.id:
                     interval.index = 0
         return result
+
+    def on_release(self, now_ms: float, lane: Optional[int] = None) -> None:
+        """按键抬起（``lane=None`` = 全部抬起，比如窗口失焦）。"""
+        if lane is None:
+            self._held.clear()
+        else:
+            self._held.discard(int(lane))
+        self._push(now_ms)
+
+    def on_inside(self, now_ms: float, inside_hold: Optional[Note]) -> None:
+        """鼠标所在空域发生变化（由 MOUSEMOTION 事件时间戳调用）。"""
+        self._push(now_ms, inside=None if inside_hold is None else inside_hold.id)
 
     def on_move(self, now_ms: float, x: float) -> Optional[Judged]:
         """鼠标移动：滑键按“最准确瞬间”吸附判定。"""
@@ -337,26 +374,6 @@ class Judge:
             self.max_combo = max(self.max_combo, self.combo)
         return result
 
-    def _interval_grade(self, state: _IntervalState) -> str:
-        if not state.seen_inside:
-            return BREAK
-        if state.note.__class__.__name__ == "LaneNote":
-            # 长按：区间内**出现过抬起事件**就最多 Near；
-            # 但最后一个区间允许提前 <=50ms 抬起，仍算 EXACT
-            if not state.released:
-                return EXACT
-            if (getattr(state, "is_last", False)
-                    and state.release_lead_ms <= 50.0 * self.rate):
-                return EXACT
-            return NEAR
-        if state.outside_ms <= 0.0:
-            return EXACT
-        if state.outside_ms <= 50.0 * self.rate:
-            return EXACT
-        if state.outside_ms <= 100.0 * self.rate:
-            return EXACT_MIXED
-        return NEAR
-
     # ------------------------------------------------------------ 推进
     def update(
         self,
@@ -369,21 +386,16 @@ class Judge:
 
         ``held`` 可以是 ``bool``（全部按住 / 全部松开），也可以是**按住的轨道集合**
         （多轨长按要求它覆盖的每条轨道都按住）。
+
+        这里写入的是**每帧一次的兜底采样**；按键 / 鼠标事件的精确时间戳由
+        :meth:`on_press` / :meth:`on_release` / :meth:`on_inside` 写入时间线。
         """
         out: List[Judged] = []
-        delta = max(0.0, min(50.0, now_ms - self._last_ms))
-        self._last_ms = now_ms
         held_lanes = self._normalize_held(held)
-        # 本帧是否发生了“抬起”事件（长按判定用）
-        released_now = bool(self._held_prev - held_lanes)
-        self._held_prev = set(held_lanes)
-        # 逐帧采样：(歌曲毫秒, 按住的轨道集合, 鼠标在哪个空域里)
-        self._samples.append(
-            (now_ms, frozenset(held_lanes), None if inside_hold is None else inside_hold.id)
-        )
-        if len(self._samples) > 20000:      # 剪掉过老的采样，避免长曲内存增长
-            self._samples = self._samples[-10000:]
-        # 只保留最近 20 秒的采样，避免长曲目内存增长
+        if held_lanes != self._held:
+            # 事件流没覆盖到（失焦 / 外部改动）时，以调用方状态为准
+            self._push(now_ms, held=held_lanes)
+        self._push(now_ms, inside=None if inside_hold is None else inside_hold.id)
         for state in self._clicks:
             note = state.note
             if state.done:
@@ -403,11 +415,7 @@ class Judge:
                 state.done = True
                 self._judge_result(note.id, BREAK, getattr(note, "head_beat", 0.0))
         for state in self._intervals:
-            out.extend(
-                self._update_interval(
-                    state, now_ms, inside_hold, held, delta, released_now
-                )
-            )
+            out.extend(self._update_interval(state, now_ms))
         return out
 
     @staticmethod
@@ -422,15 +430,67 @@ class Judge:
         except TypeError:  # pragma: no cover - 兜底
             return set()
 
-    def _update_interval(
-        self,
-        state: _IntervalState,
-        now_ms: float,
-        inside_hold,
-        held: bool,
-        delta: float,
-        released_now: bool = False,
-    ) -> List[Judged]:
+    # ------------------------------------------------------------ 输入时间线
+    def _push(self, t: float, *, held: Optional[set] = None, inside=_KEEP) -> None:
+        """把一条状态写进时间线：按键 / 鼠标事件带精确时间戳，帧采样负责兜底。"""
+        if held is not None:
+            self._held = {int(lane) for lane in held}
+        if inside is not _KEEP:
+            self._inside = inside
+        entry = _State(float(t), frozenset(self._held), self._inside)
+        if self._timeline and entry.t < self._timeline[-1].t:
+            # 事件时间戳可能略早于上一帧采样：按时间插入
+            keys = [state.t for state in self._timeline]
+            self._timeline.insert(bisect.bisect_right(keys, entry.t), entry)
+        elif (self._timeline
+              and self._timeline[-1].held == entry.held
+              and self._timeline[-1].inside == entry.inside):
+            return                      # 状态没变：不重复记录
+        else:
+            self._timeline.append(entry)
+        if len(self._timeline) > 20000:      # 剪掉过老的状态，避免长曲内存增长
+            del self._timeline[: len(self._timeline) - 10000]
+
+    def _states_between(self, start_ms: float, end_ms: float) -> List[_State]:
+        """区间 ``[start, end]`` 的状态分段（含进入区间时的状态与区间内的每次变化）。"""
+        if not self._timeline:
+            return []
+        index = bisect.bisect_right(self._timeline, start_ms, key=lambda s: s.t) - 1
+        out: List[_State] = []
+        if index >= 0:
+            out.append(self._timeline[index])
+            rest = self._timeline[index + 1:]
+        else:
+            rest = self._timeline
+        for state in rest:
+            if state.t > end_ms:
+                break
+            out.append(state)
+        if not out:
+            first = self._timeline[0]
+            if first.t <= end_ms:
+                out.append(first)
+        return out
+
+    @staticmethod
+    def _outside_ms(
+        states: List[_State], start_ms: float, end_ms: float, inside_id: str
+    ) -> float:
+        """``[start, end]`` 内“不在这个空域里”的毫秒数（分段常数积分，含首尾）。"""
+        if end_ms <= start_ms:
+            return 0.0
+        if not states:
+            return end_ms - start_ms
+        outside = 0.0
+        for index, state in enumerate(states):
+            begin = max(state.t, start_ms)
+            stop = states[index + 1].t if index + 1 < len(states) else end_ms
+            stop = min(stop, end_ms)
+            if stop > begin and state.inside != inside_id:
+                outside += stop - begin
+        return outside
+
+    def _update_interval(self, state: _IntervalState, now_ms: float) -> List[Judged]:
         out: List[Judged] = []
         while state.index < len(state.intervals):
             start_beat = state.intervals[state.index]
@@ -449,81 +509,32 @@ class Judge:
             state.index += 1
         return out
 
-    def _window_samples(self, start_ms: float, end_ms: float):
-        """区间窗口内的采样（含边界前一个点，便于识别跨边界的事件）。"""
-        window = []
-        previous = None
-        for sample in self._samples:
-            if sample[0] < start_ms:
-                previous = sample
-                continue
-            if sample[0] > end_ms:
-                break
-            if previous is not None and not window:
-                window.append(previous)
-            window.append(sample)
-            previous = sample
-        return window
-
     def _grade_interval(
         self, state: _IntervalState, start_ms: float, end_ms: float, start_beat: float
     ) -> Judged:
-        """按**采样时间戳**给一个区间评级：跨区间边界的按下 / 抬起事件不会算错。
+        """在**输入时间线**上给一个区间评级（分段常数积分）。
 
-        长按规则（每区间）：有按下且无抬起 -> EXACT；有按下且有抬起 -> Near；
-        从未按下 -> Break。**结尾宽限**：最后一次抬起发生在
-        `长按结束 − 50ms` 之内时，这段窗口覆盖到的区间（可能跨多个）都算 EXACT。
+        这样即使一帧跨过好几个区间、区间里一个采样点都没有，也能用进入区间时的状态
+        与事件时间戳正确评级，不会把“全程按住 / 全程在空域内”判成 Break。
+
+        长按规则（每区间）：任意一行按下过 → 至少不 Break；区间内出现“所有行同时抬起”
+        → Near（最后一个区间在结束前 ≤50ms 抬起仍算 EXACT）。
+        空域规则：区间内不在区域里的累计时长 ≤50ms → EXACT、≤100ms → Exact、
+        更久但进去过 → Near、整段都没进去 → Break。
         """
         note = state.note
-        is_hold = type(note).__name__ == "LaneNote"
-        lanes = set(range(note.lane_start, note.lane_end + 1)) if is_hold else set()
-        hold_end_ms = self.timing.beat_to_song_ms(state.end_beat) if is_hold else end_ms
-        pressed = False
-        released_at: Optional[float] = None
-        inside_seconds = 0.0
-        outside_seconds = 0.0
-        seen_inside = False
-        previous = None
-        for sample in self._samples:
-            stamp, held_now, inside_id = sample
-            if stamp < start_ms:
-                previous = sample
-                continue
-            if stamp > end_ms:
-                break
-            # “开始前就按住 / 已经在空域里”也算这个区间内有按下
-            if previous is not None and previous[0] < start_ms:
-                before = lanes.issubset(previous[1]) if is_hold else (previous[2] == note.id)
-                if before:
-                    pressed = pressed or is_hold
-                    seen_inside = seen_inside or (not is_hold)
-            inside = lanes.issubset(held_now) if is_hold else (inside_id == note.id)
-            if inside:
-                pressed = pressed or is_hold
-                seen_inside = True
-            if is_hold and previous is not None and lanes.issubset(previous[1]) and not lanes.issubset(held_now):
-                released_at = stamp
-            if previous is not None and previous[0] >= start_ms:
-                gap = stamp - previous[0]
-                before_inside = (
-                    lanes.issubset(previous[1]) if is_hold else (previous[2] == note.id)
-                )
-                if before_inside:
-                    inside_seconds += gap
-                else:
-                    outside_seconds += gap
-            previous = sample
-        if is_hold:
-            # 多轨长按：“抬起”只在**所有行同时抬起**的瞬间才成立；
-            # 只要其中任意一行还在按，就当作仍在按住（分段松键不降级）。
-            all_up_ms = None
+        states = self._states_between(start_ms, end_ms)
+        if isinstance(note, LaneNote):
+            lanes = set(range(note.lane_start, note.lane_end + 1))
+            hold_end_ms = self.timing.beat_to_song_ms(state.end_beat)
             any_press = False
-            for sample in self._window_samples(start_ms, end_ms):
-                stamp, held_now, _inside_id = sample
-                if lanes & set(held_now):
+            all_up_ms: Optional[float] = None
+            for entry in states:
+                held_now = set(entry.held)
+                if lanes & held_now:
                     any_press = True
-                if lanes.isdisjoint(held_now):
-                    all_up_ms = stamp
+                if entry.t >= start_ms and lanes.isdisjoint(held_now):
+                    all_up_ms = entry.t
             if not any_press:
                 return self._judge_result(note.id, BREAK, start_beat)
             if all_up_ms is None:
@@ -534,9 +545,9 @@ class Judge:
             if start_ms <= all_up_ms <= end_ms:
                 return self._judge_result(note.id, NEAR, start_beat)
             return self._judge_result(note.id, EXACT, start_beat)
-        if not seen_inside:
-            return self._judge_result(note.id, BREAK, start_beat)
-        outside = outside_seconds
+        outside = self._outside_ms(states, start_ms, end_ms, note.id)
+        if outside >= (end_ms - start_ms) - 1e-9:
+            return self._judge_result(note.id, BREAK, start_beat)   # 整段都没进去
         if outside <= 50.0 * self.rate:
             grade = EXACT
         elif outside <= 100.0 * self.rate:
@@ -544,23 +555,3 @@ class Judge:
         else:
             grade = NEAR
         return self._judge_result(note.id, grade, start_beat)
-
-    def _inside(self, note: Note, inside_hold, held: bool) -> bool:
-        if isinstance(note, MouseRegion):
-            return bool(inside_hold is not None and inside_hold.id == note.id)
-        return bool(held)       # 长按：按键是否仍然按住
-
-    # ------------------------------------------------------------ 长按区间
-    def hold_interval_grade(self, note_id: str, held_all_time: bool, seen_inside: bool,
-                            outside_ms: float) -> str:
-        """长按一个区间结束时给等级（松键 → 最多 Near；一直按住 → EXACT）。"""
-        _ = note_id
-        if not seen_inside:
-            return BREAK
-        if not held_all_time and outside_ms > 0.0:
-            return NEAR if outside_ms > 100.0 * self.rate else NEAR
-        if outside_ms <= 50.0 * self.rate:
-            return EXACT
-        if outside_ms <= 100.0 * self.rate:
-            return EXACT_MIXED
-        return NEAR

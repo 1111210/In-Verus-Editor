@@ -200,14 +200,51 @@ class RegionJudgeTests(unittest.TestCase):
         self.assertEqual(judge.counts[BREAK], 4)
 
     def test_brief_exit_is_exact_long_exit_is_near(self) -> None:
+        """空域离开时长按**时间戳**累计：≤50ms → EXACT；>100ms → Near。"""
+        chart = make_chart([self._region()])
+        judge = Judge(chart)
+        region = chart.mouse_notes[0]
+        # 0~40 在区域内、40~80 离开（40ms）、80 起回到区域内
+        judge.update(0.0, inside_hold=region)
+        judge.update(40.0, inside_hold=None)
+        judge.update(80.0, inside_hold=region)
+        judge.update(1000.0, inside_hold=region)
+        self.assertEqual(judge.counts[EXACT], 4, judge.counts)
+        self.assertEqual(judge.counts[BREAK], 0, judge.counts)
+
+        # 离开 120ms（>100ms）→ 该区间 Near
         chart = make_chart([self._region()])
         judge = Judge(chart)
         region = chart.mouse_notes[0]
         judge.update(0.0, inside_hold=region)
-        judge.update(40.0, inside_hold=None)            # 离开 40ms（<=50）→ EXACT
-        judge.update(500.0, inside_hold=region)
-        self.assertGreaterEqual(judge.counts[EXACT], 1, "短暂离开（<=50ms）仍算 EXACT")
-        self.assertEqual(judge.counts[BREAK], 0)
+        judge.update(40.0, inside_hold=None)
+        judge.update(160.0, inside_hold=region)
+        judge.update(1000.0, inside_hold=region)
+        self.assertGreaterEqual(judge.counts[NEAR], 1, judge.counts)
+        self.assertEqual(judge.counts[BREAK], 0, judge.counts)
+
+    def test_sparse_updates_do_not_swallow_intervals(self) -> None:
+        """一帧跨过多个区间（掉帧 / 极高 BPM）时，全程在区域内仍然全 EXACT。"""
+        chart = make_chart([self._region()])
+        judge = Judge(chart)
+        region = chart.mouse_notes[0]
+        judge.update(0.0, inside_hold=region)
+        judge.update(1000.0, inside_hold=region)       # 一帧跨过全部 4 个区间
+        self.assertEqual(judge.total_notes, 4)
+        self.assertEqual(judge.counts[EXACT], 4, judge.counts)
+        self.assertEqual(judge.counts[BREAK], 0, judge.counts)
+
+    def test_region_motion_timestamps_measure_exit(self) -> None:
+        """空域用鼠标事件时间戳计时：一帧内的短暂离开也能精确计入。"""
+        chart = make_chart([self._region()])
+        judge = Judge(chart)
+        region = chart.mouse_notes[0]
+        judge.update(0.0, inside_hold=region)
+        judge.on_inside(40.0, None)                    # 40ms 离开
+        judge.on_inside(90.0, region)                  # 90ms 回来：离开正好 50ms
+        judge.update(1000.0, inside_hold=region)
+        self.assertEqual(judge.counts[EXACT], 4, judge.counts)
+        self.assertEqual(judge.counts[BREAK], 0, judge.counts)
 
 
 class ScoreTests(unittest.TestCase):
@@ -348,6 +385,25 @@ class HoldJudgeTests(unittest.TestCase):
         judge.update(100.0, inside_hold=None, held=False)
         judge.update(600.0, inside_hold=None, held=False)
         self.assertGreaterEqual(judge.counts[BREAK], 2, judge.counts)
+
+    def test_sparse_updates_keep_hold_exact(self) -> None:
+        """长按同理：帧缝隙里没有采样点也不能判成 Break（掉帧 / 极高 BPM）。"""
+        chart, judge = self._hold(0.0, 2.0)
+        judge.on_press(0.0, lane=0)
+        judge.update(0.0, held={0})
+        judge.update(1000.0, held={0})                 # 一帧跨过全部 4 个区间
+        self.assertEqual(judge.counts[BREAK], 0, judge.counts)
+        self.assertGreaterEqual(judge.counts[EXACT], 5, judge.counts)   # 开头 + 4 个区间
+
+    def test_release_timestamp_inside_gap_counts(self) -> None:
+        """抬起事件带精确时间戳：落在区间内的抬起算 Near，不会因为处理帧在区间外而漏掉。"""
+        chart, judge = self._hold(0.0, 1.0)            # 2 个区间
+        judge.on_press(0.0, lane=0)
+        judge.update(100.0, held={0})
+        judge.on_release(300.0, lane=0)                # 第 2 个区间 [250,500) 内抬起
+        judge.update(600.0, held=set())                # 处理帧已经过了区间
+        self.assertEqual(judge.counts[NEAR], 1, judge.counts)
+        self.assertEqual(judge.counts[BREAK], 0, judge.counts)
 
     def test_multi_lane_hold_partial_release_keeps_exact(self) -> None:
         """多轨长按：只松开其中一行、其它行还按着 —— 不算“抬起”，仍是 EXACT。"""

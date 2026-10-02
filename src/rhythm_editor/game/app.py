@@ -1758,9 +1758,9 @@ class PlayerApp:
                 self.pressed_lanes.update(matched)
                 if self.settings.autoplay:
                     return                    # 自动播放：输入不参与判定
-                now = self._now_ms()
+                song_ms = self._event_song_ms(event)      # 用按键事件的时间戳
                 for lane in matched:
-                    result = self.judge.on_press(now, lane=lane)
+                    result = self.judge.on_press(song_ms, lane=lane)
                     if result is not None:
                         self._register(result)
                         break
@@ -1776,13 +1776,30 @@ class PlayerApp:
                 self._toggle_pause()
                 return
         elif event.type == pygame.KEYUP:
+            song_ms = self._event_song_ms(event)
             for lane, name in enumerate(self.settings.keys):
                 if event.key == key_code(name):
                     self.pressed_lanes.discard(lane)
+                    if not self.settings.autoplay:
+                        self.judge.on_release(song_ms, lane=lane)
         elif event.type == pygame.MOUSEBUTTONDOWN:
             # 鼠标点击按键：**左右键都可以**（滚轮 4/5 不算）
             if event.button in (1, 3) and not self.settings.autoplay:
-                self._register(self.judge.on_press(self._now_ms(), x=self.mouse_norm))
+                song_ms = self._event_song_ms(event)
+                x = self._norm_from_screen_x(event.pos[0])
+                self._register(self.judge.on_press(song_ms, x=x))
+        elif event.type == pygame.MOUSEMOTION:
+            # 鼠标移动：滑键按事件时间戳吸附判定；同时记录鼠标所在空域
+            if not self.settings.autoplay:
+                song_ms = self._event_song_ms(event)
+                x = self._norm_from_screen_x(event.pos[0])
+                self.judge.on_inside(song_ms, self._inside_region(song_ms, x))
+                self._register(self.judge.on_move(song_ms, x))
+        elif event.type == getattr(pygame, "WINDOWFOCUSLOST", -1):
+            # 失焦时按键不会再收到 KEYUP：显式全部抬起，避免长按一直“按着”
+            if self.pressed_lanes and not self.settings.autoplay:
+                self.judge.on_release(self._event_song_ms(event), lane=None)
+            self.pressed_lanes.clear()
 
     def _register(self, result) -> None:
         """记录一条判定：命中音效 + 在**被判定的那个物件处**飘字。"""
@@ -1932,9 +1949,13 @@ class PlayerApp:
             f" · 已自动暂停，按空格继续"
         )
 
-    def _inside_region(self, now_ms: float) -> Optional[Note]:
-        """当前鼠标是否在某个空域内（判定范围两边各放宽 0.01）。"""
+    def _inside_region(self, now_ms: float, x: Optional[float] = None) -> Optional[Note]:
+        """鼠标是否在某个空域内（判定范围两边各放宽 0.01）。
+
+        ``x`` 省略时用当前帧的鼠标位置；鼠标事件会传入事件发生时的归一化横坐标。
+        """
         assert self.chart is not None
+        mouse_x = self.mouse_norm if x is None else float(x)
         beat = self.chart.timing.song_ms_to_beat(now_ms)
         for note in self.chart.mouse_notes:
             if not isinstance(note, MouseRegion):
@@ -1943,23 +1964,46 @@ class PlayerApp:
                 continue
             low, high = note.left_at(beat), note.right_at(beat)
             lo, hi = min(low, high) - REGION_PAD, max(low, high) + REGION_PAD
-            if lo <= self.mouse_norm <= hi:
+            if lo <= mouse_x <= hi:
                 return note
         return None
 
     def _mouse_norm(self) -> float:
         """屏幕鼠标 -> 归一化横坐标（含灵敏度；关闭无界鼠标时夹在 0..1）。"""
         mx, _ = pygame.mouse.get_pos()
+        return self._norm_from_screen_x(mx)
+
+    def _norm_from_screen_x(self, mx: float, *, update_raw: bool = True) -> float:
+        """屏幕横坐标 -> 归一化横坐标（事件用 ``event.pos``，帧采样用当前鼠标位置）。"""
         left, _, _ = self.scene.point(MOUSE_LEFT, MOUSE_PLANE_HEIGHT, 0.0, self.w, self.h)
         right, _, _ = self.scene.point(
             MOUSE_LEFT + MOUSE_LEGAL_WIDTH, MOUSE_PLANE_HEIGHT, 0.0, self.w, self.h
         )
-        raw = (mx - left) / max(1.0, right - left)
+        raw = (float(mx) - left) / max(1.0, right - left)
         value = 0.5 + (raw - 0.5) * self.settings.mouse_sensitivity
-        self.mouse_raw = value            # 实际位置（可能出界，用于画“边线”指针）
+        if update_raw:
+            self.mouse_raw = value        # 实际位置（可能出界，用于画“边线”指针）
         if not self.settings.unbounded_mouse:
             value = min(1.0, max(0.0, value))
         return value
+
+    def _event_song_ms(self, event) -> float:
+        """把 pygame 事件的**发生时刻**换算成歌曲毫秒（不是处理它的那一帧）。
+
+        事件自带 ``timestamp``（SDL 毫秒时钟，与 :func:`pygame.time.get_ticks` 同基准）；
+        播放中歌曲时间按倍速推进，所以往前回推 ``事件年龄 × 倍速``。
+        暂停时歌曲时间冻结，直接返回当前位置。
+        """
+        base = self._now_ms()
+        if self.paused:
+            return base
+        stamp = getattr(event, "timestamp", None)
+        if stamp is None:
+            return base
+        age_ms = float(pygame.time.get_ticks()) - float(stamp)
+        if age_ms <= 0.0:
+            return base
+        return base - age_ms * self.settings.rate
 
     # ------------------------------------------------------------ 绘制
     def _draw(self) -> None:

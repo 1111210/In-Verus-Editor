@@ -554,6 +554,59 @@ class PlayerAppSmokeTests(unittest.TestCase):
         app._event_play(pygame.event.Event(pygame.KEYDOWN, key=key_code("space"), unicode=" "))
         self.assertFalse(app.paused, "暂停时空格继续")
 
+    def test_event_song_ms_uses_event_timestamp(self) -> None:
+        """输入事件按自身时间戳换算歌曲时间，而不是处理它的那一帧。"""
+        app = self.app
+        app._enter_loading()
+        app._start_play()
+        pygame = self.pygame
+        now = 1234.0
+        app._now_ms = lambda: now
+
+        stamp = pygame.time.get_ticks() - 100
+        event = pygame.event.Event(pygame.KEYDOWN, key=pygame.K_a, timestamp=stamp)
+        self.assertAlmostEqual(
+            app._event_song_ms(event), now - 100.0 * app.settings.rate, delta=15.0
+        )
+        # 没有时间戳（测试里手工造的事件 / 老版本 pygame）时退化为当前帧
+        plain = pygame.event.Event(pygame.KEYDOWN, key=pygame.K_a)
+        self.assertAlmostEqual(app._event_song_ms(plain), now, places=6)
+        # 暂停时歌曲时间冻结，不往前回推
+        app.paused = True
+        self.assertAlmostEqual(app._event_song_ms(event), now, places=6)
+
+    def test_release_event_timestamp_reaches_judge(self) -> None:
+        """KEYUP 用事件时间戳写进判定时间线：区间内抬起不会被漏掉。"""
+        from rhythm_editor.game.app import key_code
+        from rhythm_editor.game.judge import NEAR, Judge
+        from rhythm_editor.model.chart import Chart
+        from rhythm_editor.model.notes import LaneNote
+
+        app = self.app
+        app._enter_loading()
+        app._start_play()
+        chart = Chart()
+        chart.add(LaneNote("H", 0, 0, 0.0, 1.0))        # 两个区间：[0,250) [250,500)
+        app.chart = chart
+        app.judge = Judge(chart)
+        pygame = self.pygame
+        song = {"ms": 0.0}
+        app._now_ms = lambda: song["ms"]
+        lane_key = key_code(app.settings.keys[0])
+
+        app._event_play(pygame.event.Event(pygame.KEYDOWN, key=lane_key, unicode="a"))
+        song["ms"] = 100.0
+        app._update(1 / 60)
+        # 抬起发生在歌曲 300ms（第 2 个区间内），处理这一帧时歌曲已经到 600ms
+        song["ms"] = 600.0
+        stamp = pygame.time.get_ticks() - 300
+        app._event_play(
+            pygame.event.Event(pygame.KEYUP, key=lane_key, timestamp=stamp)
+        )
+        app._update(1 / 60)
+        self.assertGreaterEqual(app.judge.counts[NEAR], 1, app.judge.counts)
+        self.assertNotIn(0, app.pressed_lanes)
+
     def test_broken_gl_presenter_falls_back_to_software(self) -> None:
         """GL 呈现抛异常 / 自检不过时自动切回软件渲染，并且不把坏配置留在 player.json。"""
 
