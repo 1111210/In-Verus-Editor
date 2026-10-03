@@ -113,6 +113,59 @@ class SoftwareViewTests(unittest.TestCase):
         self.assertAlmostEqual(view.settings.note_thickness, 0.9)
         self.assertAlmostEqual(view.settings.speed, 2.0)
 
+    def test_reverse_notes_render_in_front_of_the_judgement_line(self) -> None:
+        """演示视图：反向流速的鼠标物件画在判定线之前（画面下缘一侧）。
+
+        回归：以前 z 被夹在 0，反向物件只能贴在判定线上；掉出画面时又被固定余量
+        误判为不可见。
+        """
+        import numpy as np
+
+        from rhythm_editor.game import softview
+        from rhythm_editor.game.scene import MOUSE_PLANE_HEIGHT
+        from rhythm_editor.model.chart import Chart, EditorSettings
+        from rhythm_editor.model.notes import MouseClick
+        from rhythm_editor.model.speed import SpeedSegment
+        from rhythm_editor.model.timing import BpmSegment, TimingMap
+
+        chart = Chart()
+        chart.timing = TimingMap([BpmSegment(0.0, 120.0, 4)])       # 每拍 500ms
+        rev = chart.add_group("rev", [SpeedSegment(0.0, -1.0)])
+        chart.add(MouseClick("M", 6.0, 0.5, 0.2, group=rev.id))
+        judge = chart.timing.beat_to_song_ms(6.0)
+        blank_chart = Chart()
+        blank_chart.timing = chart.timing
+
+        def render(target, now):
+            view = softview.create_software_view(
+                640, 480, view_settings=softview.view_settings_for(EditorSettings())
+            )
+            frame = softview.draw_frame(view, target, now, rate=1.0)
+            array = np.transpose(pygame.surfarray.array3d(frame), (1, 0, 2)).astype(int)
+            return view, array
+
+        def blank_at(now):
+            return render(blank_chart, now)[1]
+
+        view, _blank = render(blank_chart, judge - 20.0)
+        line_y = view._proj(0.0, MOUSE_PLANE_HEIGHT, 0.0)[1]
+        self.assertLess(view.scene.visible_z_near(MOUSE_PLANE_HEIGHT, 640, 480), 0.0)
+        # 判定线之前 20ms：还在可视范围内 -> 图案画在判定线下方
+        _view, near = render(chart, judge - 20.0)
+        rows = np.flatnonzero(
+            np.abs(near - blank_at(judge - 20.0)).sum(axis=2).any(axis=1)
+        )
+        self.assertTrue(rows.size, "反向点击图案应当被画出来")
+        self.assertGreater(int(rows.max()), line_y + 1.0, "图案落在判定线之前（更靠近镜头）")
+        # 掉出相机可视下界后不再绘制
+        _view, far = render(chart, judge - 100.0)
+        self.assertFalse(
+            np.flatnonzero(
+                np.abs(far - blank_at(judge - 100.0)).sum(axis=2).any(axis=1)
+            ).size,
+            "超出可视下界后应当剔除",
+        )
+
     def test_demo_view_applies_speed_groups(self) -> None:
         """演示视图（复用游玩器软渲染）跟随速度组：同判定时刻，流速不同位置不同。
 

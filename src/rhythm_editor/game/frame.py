@@ -23,7 +23,7 @@ from .scene import (
     MOUSE_LEFT,
     MOUSE_LEGAL_WIDTH,
     MOUSE_PLANE_HEIGHT,
-    PlayerScene,
+    START_Z,
     UNIT_SCALE,
 )
 
@@ -85,8 +85,19 @@ def note_ahead(chart: Chart, note: Note, now_ms: float, span_ms: float) -> bool:
 
 
 def z_from_distance(distance_ms: float, span_ms: float, start_z: Optional[float] = None) -> float:
-    """滚动距离（毫秒）→ 世界 z：``0`` = 判定线、``span_ms`` = 轨道尽头。"""
-    return PlayerScene.note_z(1.0 - float(distance_ms) / max(1.0, float(span_ms)), start_z)
+    """滚动距离（毫秒）→ 世界 z：``0`` = 判定线、``span_ms`` = 轨道尽头。
+
+    **不夹取**：反向流速的距离为负 → z 为负（判定平面与镜头之间）。调用方按
+    “可视范围 ~ 运动起点”（``PlayerScene.visible_z_near`` ~ ``START_Z``）判断可见性。
+    """
+    span_z = START_Z if start_z is None else float(start_z)
+    return span_z * float(distance_ms) / max(1.0, float(span_ms))
+
+
+def distance_from_z(z: float, span_ms: float, start_z: Optional[float] = None) -> float:
+    """:func:`z_from_distance` 的逆运算：世界 z → 滚动距离（毫秒）。"""
+    span_z = START_Z if start_z is None else float(start_z)
+    return float(span_ms) * float(z) / max(1e-6, span_z)
 
 
 def region_samples(
@@ -95,12 +106,15 @@ def region_samples(
     now_ms: float,
     span_ms: float,
     samples: int = 32,
+    near_ms: float = 0.0,
 ) -> List[List[Tuple[float, float]]]:
     """空域在当前画面上的可见段：``[[(beat, distance_ms), ...], ...]``。
 
     * 采样在**拍**上等分，并强制包含速度段边界（流速跳变处是折点，不能糊掉）；
-    * 只保留滚动距离落在 ``[0, span_ms]`` 的部分：超出轨道尽头的点不再采样，
-      否则它们会全挤在远端相互叠色（看起来像空域堆在平面尽头）；
+    * 只保留滚动距离落在 ``[near_ms, span_ms]`` 的部分：``near_ms`` 由相机对
+      该平面的可视下界（``PlayerScene.visible_z_near``）换算而来，默认 0 = 判定线；
+      超出轨道尽头的点不再采样，否则它们会全挤在远端相互叠色（看起来像空域堆在
+      平面尽头）；
     * 距离在相邻采样之间是线性的（段边界已在采样点上），交点用线性插值精确定位；
     * 流速可正可负，同一空域可能被推成多段，所以返回**若干段**。
     """
@@ -117,7 +131,7 @@ def region_samples(
         if min(start, end) < segment.start_beat < max(start, end):
             beats.add(float(segment.start_beat))
     points = [(beat, scroll_ms(chart, group, now_ms, beat)) for beat in sorted(beats)]
-    low, high = 0.0, float(span_ms)
+    low, high = float(near_ms), float(span_ms)
     runs: List[List[Tuple[float, float]]] = []
     current: List[Tuple[float, float]] = []
     for (beat_a, dist_a), (beat_b, dist_b) in zip(points, points[1:]):

@@ -50,7 +50,7 @@ python -m unittest discover -s tests -t .
 ```
 
 本机（Windows + Python 3.14.7 + Tk 9.0 + pygame-ce 2.5.8 + Panda3D 1.10）：
-**409 项全部通过**（约 18 秒），其中包含真实 Tk 画布与 headless pygame 的界面测试。
+**412 项全部通过**（约 18 秒），其中包含真实 Tk 画布与 headless pygame 的界面测试。
 
 | 测试文件 | 覆盖内容 |
 | --- | --- |
@@ -156,6 +156,7 @@ python tools/check_audio.py
 | 弹出窗口只有一个确认按钮（没有「取消」） | `test_dialogs.py::DialogButtonTests` |
 | 鼠标图案的贴图中心对齐鼠标运动平面（点击上下各半；滑键贴图双倍高、下半透明，可见楔形仍在平面上方），软件与 Panda3D / OpenGL 两条路径一致 | `test_game_softview.py::test_mouse_pattern_images_are_centered_on_the_mouse_plane`、`test_slide_texture_content_stays_above_the_mouse_plane`、`test_game_app.py::test_software_mouse_patterns_centered_on_plane`、`test_panda_mouse_patterns_centered_on_plane`、`test_game_textures.py::test_slide_textures_put_visible_art_in_top_half` |
 | 速度组在演示视图 / 游玩器里生效（位置按 ∫v、剔除与排序也按滚动距离） | `test_game_app.py::test_speed_groups_move_notes_in_player`、`test_region_samples_follow_speed_group`、`test_game_softview.py::test_demo_view_applies_speed_groups` |
+| 反向流速的物件在判定线之前（更靠近摄像头）照常绘制，超出相机可视下界才剔除 | `test_game_scene.py::test_visible_z_near_is_in_front_of_the_judgement_plane`、`test_game_app.py::test_reverse_notes_draw_in_front_of_the_judgement_line`、`test_game_softview.py::test_reverse_notes_render_in_front_of_the_judgement_line` |
 | 滑键箭头贴在终点内侧、朝滑动方向（用临时可见贴图验证；正式美术未实装） | `test_game_app.py::test_software_slide_arrow_direction_and_placement` |
 
 ### 7.3 游玩器实测

@@ -74,6 +74,7 @@ class PlayerScene:
         self.camera = camera or Camera()
         self._fit_key: Tuple[int, int] = (0, 0)
         self._fit_value: Tuple[float, float, float] = (1.0, 0.0, 0.0)
+        self._visible_near_cache: Dict[Tuple[float, int, int], float] = {}
         # 鼠标平面的远端**在 6K 轨道远端之上**（它更靠近相机，同一个 z 投影更高）——
         # 两个平面共用同一个 z 行程 START_Z。
 
@@ -140,6 +141,34 @@ class PlayerScene:
         sx, sy, view_scale = self.camera.project((x, y, z), width, height)
         scale, dx, dy = self._fit_transform(width, height)
         return sx * scale + dx, sy * scale + dy, view_scale * scale
+
+    def visible_z_near(self, y: float, width: int, height: int) -> float:
+        """平面 ``y`` 上“还在画面里”的**最近 z**（判定平面在 ``z = 0``，所以是负值）。
+
+        相机在判定平面后方：``z`` 越小（越靠近镜头）投影的屏幕 y 越大，所以这里
+        二分求“投影正好落到画面下边界”的 z。物件可以出现在判定平面**之前**
+        （反向流速），可视下界就是这条边界；窗口尺寸变化时重算并缓存。
+        """
+        key = (round(float(y), 4), int(width), int(height))
+        cached = self._visible_near_cache.get(key)
+        if cached is not None:
+            return cached
+        limit = float(height)
+        lo = min(-0.25, self.camera.z + 0.02)      # 贴近镜头：一定在画面之外
+        while (
+            self.point(0.0, y, lo, width, height)[1] <= limit
+            and lo > self.camera.z + 0.05
+        ):                                          # 极端窗口比例下继续往外找
+            lo -= 0.1
+        hi = 0.0                                   # 判定平面：一定在画面里
+        for _ in range(48):
+            mid = (lo + hi) / 2.0
+            if self.point(0.0, y, mid, width, height)[1] > limit:
+                lo = mid                           # 还在画面下方之外
+            else:
+                hi = mid                           # 已经进入画面
+        self._visible_near_cache[key] = hi
+        return hi
 
     def judgment_lines(self, width: int, height: int) -> Dict[str, Tuple[float, float]]:
         """两条判定线的屏幕 y 坐标（鼠标线应当比 6K 线更靠上）。"""

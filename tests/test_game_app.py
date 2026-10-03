@@ -745,6 +745,68 @@ class PlayerAppSmokeTests(unittest.TestCase):
         app._start_play()
         app._draw_play()                    # 各厚度都要能画出来
 
+    def test_reverse_notes_draw_in_front_of_the_judgement_line(self) -> None:
+        """反向流速：物件走到判定线之前（更靠近镜头）仍要画，超出相机可视下界才剔除。
+
+        回归：以前 z 被夹在 0（反向物件贴在判定线上），或按固定余量判断可见性。
+        """
+        from rhythm_editor.game.scene import MOUSE_PLANE_HEIGHT
+        from rhythm_editor.model.notes import LaneNote, MouseClick
+        from rhythm_editor.model.speed import SpeedSegment
+        from rhythm_editor.model.timing import BpmSegment, TimingMap
+
+        app = self.app
+        app._enter_loading()
+        app._start_play()
+        app.settings.speed, app.settings.rate = 1.0, 1.0
+        app.chart.timing = TimingMap([BpmSegment(0.0, 120.0, 4)])
+        rev = app.chart.add_group("rev", [SpeedSegment(0.0, -1.0)])
+        app.chart.mouse_notes = [MouseClick("M", 6.0, 0.5, 0.2, group=rev.id)]
+        app.chart.lane_notes = [LaneNote("K", 1, 1, 6.0, group=rev.id)]
+        app.chart.invalidate_order()
+        judge = app.chart.timing.beat_to_song_ms(6.0)
+        z_near_k6 = app._plane_z_near(0.0)
+        z_near_mouse = app._plane_z_near(MOUSE_PLANE_HEIGHT)
+        self.assertLess(z_near_k6, 0.0, "6K 可视下界在判定平面之前")
+        self.assertLess(z_near_mouse, z_near_k6, "鼠标平面能更靠近镜头")
+
+        near = judge - 2.0                       # 判定线之前 2ms
+        z = app._note_z(judge, near, group=rev)
+        self.assertLess(z, 0.0, "反向物件应当走到判定线之前")
+        self.assertGreater(z, z_near_k6, "还在可视范围内")
+        self.assertAlmostEqual(
+            app._note_z(judge, near, group=rev), z, places=9, msg="鼠标物件同速"
+        )
+        far = judge - 100.0                      # 掉出画面
+        self.assertLess(app._note_z(judge, far, group=rev), z_near_k6)
+        self.assertLess(app._note_z(judge, far, group=rev), z_near_mouse)
+
+        # 3D 路径：反向的 6K 按键 / 鼠标图案卡片中心也是负 z（画在判定线之前）
+        class StubScene:
+            def __init__(self) -> None:
+                self.quads: list = []
+
+            def quad(self, name, x, z, sx, sz, y, *args, **kwargs) -> None:
+                self.quads.append((name, float(z), float(sz)))
+
+            def __getattr__(self, item):
+                return lambda *args, **kwargs: None
+
+        scene = StubScene()
+        original = app.scene3d
+        app.scene3d = scene  # type: ignore[assignment]
+        try:
+            app._render_scene3d(near)
+        finally:
+            app.scene3d = original
+        tap = [(z_value, size) for name, z_value, size in scene.quads if name.startswith("tap_")]
+        click = [z_value for name, z_value, _size in scene.quads if name == "click_range"]
+        self.assertTrue(tap, "3D 路径应当画出反向按键")
+        self.assertTrue(click, "3D 路径应当画出反向点击图案")
+        # 单键卡片的近端边（判定边）= 中心 − 厚度/2，应当落在判定线之前
+        self.assertLess(tap[0][0] - tap[0][1] / 2.0, 0.0, "反向按键的近端边在判定线之前")
+        self.assertLess(click[0], 0.0, "反向点击图案画在判定线之前")
+
     def test_speed_groups_move_notes_in_player(self) -> None:
         """速度组在游玩器里生效：位置、剔除、排序都按所属速度组的 ∫v。
 
@@ -1187,7 +1249,10 @@ class PlayerAppSmokeTests(unittest.TestCase):
                             msg="可视范围内必须按实际进度摆放（高倍速也要从尽头开始）",
                         )
                     else:
-                        self.assertAlmostEqual(z, 0.0, places=6, msg="过去的物件贴在判定线上")
+                        self.assertAlmostEqual(
+                            z, START_Z * (delta / span), places=6,
+                            msg="判定时刻已过的物件继续向镜头方向走（靠时间规则剔除）",
+                        )
         app.settings.rate = 1.0
 
     def test_white_line_is_thinner_when_far(self) -> None:
@@ -1458,9 +1523,13 @@ class PlayerAppSmokeTests(unittest.TestCase):
         self.assertEqual(len(area), 1, "空域底只铺一次：不再画一条条横向条纹")
         points, _color, _alpha = area[0]
         ys = [point[1] for point in points]
-        near_y = app._proj(0.0, MOUSE_PLANE_HEIGHT, 0.0)[1]
+        line_y = app._proj(0.0, MOUSE_PLANE_HEIGHT, 0.0)[1]
+        near_y = app._proj(0.0, MOUSE_PLANE_HEIGHT, app._plane_z_near(MOUSE_PLANE_HEIGHT))[1]
         far_y = app._proj(0.0, MOUSE_PLANE_HEIGHT, START_Z)[1]
-        self.assertAlmostEqual(max(ys), near_y, delta=6.0, msg="最近的边贴在判定线一侧")
+        self.assertGreater(max(ys), line_y, "空域应当延伸到判定线之前（画面下缘）")
+        self.assertAlmostEqual(
+            max(ys), near_y, delta=6.0, msg="最近的边落在相机对鼠标平面的可视下界"
+        )
         self.assertLessEqual(min(ys), far_y + 8.0,
                              msg="最远的边就在轨道尽头，不会堆到平面外")
 

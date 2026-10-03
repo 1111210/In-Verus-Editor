@@ -97,6 +97,28 @@ class ProjectionTests(unittest.TestCase):
         self.assertLess(far[1], near[1], "远处物件显示在屏幕上方")
         self.assertLess(far[2], near[2], "远处物件透视缩放更小")
 
+    def test_visible_z_near_is_in_front_of_the_judgement_plane(self) -> None:
+        """可视下界估算：两个平面都在判定平面（z=0）之前，鼠标平面能更靠近镜头。
+
+        反向流速的物件会走到判定线更靠近摄像头的一侧，只要还在这个下界之内就
+        应当画出来；再靠近就会掉出画面下缘。
+        """
+        z_k6 = self.scene.visible_z_near(0.0, W, H)
+        z_mouse = self.scene.visible_z_near(S.MOUSE_PLANE_HEIGHT, W, H)
+        self.assertLess(z_k6, 0.0, "6K 平面的可视下界在判定平面之前")
+        self.assertLess(z_mouse, z_k6, "鼠标平面离镜头更近，可视下界更靠前")
+        for y, z_near in ((0.0, z_k6), (S.MOUSE_PLANE_HEIGHT, z_mouse)):
+            inside = self.scene.point(0.0, y, z_near, W, H)[1]
+            outside = self.scene.point(0.0, y, z_near - 0.02, W, H)[1]
+            self.assertLessEqual(inside, H + 0.5, "可视下界正好落在画面下缘")
+            self.assertGreater(outside, H, "再靠近镜头就会掉出画面")
+        # 结果按窗口尺寸缓存：同样尺寸重复调用一致
+        self.assertAlmostEqual(
+            self.scene.visible_z_near(0.0, W, H), z_k6, places=9
+        )
+        small = self.scene.visible_z_near(0.0, 1024, 640)
+        self.assertLess(small, 0.0)
+
     def test_start_position_is_on_screen(self) -> None:
         """起点保留在屏幕内、靠近最上方。"""
         for x in (S.K6_LEFT, 0.0, -S.K6_LEFT):

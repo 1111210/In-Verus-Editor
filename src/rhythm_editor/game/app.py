@@ -58,8 +58,6 @@ REGION_PAD = 0.01
 # 空域左右边线的半宽（**世界单位**）：软件渲染与 Panda 的 ribbon 共用这一个值，
 # 两边看起来一样粗（按透视：远处窄）。0.006 是与 scene.UNIT_SCALE 配套的基准比例。
 REGION_EDGE_HALF_WORLD = 0.006 * UNIT_SCALE
-# 越过了判定线（z < 0）之后还继续绘制多长：过去得太多就该消失
-PAST_LINE_KEEP = 0.4 * UNIT_SCALE
 MENU_WINDOW = 8                     # 主界面谱面列表一次显示多少行（其余滚动显示）
 ROOT = os.path.dirname(                       # 仓库根目录（src/rhythm_editor/game/app.py → ../..）
     os.path.dirname(os.path.dirname(os.path.dirname(os.path.abspath(__file__))))
@@ -2322,6 +2320,18 @@ class PlayerApp:
         assert self.chart is not None
         return self.chart.group_of_note(note)
 
+    def _plane_z_near(self, plane_y: float) -> float:
+        """该平面在画面里的**最近 z**（负值：判定平面与镜头之间）。
+
+        相机在判定平面后方，所以反向运动的物件会走到判定线之前；只要它还在这条
+        下界之内就应当画出来（``PlayerScene.visible_z_near`` 按窗口尺寸估算）。
+        """
+        return self.scene.visible_z_near(plane_y, self.w, self.h)
+
+    def _plane_near_distance_ms(self, plane_y: float, span_ms: float) -> float:
+        """该平面可视下界对应的滚动距离（毫秒，负值）。"""
+        return frame.distance_from_z(self._plane_z_near(plane_y), span_ms)
+
     def _draw_play(self) -> None:
         assert self.chart is not None and self.judge is not None
         now_ms = self._now_ms()
@@ -2636,7 +2646,7 @@ class PlayerApp:
             group = self._note_group(note)     # 位置 / 长按尾端都按所属速度组的 ∫v
             if isinstance(note, LaneNote):
                 head = self._note_z(self._head_ms(note), now_ms, group=group)
-                if head < -PAST_LINE_KEEP:
+                if head < self._plane_z_near(0.0) or head > START_Z:
                     continue
                 shape = frame.lane_shape(note)
                 lane = shape.texture_index
@@ -2645,22 +2655,24 @@ class PlayerApp:
                     tail = self._note_z(
                         timing.beat_to_song_ms(note.tail_beat), now_ms, group=group
                     )
-                    body_center = (max(0.0, head) + max(0.0, tail)) / 2.0
+                    body_center = (head + tail) / 2.0
                     scene.quad(f"hold_body_{lane}", center_x, body_center, shape.x1 - shape.x0,
                                max(0.2 * UNIT_SCALE, abs(tail - head)), 0.0, (1, 1, 1, 1.0),
                                layer=layer)
                     head_size = frame.hold_head_height(self.settings.note_thickness)
-                    scene.quad(f"hold_head_{lane}", center_x, max(0.0, head) + head_size / 2.0,
+                    scene.quad(f"hold_head_{lane}", center_x, head + head_size / 2.0,
                                shape.x1 - shape.x0, head_size, 0.0, layer=layer)
                 else:
                     thickness = (self.settings.multi_thickness if note.is_multi
                                  else self.settings.note_thickness)
-                    scene.quad(f"tap_{lane}", center_x, max(0.0, head) + thickness / 2.0,
+                    scene.quad(f"tap_{lane}", center_x, head + thickness / 2.0,
                                shape.x1 - shape.x0, thickness, 0.0, layer=layer)
             elif isinstance(note, MouseRegion):
                 self._draw_region3d(note, now_ms)
             elif isinstance(note, MouseSlide):
-                z = max(0.0, self._note_z(self._head_ms(note), now_ms, group=group))
+                z = self._note_z(self._head_ms(note), now_ms, group=group)
+                if z < self._plane_z_near(MOUSE_PLANE_HEIGHT) or z > START_Z:
+                    continue
                 shape = frame.slide_shape(note)
                 name = "right" if shape.direction > 0 else "left"
                 # 滑键贴图是双倍高（上半楔形 / 下半透明）：图片中心 = 鼠标运动平面，
@@ -2678,7 +2690,9 @@ class PlayerApp:
                     vertical=True, layer=layer,
                 )
             elif isinstance(note, MouseClick):
-                z = max(0.0, self._note_z(self._head_ms(note), now_ms, group=group))
+                z = self._note_z(self._head_ms(note), now_ms, group=group)
+                if z < self._plane_z_near(MOUSE_PLANE_HEIGHT) or z > START_Z:
+                    continue
                 shape = frame.click_shape(note)
                 center_y, height = frame.click_center(self.settings.click_thickness)
                 scene.quad("click_range", (shape.x0 + shape.x1) / 2.0, z,
@@ -2709,7 +2723,8 @@ class PlayerApp:
         y = MOUSE_PLANE_HEIGHT
         fill = self.texture_avg.get("region_fill") or (60, 110, 200, 104)
         edge = self.texture_avg.get("region_edge") or (90, 220, 255, 255)
-        for run in frame.region_samples(self.chart, note, now_ms, span):
+        near_ms = self._plane_near_distance_ms(MOUSE_PLANE_HEIGHT, span)   # 判定线之前也画
+        for run in frame.region_samples(self.chart, note, now_ms, span, near_ms=near_ms):
             left: List[Tuple[float, float]] = []
             right: List[Tuple[float, float]] = []
             for beat, distance in run:
@@ -2730,46 +2745,50 @@ class PlayerApp:
         """6K 单键 / 长按：用预设贴图绘制（贴图**底端**在判定边，到达判定线即判定）。"""
         assert self.chart is not None
         group = self._note_group(note)         # 位置按所属速度组的 ∫v 反推
+        z_near = self._plane_z_near(0.0)       # 相机对 6K 平面的可视下界（反向物件用）
         head_z = self._note_z(self._head_ms(note), now_ms, group=group)
-        if head_z < -PAST_LINE_KEEP:
+        if head_z < z_near or head_z > START_Z:
             return
+        head_z = max(z_near, head_z)
         shape = frame.lane_shape(note)
         tex_index, x0, x1 = shape.texture_index, shape.x0, shape.x1
         if note.is_hold:
             tail_z = self._note_z(
                 self.chart.timing.beat_to_song_ms(note.tail_beat), now_ms, group=group
             )
+            tail_z = max(z_near, tail_z)
+            z_near_body, z_far_body = min(head_z, tail_z), max(head_z, tail_z)
             body = f"hold_body_{tex_index}"
             body_color = self.texture_avg.get(body)
             if body_color is not None:
                 # 长条用透视正确的多边形填（pygame 无法做透视 warp，逐片贴图会出台阶）
                 quad = [
-                    self._proj(x0, 0.0, max(0.0, tail_z)),
-                    self._proj(x1, 0.0, max(0.0, tail_z)),
-                    self._proj(x1, 0.0, max(0.0, head_z)),
-                    self._proj(x0, 0.0, max(0.0, head_z)),
+                    self._proj(x0, 0.0, z_near_body),
+                    self._proj(x1, 0.0, z_near_body),
+                    self._proj(x1, 0.0, z_far_body),
+                    self._proj(x0, 0.0, z_far_body),
                 ]
                 if body_color[3] >= 250:
                     self._quad(quad, body_color[:3])
                 else:
                     self._alpha_quad(quad, body_color[:3], body_color[3])
-                if not self._blit_hold_center_line(x0, x1, head_z, tail_z):
+                if not self._blit_hold_center_line(x0, x1, z_near_body, z_far_body):
                     pass
-            elif not self._blit_strip(body, x0, x1, max(0.0, head_z), max(0.0, tail_z)):
-                near, near2 = self._proj(x0, 0.0, max(0.0, head_z)), self._proj(x1, 0.0, max(0.0, head_z))
-                far, far2 = self._proj(x0, 0.0, max(0.0, tail_z)), self._proj(x1, 0.0, max(0.0, tail_z))
+            elif not self._blit_strip(body, x0, x1, z_near_body, z_far_body):
+                near, near2 = self._proj(x0, 0.0, z_near_body), self._proj(x1, 0.0, z_near_body)
+                far, far2 = self._proj(x0, 0.0, z_far_body), self._proj(x1, 0.0, z_far_body)
                 self._quad([near, near2, far2, far], (60, 120, 220))
-                mid_near = self._proj((x0 + x1) / 2, 0.0, max(0.0, head_z))
-                mid_far = self._proj((x0 + x1) / 2, 0.0, max(0.0, tail_z))
+                mid_near = self._proj((x0 + x1) / 2, 0.0, z_near_body)
+                mid_far = self._proj((x0 + x1) / 2, 0.0, z_far_body)
                 self._line_scaled(mid_near, mid_far, WHITE, 2.4, min(near[2], far[2]))
             # 开头盖在主体上面（有意让一部分主体被开头覆盖）
-            head_top = max(0.0, head_z) + frame.hold_head_height(self.settings.note_thickness)
+            head_top = head_z + frame.hold_head_height(self.settings.note_thickness)
             if not self._blit_lane_tex(f"hold_head_{tex_index}", x0, x1,
-                                       max(0.0, head_z), min(START_Z, head_top)):
+                                       head_z, min(START_Z, head_top)):
                 self._quad(
                     [
-                        self._proj(x0, 0.0, max(0.0, head_z)),
-                        self._proj(x1, 0.0, max(0.0, head_z)),
+                        self._proj(x0, 0.0, head_z),
+                        self._proj(x1, 0.0, head_z),
                         self._proj(x1, 0.0, min(START_Z, head_top)),
                         self._proj(x0, 0.0, min(START_Z, head_top)),
                     ],
@@ -2782,12 +2801,12 @@ class PlayerApp:
                 if note.is_multi
                 else self.settings.note_thickness
             )
-            far_z = min(START_Z, max(0.0, head_z) + thickness)
+            far_z = min(START_Z, head_z + thickness)
             # 用**分片透视**贴（左右边界跟着轨道收敛），否则仿射会把按键画成竖直矩形
             if self._blit_lane_tex(f"tap_{tex_index}", x0, x1,
-                                   max(0.0, head_z), far_z):
+                                   head_z, far_z):
                 return
-            near, near2 = self._proj(x0, 0.0, max(0.0, head_z)), self._proj(x1, 0.0, max(0.0, head_z))
+            near, near2 = self._proj(x0, 0.0, head_z), self._proj(x1, 0.0, head_z)
             far, far2 = self._proj(x0, 0.0, far_z), self._proj(x1, 0.0, far_z)
             self._quad([near, near2, far2, far], (70, 140, 240))
             # 白色实线就在“判定时刻与判定线重合”的那条边上，粗细随透视变细
@@ -2817,10 +2836,11 @@ class PlayerApp:
         """长按主体中间那条纯白竖线（占键宽 = 贴图的 ``HOLD_LINE_FRACTION``，与开头一致）。
 
         画成**透视正确的梯形**（近端宽、远端窄），与开头贴图的线宽一致。
+        ``head_z`` / ``tail_z`` 已由调用方夹进可视范围（可以小于 0 = 判定线之前）。
         """
         center = (x0 + x1) / 2.0
         half = (x1 - x0) * textures.HOLD_LINE_FRACTION / 2.0
-        near_z, far_z = max(0.0, head_z), max(0.0, tail_z)
+        near_z, far_z = min(head_z, tail_z), max(head_z, tail_z)
         self._quad(
             [
                 self._proj(center - half, 0.0, near_z),
@@ -2853,7 +2873,8 @@ class PlayerApp:
             surface = self._tex("region_edge")
             if surface is not None:
                 edge_color = textures.average_color(surface)
-        for run in frame.region_samples(self.chart, note, now_ms, span):
+        near_ms = self._plane_near_distance_ms(MOUSE_PLANE_HEIGHT, span)   # 判定线之前也画
+        for run in frame.region_samples(self.chart, note, now_ms, span, near_ms=near_ms):
             left_points: List[Tuple[float, float, float]] = []
             right_points: List[Tuple[float, float, float]] = []
             for beat, distance in run:
@@ -2921,9 +2942,10 @@ class PlayerApp:
     def _draw_pattern(self, note: Note, now_ms: float) -> None:
         """滑键 / 鼠标点击按键：图案平行于判定平面，改用预设贴图。"""
         z = self._note_z(self._head_ms(note), now_ms, group=self._note_group(note))
-        if z < -PAST_LINE_KEEP or z > START_Z:
+        z_near = self._plane_z_near(MOUSE_PLANE_HEIGHT)   # 反向时图案会走到判定线之前
+        if z < z_near or z > START_Z:
             return
-        z = max(0.0, z)
+        z = max(z_near, z)
         if self.textures or self._tex("click_diamond") is not None:
             if self._draw_pattern_textured(note, z):
                 return
