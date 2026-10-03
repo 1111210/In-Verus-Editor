@@ -23,16 +23,12 @@ from __future__ import annotations
 
 import copy
 import os
-from dataclasses import dataclass, field
+from dataclasses import dataclass
 from typing import Any, Callable, Dict, Iterable, List, Optional, Sequence, Set, Tuple
 
-from .. import config
 from .chart import Chart
 from .notes import (
     LaneNote,
-    MouseNote,
-    MouseRegion,
-    MouseSlide,
     NOTE_LANE,
     NOTE_REGION,
     Note,
@@ -220,9 +216,6 @@ class Document:
 
     def clear_selection(self) -> None:
         self.selection.clear()
-
-    def add_to_selection(self, note_ids: Iterable[str]) -> None:
-        self.selection.update(str(i) for i in note_ids)
 
     def xor_selection(self, note_ids: Iterable[str]) -> None:
         """Ctrl 选择：把新选择并入，两个集合的交集被移出（对称差）。"""

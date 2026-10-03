@@ -12,7 +12,6 @@ from typing import Dict, Optional, Tuple
 from . import config
 from .audio import (
     AudioPlayer,
-    audio_backend_available,
     audio_backend_name,
     audio_setup_hint,
     audio_silent_reason,
@@ -24,9 +23,9 @@ from .io.chart_io import (
     load_chart,
     save_chart as write_chart,
 )
-from .model.chart import Chart, EditorSettings
+from .model.chart import Chart
 from .model.document import Document
-from .model.notes import BoundaryCurve, MouseRegion, Note
+from .model.notes import BoundaryCurve, MouseRegion
 from .model.timing import TimingMap
 from .model.validate import format_report, validate_chart
 from .global_settings import (
@@ -50,7 +49,7 @@ from .ui.dialogs import (
     run_dialog,
 )
 from .ui.interactions import ToolController
-from .ui.renderer import PendingPreview, RenderState, Renderer
+from .ui.renderer import RenderState, Renderer
 from .ui.scene import Scene
 from .ui.style import apply_theme
 from .ui.theme import DARK

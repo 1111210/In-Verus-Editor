@@ -10,14 +10,11 @@ VERSION = "0.1.0"
 CHART_FORMAT = "inverus.chart"
 CHART_FORMAT_VERSION = 1
 CHART_EXTENSION = ".json"          # 默认保存为普通 JSON 文件
-CHART_EXTENSIONS = (".json",)      # 保存时使用
-AUDIO_EXTENSIONS = (".mp3", ".ogg", ".wav", ".flac", ".m4a", ".aac", ".opus")
 
 # 玩法布局
 LANE_COUNT = 6
 MOUSE_LANE_FIRST = 1          # 鼠标平面覆盖 6 轨中的中间四条（索引 1..4）
 MOUSE_LANE_LAST = 4
-MOUSE_LANE_COUNT = MOUSE_LANE_LAST - MOUSE_LANE_FIRST + 1
 
 # 布局模式：编辑器里两个区域左右分开；演示模式下鼠标平面叠加到 6K 上
 LAYOUT_SPLIT = "split"
@@ -34,7 +31,6 @@ MOUSE_OVERFLOW_NORM = 0.45
 # 默认值：BPM 列表 / 偏移 / 网格 / 缩放 / 延迟
 DEFAULT_BPM = 120.0
 DEFAULT_BEATS_PER_BAR = 4
-DEFAULT_OFFSET_MS = 0.0
 DEFAULT_GRID_DIVISION = 4      # 一拍细分 4 份
 DEFAULT_HORIZONTAL_DIVISIONS = 0   # 0 = 不启用横向辅助网格
 DEFAULT_AUDIO_LATENCY_MS = 0.0

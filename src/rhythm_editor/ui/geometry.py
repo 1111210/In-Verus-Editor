@@ -13,7 +13,6 @@ from ..model.chart import Chart
 from ..model.notes import (
     LaneNote,
     MouseClick,
-    MouseNote,
     MouseRegion,
     MouseSlide,
     Note,
@@ -245,8 +244,10 @@ def click_bounds(note: MouseClick, chart: Chart, view: ViewState) -> Bounds:
     return x - half, y - TAP_MIN_PX / 2.0, x + half, y + TAP_MIN_PX / 2.0
 
 
-def region_polygon(note: MouseRegion, chart: Chart, view: ViewState, samples: int = REGION_SAMPLES) -> List[Point]:
-    """空域的屏幕多边形（已裁剪到鼠标平面的显示范围）。"""
+def region_edges(
+    note: MouseRegion, chart: Chart, view: ViewState, samples: int = REGION_SAMPLES
+) -> Tuple[List[Point], List[Point]]:
+    """空域的左右边界点列（未裁剪，从开头到结尾）。"""
     group = chart.group_by_id(note.group)
     left_edge: List[Point] = []
     right_edge: List[Point] = []
@@ -254,6 +255,12 @@ def region_polygon(note: MouseRegion, chart: Chart, view: ViewState, samples: in
         y = view.note_y(beat, group)
         left_edge.append((view.norm_to_x(note.left.value_at(progress)), y))
         right_edge.append((view.norm_to_x(note.right.value_at(progress)), y))
+    return left_edge, right_edge
+
+
+def region_polygon(note: MouseRegion, chart: Chart, view: ViewState, samples: int = REGION_SAMPLES) -> List[Point]:
+    """空域的屏幕多边形（已裁剪到鼠标平面的显示范围）。"""
+    left_edge, right_edge = region_edges(note, chart, view, samples)
     polygon = left_edge + list(reversed(right_edge))
     return clip_polygon(polygon, mouse_pane_rect(view))
 

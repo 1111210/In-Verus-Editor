@@ -20,8 +20,9 @@ from dataclasses import dataclass
 from typing import Any, Dict, Iterable, List, Sequence
 
 from .. import config
+from . import segments as seglib
 
-INF = float("inf")
+INF = seglib.INF
 
 
 @dataclass
@@ -55,29 +56,18 @@ class SpeedGroup:
         self.note_ids: List[str] = list(note_ids or [])
         self._identity = True
         self._min_multiplier = config.DEFAULT_SPEED_MULTIPLIER
-        self._max_multiplier = config.DEFAULT_SPEED_MULTIPLIER
         self.set_segments(segments or [SpeedSegment(0.0, config.DEFAULT_SPEED_MULTIPLIER)])
 
     # ------------------------------------------------------------------ 规整
     def set_segments(self, segments: Iterable[SpeedSegment]) -> None:
-        cleaned = [
-            SpeedSegment(float(s.start_beat), float(s.multiplier)) for s in segments
-        ]
-        cleaned.sort(key=lambda s: s.start_beat)
-        unique: List[SpeedSegment] = []
-        for seg in cleaned:
-            if unique and abs(unique[-1].start_beat - seg.start_beat) < 1e-9:
-                unique[-1] = seg
-            else:
-                unique.append(seg)
-        if not unique:
-            unique = [SpeedSegment(0.0, config.DEFAULT_SPEED_MULTIPLIER)]
-        # 第一项统一落在第 0 拍，保证任意时刻都有定义
-        unique[0] = SpeedSegment(0.0, unique[0].multiplier)
-        self.segments = unique
-        self._identity = all(abs(s.multiplier - 1.0) < 1e-9 for s in unique)
-        self._min_multiplier = min(s.multiplier for s in unique)
-        self._max_multiplier = max(s.multiplier for s in unique)
+        self.segments = seglib.normalize_segments(
+            segments,
+            make=lambda s: SpeedSegment(float(s.start_beat), float(s.multiplier)),
+            default=lambda: SpeedSegment(0.0, config.DEFAULT_SPEED_MULTIPLIER),
+            to_zero=lambda s: SpeedSegment(0.0, s.multiplier),
+        )
+        self._identity = all(abs(s.multiplier - 1.0) < 1e-9 for s in self.segments)
+        self._min_multiplier = min(s.multiplier for s in self.segments)
 
     @property
     def is_default(self) -> bool:
@@ -92,11 +82,6 @@ class SpeedGroup:
     def min_multiplier(self) -> float:
         """整条流速列表里的**最小**倍率（可能为负 = 反向）。"""
         return self._min_multiplier
-
-    @property
-    def max_multiplier(self) -> float:
-        """整条流速列表里的**最大**倍率。"""
-        return self._max_multiplier
 
     def scroll_seconds(self, timing, from_beat: float, to_beat: float) -> float:
         """``∫ v(τ) · spb(τ) dτ``（秒）：物件在屏幕上走过的“滚动秒数”。
@@ -135,24 +120,13 @@ class SpeedGroup:
 
     # ------------------------------------------------------------------ 查询
     def segment_at(self, beat: float) -> SpeedSegment:
-        segs = self.segments
-        if beat < segs[0].start_beat:
-            return segs[0]
-        current = segs[0]
-        for seg in segs:
-            if seg.start_beat <= beat + 1e-12:
-                current = seg
-            else:
-                break
-        return current
+        return seglib.segment_at(self.segments, beat)
 
     def multiplier_at(self, beat: float) -> float:
         return self.segment_at(beat).multiplier
 
     def segment_end(self, index: int) -> float:
-        if 0 <= index < len(self.segments) - 1:
-            return self.segments[index + 1].start_beat
-        return INF
+        return seglib.segment_end(self.segments, index)
 
     def cumulative(self, beat: float) -> float:
         """∫_{0}^{beat} v(u) du。"""
@@ -191,9 +165,6 @@ class SpeedGroup:
     def remove_notes(self, note_ids: Iterable[str]) -> None:
         drop = {str(n) for n in note_ids}
         self.note_ids = [n for n in self.note_ids if n not in drop]
-
-    def clear_notes(self) -> None:
-        self.note_ids = []
 
     # ------------------------------------------------------------------ 序列化
     def to_dict(self) -> Dict[str, Any]:

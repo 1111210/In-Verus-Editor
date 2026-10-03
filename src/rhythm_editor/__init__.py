@@ -1,7 +1,7 @@
-"""In Verus —— 双平面音游谱面编辑器（6K 下落式 + 鼠标平面）。
+"""In Verus —— 双平面音游的谱面编辑器与 3D 游玩器（6K 下落式 + 鼠标平面）。
 
-本项目当前只实现 **编辑器**（不含播放器 / 游玩器）。
-核心包只依赖 Python 标准库；安装了 ``pygame-ce`` 时会自动启用真实音频后端。
+编辑器核心只依赖 Python 标准库；安装了 ``pygame-ce`` 时自动启用真实音频后端，
+游玩器使用 pygame 绘制，并可用 Panda3D / OpenGL 加速。
 """
 
 from __future__ import annotations

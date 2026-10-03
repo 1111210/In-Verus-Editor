@@ -1193,14 +1193,6 @@ class PlayerApp:
         self.screen.blit(cached, (left, top))
         return True
 
-    @staticmethod
-    def _bbox(points):
-        """一组屏幕点 -> 外接矩形 (x, y, w, h)。"""
-        xs = [p[0] for p in points]
-        ys = [p[1] for p in points]
-        left, top = min(xs), min(ys)
-        return (left, top, max(1.0, max(xs) - left), max(1.0, max(ys) - top))
-
     def _begin_chart(self, path: str) -> bool:
         """读取谱面并进加载页；读不出来就留在主界面并给出提示。"""
         try:
@@ -2240,10 +2232,6 @@ class PlayerApp:
             width = max(1, int(round(width * scale / ref)))
         self._line(a, b, color, max(1, int(width)))
 
-    def _mouse_plane_strip_z(self, strips: int) -> List[float]:
-        """鼠标平面渐变用的 z 分界（按屏幕高度均匀切）。"""
-        return self._plane_strip_z(strips, MOUSE_PLANE_HEIGHT)
-
     REGION_EDGE_MIN_HALF_PX = 0.35     # 再远也留一点，别整条看不见
 
     def _region_edge_style(self, scale: float):
@@ -2260,10 +2248,6 @@ class PlayerApp:
                    REGION_EDGE_HALF_WORLD * max(0.0, scale))
         fade = min(1.0, 0.3 + 0.7 * ratio)
         return half, fade
-
-    def _region_edge_half_px(self, scale: float) -> float:
-        """空域边线的屏幕半宽（兼容旧接口）。"""
-        return self._region_edge_style(scale)[0]
 
     def _plane_strip_z(self, strips: int, world_y: float = 0.0) -> List[float]:
         """某个水平面上按**屏幕高度**均匀切出来的 z 分界。

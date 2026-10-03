@@ -6,11 +6,11 @@
 
 from __future__ import annotations
 
-import json
 import os
 from dataclasses import asdict, dataclass, field
 from typing import Dict, List, Optional
 
+from ..settings_store import read_json_object, user_config_dir, write_json_object
 from .scene import UNIT_SCALE
 
 ENV_PLAYER_SETTINGS = "VERUS_PLAYER_SETTINGS"
@@ -154,29 +154,14 @@ def settings_path() -> str:
     override = os.environ.get(ENV_PLAYER_SETTINGS)
     if override:
         return override
-    if os.name == "nt":
-        base = os.environ.get("APPDATA") or os.path.join(os.path.expanduser("~"), "AppData", "Roaming")
-        return os.path.join(base, "InVerus", "player.json")
-    base = os.environ.get("XDG_CONFIG_HOME") or os.path.join(os.path.expanduser("~"), ".config")
-    return os.path.join(base, "inverus", "player.json")
+    return os.path.join(user_config_dir(), "player.json")
 
 
 def load_settings(path: Optional[str] = None) -> PlayerSettings:
-    target = path or settings_path()
-    try:
-        with open(target, encoding="utf-8") as handle:
-            data = json.load(handle)
-    except (OSError, ValueError):
-        data = {}
-    return PlayerSettings.from_dict(data if isinstance(data, dict) else {})
+    return PlayerSettings.from_dict(read_json_object(path or settings_path()))
 
 
 def save_settings(settings: PlayerSettings, path: Optional[str] = None) -> str:
     target = path or settings_path()
-    try:
-        os.makedirs(os.path.dirname(target), exist_ok=True)
-        with open(target, "w", encoding="utf-8") as handle:
-            json.dump(settings.to_dict(), handle, ensure_ascii=False, indent=2)
-    except OSError:  # pragma: no cover
-        pass
+    write_json_object(target, settings.to_dict())
     return target

@@ -11,7 +11,7 @@
 from __future__ import annotations
 
 import tkinter as tk
-from typing import Any, Dict, Iterable, List, Optional, Sequence, Tuple
+from typing import Any, Dict, Iterable, List, Sequence, Tuple
 
 
 class Scene:
@@ -183,22 +183,3 @@ class Scene:
         options.setdefault("tags", ())
         options.setdefault("anchor", "nw")
         self._put(key, "text", (x, y), options)
-
-    # ------------------------------------------------------------------ 命中
-    def item_at(self, x: float, y: float, tags: Optional[Tuple[str, ...]] = None) -> Optional[str]:
-        """返回该点最上层图形对应的 key（仅限本场景登记过的对象）。"""
-        owned = {item: key for key, (item, _, _) in self._items.items()}
-        for item_id in reversed(self.canvas.find_overlapping(x - 1, y - 1, x + 1, y + 1)):
-            key = owned.get(item_id)
-            if key is None:
-                continue
-            if tags and not set(tags).issubset(set(self.canvas.gettags(item_id))):
-                continue
-            return key
-        return None
-
-    def key_of_item(self, item_id: int) -> Optional[str]:
-        for key, (item, _, _) in self._items.items():
-            if item == item_id:
-                return key
-        return None

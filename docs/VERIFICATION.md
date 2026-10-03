@@ -50,35 +50,22 @@ python -m unittest discover -s tests -t .
 ```
 
 本机（Windows + Python 3.14.7 + Tk 9.0 + pygame-ce 2.5.8 + Panda3D 1.10）：
-**416 项全部通过**（约 18 秒），其中包含真实 Tk 画布与 headless pygame 的界面测试。
+**136 项全部通过**（约 7 秒），其中包含真实 Tk 画布与 headless pygame 的界面测试。
 
 | 测试文件 | 覆盖内容 |
 | --- | --- |
-| `test_timing.py` | BPM 列表、偏移、拍 ↔ 秒换算、网格吸附、小节线 |
-| `test_speed.py` | 速度组积分、0 / 负流速、非单调位置 |
-| `test_notes.py` | 单轨 / 多轨 / 长按、空域边界与缓动、滑键方向、镜像、序列化 |
-| `test_mouse_click.py` | 鼠标点击按键的模型、创建流程、吸附规则、渲染与命中 |
-| `test_validate.py` | 自动检查：区间冲突、同轨重叠、长按 / 多轨相交、空域相交 |
-| `test_chart_document.py` | 物件增删、撤销 / 重做、复制粘贴、镜像、速度组归属、ID 唯一性 |
-| `test_undo_records.py` | 差量撤销：各类命令的撤销 / 重做等价性、记录量、栈上限 |
-| `test_sorted_cache.py` | 排序缓存的失效规则 |
-| `test_perf_hit.py` | 命中缓存：只含可见物件、视图变化回退全量、框选复用 |
-| `test_chart_io.py` | 谱面 JSON 往返、音频复制与查找 |
-| `test_global_settings.py` | 全局设置读写、损坏回退、旧 `editor` 段迁移 |
-| `test_demo_selftest.py` | 示例谱面结构、内置自检、自动检查 |
+| `test_model_timing.py` | BPM 列表、偏移、拍 ↔ 秒换算、网格吸附、小节线、速度组积分与非单调位置 |
+| `test_model_notes.py` | 单轨 / 多轨 / 长按、空域 / 滑键 / 鼠标点击、镜像与序列化、自动检查规则 |
+| `test_model_chart.py` | 谱面分组与 ID、撤销 / 重做、复制粘贴、排序缓存、谱面 JSON 与音频复制 |
+| `test_settings.py` | 编辑器 / 游玩器全局设置读写、旧存档迁移、损坏回退 |
+| `test_demo.py` | 示例谱面结构、内置自检、自动检查 |
+| `test_audio.py` | 倍速细档与重采样、延迟补偿、分窗口调度、音效时刻表与混音 |
+| `test_editor_render.py` | 真实 Tk 画布：分栏、图层、裁剪、放置工具、滚动 / 缩放、命中缓存 |
+| `test_editor_app.py` | 编辑器应用层：菜单、播放 / 暂停、演示模式、设置与保存、启动脚本 |
 | `test_dialogs.py` | BPM 第 0 拍项、默认速度组、物件编辑与缓动写入、演示视图设置、弹窗只有确认按钮 |
-| `test_game_softview.py` | 演示模式离屏软渲染：与游玩器软件绘制逐像素一致、不画鼠标指针、跟随演示视图设置 |
-| `test_editor_smoke.py` | 真实 Tk 画布：全部放置工具、图层、空域、滚动 / 缩放、拖拽 |
-| `test_app_flow.py` | 应用级：菜单、播放 / 暂停、演示模式、设置与保存、窗口模式 |
-| `test_audio_rate.py` | 倍速档位（含 0.01 ~ 0.1 细档）与重采样、延迟补偿、分窗口调度、连续播放 |
-| `test_metronome.py` | 音效时刻表（预计算 / 排序 / 极高 BPM）、波形、慢放不改变音效长度、混音位置与窗口边界衔接 |
-| `test_launcher.py` | 启动脚本、启动日志、音频后端诊断 |
-| `test_game_judge.py` | 游玩器判定窗口、长按 / 空域区间、滑键、准度与分数 |
-| `test_game_scene.py` | 游玩器 3D 布局、投影、取景 |
-| `test_game_textures.py` | 玩家端贴图规格化与占位 |
-| `test_game_render3d.py` | Panda3D 卡片变换与贴图夹边 |
-| `test_game_settings.py` | 游玩器设置读写、迁移与夹取 |
-| `test_game_app.py` | 游玩器 GUI：主界面 → 加载 → 游玩 → 结算、输入、渲染回退 |
+| `test_game_judge.py` | 判定窗口、长按 / 空域区间、滑键、准度与分数 |
+| `test_game_render.py` | 3D 布局与取景、贴图规格化、Panda3D 卡片变换、演示模式离屏软渲染 |
+| `test_game_app.py` | 游玩器 GUI：主界面 → 加载 → 游玩 → 结算、输入、渲染回退、剔除 |
 
 ## 4. 人工验收（需要图形界面）
 
@@ -90,7 +77,7 @@ python run_editor.py charts/demo/demo.json
 2. `Ctrl+滚轮` —— 缩放改变可视秒数；反向滚动恢复。
 3. 「视图 → 横向辅助网格」设为 8 → 鼠标区域出现 8 等分竖直虚线；
    用「左右滑键」点击时横坐标吸附到网格线。
-4. 「视图 → 时间网格细分」改为 3 → 出现三连音网格。
+4. 「视图 → 时间网格细分」选择 3 → 出现三连音网格。
 5. 「长按」：点起点后滚动、缩放，再点结束时刻（可点在鼠标区域上）→ 生成长按。
 6. 「空域」：两次点击定时间，再依次点击左右边界首尾，在对话框里选择线型。
 7. 「选择」框选若干物件 → `Ctrl+C`、`Ctrl+V` 后点击新时间 → 轨道与横向位置不变。
@@ -141,26 +128,27 @@ python tools/check_audio.py
 
 | 不变量 | 验证 |
 | --- | --- |
-| 流速可正可负，物件位置不是判定时刻的单调函数 | `test_speed.py::test_position_is_not_monotonic_in_beat`、`test_editor_smoke.py::test_far_note_pushed_back_to_judgment_line_is_drawn_and_hittable` |
-| 可见性剔除只按算出的像素位置，不用拍差 | `test_editor_smoke.py::test_note_flung_far_below_line_is_culled_by_pixels_only` |
-| 命中测试与渲染共用几何 | `test_perf_hit.py`、`ui/geometry.py::HitCache` |
-| 游玩器两条渲染路径共用世界几何 | `game/frame.py`；`test_game_app.py` 的两条路径像素断言 |
-| 编辑器与游玩器共用图层顺序 | `model/notes.py::layer_rank()`；`test_editor_smoke.py::test_hit_priority_follows_layer_order` |
-| 音效时刻表按歌曲毫秒预计算、增量维护（编辑只重算打击音、音量 / 倍速不重算） | `test_app_flow.py::test_sound_effects_are_precomputed_from_the_song_clock`、`test_effect_schedule_is_maintained_incrementally` |
-| 起播裁剪用新的起播位置、播放中新增音效立刻进缓冲（打击音不漏） | `test_app_flow.py::test_play_from_earlier_position_keeps_effects`、`test_metronome.py::test_current_window_is_rebuilt_when_change_lands_ahead_of_playhead` |
-| 播放中改音量 / 音效增益立刻生效（重合成当前窗口，音乐不跳时间） | `test_metronome.py::test_volume_changes_apply_immediately` |
-| 音效混进歌曲输出（不参与重采样、窗口边界不截断） | `test_metronome.py::EffectMixTests` |
-| 判定线跟随听到的位置（延迟补偿按倍速缩放） | `test_audio_rate.py`、`test_app_flow.py` |
+| 流速可正可负，物件位置不是判定时刻的单调函数 | `test_model_timing.py::SpeedGroupTests::test_position_is_not_monotonic_in_beat`、`test_editor_render.py::EditorRenderTests::test_far_note_pushed_back_to_judgment_line_is_drawn_and_hittable` |
+| 可见性剔除只按算出的像素位置，不用拍差 | `test_editor_render.py::EditorRenderTests::test_far_note_pushed_back_to_judgment_line_is_drawn_and_hittable` |
+| 命中测试与渲染共用几何 | `test_editor_render.py::HitCacheTests`、`ui/geometry.py::HitCache` |
+| 游玩器两条渲染路径共用世界几何 | `game/frame.py`；`test_game_render.py::SoftwareViewTests::test_frame_matches_player_software_sequence` |
+| 编辑器与游玩器共用图层顺序 | `model/notes.py::layer_rank()`；`test_editor_render.py::EditorRenderTests::test_note_layer_order_matches_readability_spec` |
+| 音效时刻表按歌曲毫秒预计算、增量维护（编辑只重算打击音、音量 / 倍速不重算） | `test_audio.py::EffectScheduleTests` |
+| 起播裁剪用新的起播位置、播放中新增音效立刻进缓冲（打击音不漏） | `test_audio.py::EffectMixTests::test_change_ahead_of_playhead_rebuilds_current_window` |
+| 播放中改音量 / 音效增益立刻生效（重合成当前窗口，音乐不跳时间） | `test_audio.py::EffectMixTests::test_change_ahead_of_playhead_rebuilds_current_window` |
+| 音效混进歌曲输出（不参与重采样、窗口边界不截断） | `test_audio.py::EffectMixTests::test_effect_mixed_at_scaled_position_without_stretching` |
+| 判定线跟随听到的位置（延迟补偿按倍速缩放） | `test_audio.py::RateTests::test_latency_is_signed_and_scales_with_rate`、`test_editor_app.py::EditorAppTests::test_play_pause_snaps_judgment_line` |
 | 判定窗口不随倍速改变 | `test_game_judge.py::test_windows_are_real_time_not_song_time` |
-| 演示视图不画鼠标指针、跟随编辑器独立的演示视图设置（固定软件渲染） | `test_game_softview.py::test_mouse_position_does_not_change_frame`、`test_demo_view_follows_editor_settings_not_player_json`、`test_app_flow.py::test_demo_view_settings_are_independent_and_applied` |
+| 演示视图不画鼠标指针、跟随编辑器独立的演示视图设置（固定软件渲染） | `test_game_render.py::SoftwareViewTests::test_mouse_position_does_not_change_frame`、`test_editor_app.py::EditorAppTests::test_demo_view_settings_are_independent_and_applied` |
 | 弹出窗口只有一个确认按钮（没有「取消」） | `test_dialogs.py::DialogButtonTests` |
-| 鼠标图案的贴图中心对齐鼠标运动平面（点击上下各半；滑键贴图双倍高、下半透明，可见楔形仍在平面上方），软件与 Panda3D / OpenGL 两条路径一致 | `test_game_softview.py::test_mouse_pattern_images_are_centered_on_the_mouse_plane`、`test_slide_texture_content_stays_above_the_mouse_plane`、`test_game_app.py::test_software_mouse_patterns_centered_on_plane`、`test_panda_mouse_patterns_centered_on_plane`、`test_game_textures.py::test_slide_textures_put_visible_art_in_top_half` |
-| 速度组在演示视图 / 游玩器里生效（位置按 ∫v、剔除与排序也按滚动距离） | `test_game_app.py::test_speed_groups_move_notes_in_player`、`test_region_samples_follow_speed_group`、`test_game_softview.py::test_demo_view_applies_speed_groups` |
-| 反向流速的物件在判定线之前（更靠近摄像头）照常绘制，超出相机可视下界才剔除 | `test_game_scene.py::test_visible_z_near_is_in_front_of_the_judgement_plane`、`test_game_app.py::test_reverse_notes_draw_in_front_of_the_judgement_line`、`test_game_softview.py::test_reverse_notes_render_in_front_of_the_judgement_line` |
-| 长按 / 空域只画「当前时刻 → 结束时刻」，已判过的部分不画；空域判定线高亮只在判定中 | `test_game_app.py::test_hold_and_region_hide_the_elapsed_part`、`test_software_region_is_flat_and_clipped_to_visible_span` |
-| 剔除按物件整段（开头 → 结尾）判断：反向空域开头在可视跨度之外时，靠近摄像机的一段照常绘制 | `test_game_app.py::test_region_head_beyond_span_still_draws_camera_side_part` |
-| 宽窗口下游玩区水平拉伸铺满可用宽度（6K 平面接近窗口左右边缘），软件与 Panda3D / OpenGL 两条路径取景一致 | `test_game_scene.py::test_wide_window_stretches_the_field_horizontally`、`test_game_app.py::test_panda_wide_window_camera_fills_window_width` |
-| 滑键箭头贴在终点内侧、朝滑动方向（用临时可见贴图验证；正式美术未实装） | `test_game_app.py::test_software_slide_arrow_direction_and_placement` |
+| 鼠标图案的贴图中心对齐鼠标运动平面（点击上下各半；滑键贴图双倍高、下半透明，可见楔形仍在平面上方），软件与 Panda3D / OpenGL 两条路径一致 | `test_game_render.py::TextureTests::test_real_assets_have_expected_geometry`、`test_game_render.py::SoftwareViewTests` |
+| 速度组在演示视图 / 游玩器里生效（位置按 ∫v、剔除与排序也按滚动距离） | `test_game_render.py::SoftwareViewTests::test_demo_view_applies_speed_groups`、`test_model_timing.py::SpeedGroupTests` |
+| 反向流速的物件在判定线之前（更靠近摄像头）照常绘制，超出相机可视下界才剔除 | `test_game_render.py::ProjectionTests::test_projection_and_visible_bounds`、`test_game_app.py::PlayerAppTests::test_reverse_notes_draw_in_front_of_the_judgement_line`、`test_game_render.py::SoftwareViewTests::test_reverse_notes_draw_in_front_of_the_judgement_line` |
+| 长按 / 空域只画「当前时刻 → 结束时刻」，已判过的部分不画；空域判定线高亮只在判定中 | `test_game_app.py::PlayerAppTests::test_hold_and_region_hide_the_elapsed_part` |
+| 长按 / 空域区间内**完全没按下 / 没进入**时判 Break，优先于 Near 与「离开 ≤50ms → EXACT」的阈值（区间不足 50ms 也一样） | `test_game_judge.py::RegionJudgeTests::test_never_entered_is_break_over_near_and_short_interval`、`test_game_judge.py::HoldJudgeTests::test_short_tail_without_press_is_break_not_grace` |
+| 剔除按物件整段（开头 → 结尾）判断：反向空域开头在可视跨度之外时，靠近摄像机的一段照常绘制 | `test_game_app.py::PlayerAppTests::test_region_head_beyond_span_still_draws_camera_side_part` |
+| 宽窗口下游玩区水平拉伸铺满可用宽度（6K 平面接近窗口左右边缘），软件与 Panda3D / OpenGL 两条路径取景一致 | `test_game_render.py::ProjectionTests::test_field_fills_window_and_stretches_on_wide_screens`、`test_game_render.py::PandaGeometryTests::test_panda_wide_window_camera_fills_window_width` |
+| 滑键箭头贴在终点内侧、朝滑动方向（用临时可见贴图验证；正式美术未实装） | `test_game_app.py::PlayerAppTests::test_software_slide_arrow_direction_and_placement` |
 
 ### 7.3 游玩器实测
 

@@ -33,9 +33,10 @@ charts/**/*.flac
 charts/**/*.m4a
 
 
-# Local scratch
-scratch/
+# 音频自检日志（运行时生成，超过上限自动截断）
 _diag/
+# 本地草稿
+scratch/
 
 # 测试/验收跑出来的临时谱面
 charts/test/

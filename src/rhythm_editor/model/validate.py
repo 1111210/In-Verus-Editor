@@ -22,9 +22,8 @@
 from __future__ import annotations
 
 from dataclasses import dataclass
-from typing import Dict, Iterable, List, Sequence, Tuple
+from typing import Dict, List, Sequence, Tuple
 
-from .. import config
 from .chart import Chart
 from .notes import LaneNote, MouseClick, MouseRegion, MouseSlide, Note
 

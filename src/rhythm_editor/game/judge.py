@@ -17,6 +17,8 @@
   完全没滑动 → Break。滑动方向不要求，只要**鼠标位移区间与滑键范围相交**即可。
 * 空域：每半拍一个判定区间；区间内离开空域 ≤50ms → EXACT，≤100ms → Exact，
   超过 100ms 但只要有一瞬间在空域内 → Near，整段都不在 → Break。
+  **Break 优先**：区间内从未进入过空域就是 Break，区间本身不足 50ms 也一样。
+  长按区间同理：整段都没有按下过 → Break，优先于“结束前 50ms 抬起仍算 EXACT”的宽限。
 * **输入带时间戳**：按键 / 鼠标事件用自身时间戳（``event.timestamp``）写进一条
   “状态时间线”，每帧再补一次采样兜底；长按 / 空域的区间评级在这条时间线上做
   分段常数积分。因此一帧跨过多个区间（极高 BPM、掉帧）也不会把区间误判成 Break。
@@ -106,14 +108,6 @@ class _IntervalState:
     note: Note
     intervals: List[float] = field(default_factory=list)   # 每个区间的起始拍
     index: int = 0
-    inside_ms: float = 0.0          # 当前区间内“在内”的累计时长
-    outside_ms: float = 0.0         # 当前区间内“在内”的累计时长
-    seen_inside: bool = False
-    ever_outside: bool = False      # 长按：只要松开过就最多 Near
-    released: bool = False          # 本区间内是否发生过“抬起”事件
-    release_ms: float = 0.0         # 抬起事件发生的歌曲毫秒
-    release_lead_ms: float = 0.0    # 抬起比区间结束早多少毫秒
-    is_last: bool = False           # 是否是该长按 / 空域的最后一个区间
     end_beat: float = 0.0           # 物件本身的结束拍（最后一个区间在这里截断）
 
 
@@ -344,10 +338,6 @@ class Judge:
         base = self.rate ** 0.6
         return -base if self.autoplay else base
 
-    @property
-    def break_count(self) -> int:
-        return self._counts[BREAK]
-
     # ------------------------------------------------------------ 内部
     def _make_intervals(self, note: Note) -> _IntervalState:
         beat = float(getattr(note, "beat_start", getattr(note, "beat", 0.0)))
@@ -473,6 +463,22 @@ class Judge:
         return out
 
     @staticmethod
+    def _inside_ms(
+        states: List[_State], start_ms: float, end_ms: float, inside_id: str
+    ) -> float:
+        """``[start, end]`` 内“在这个空域里”的毫秒数（分段常数积分，含首尾）。"""
+        if end_ms <= start_ms:
+            return 0.0
+        inside = 0.0
+        for index, state in enumerate(states):
+            begin = max(state.t, start_ms)
+            stop = states[index + 1].t if index + 1 < len(states) else end_ms
+            stop = min(stop, end_ms)
+            if stop > begin and state.inside == inside_id:
+                inside += stop - begin
+        return inside
+
+    @staticmethod
     def _outside_ms(
         states: List[_State], start_ms: float, end_ms: float, inside_id: str
     ) -> float:
@@ -520,7 +526,12 @@ class Judge:
         长按规则（每区间）：任意一行按下过 → 至少不 Break；区间内出现“所有行同时抬起”
         → Near（最后一个区间在结束前 ≤50ms 抬起仍算 EXACT）。
         空域规则：区间内不在区域里的累计时长 ≤50ms → EXACT、≤100ms → Exact、
-        更久但进去过 → Near、整段都没进去 → Break。
+        更久但进去过 → Near、整段都没进去 → Break（**优先于 Near / 50ms 宽限**，
+        区间本身不足 50ms 时同样如此）。
+
+        Break 用“区间内是否**有过**在区域里 / 按下过的时刻”判断：判定器可能从
+        区间中间才开始记录（时间线缺少区间开头的一段），拿累计时长与区间长度
+        比较会把“从未进入”误判成 EXACT / Near。
         """
         note = state.note
         states = self._states_between(start_ms, end_ms)
@@ -536,18 +547,19 @@ class Judge:
                 if entry.t >= start_ms and lanes.isdisjoint(held_now):
                     all_up_ms = entry.t
             if not any_press:
+                # 整段都没有按下过（哪怕区间不足 50ms）→ Break，优先于结尾宽限
                 return self._judge_result(note.id, BREAK, start_beat)
             if all_up_ms is None:
                 return self._judge_result(note.id, EXACT, start_beat)
             grace = (hold_end_ms - all_up_ms) <= 50.0 * self.rate
             if grace and end_ms >= all_up_ms - 1e-9:
                 return self._judge_result(note.id, EXACT, start_beat)
-            if start_ms <= all_up_ms <= end_ms:
-                return self._judge_result(note.id, NEAR, start_beat)
-            return self._judge_result(note.id, EXACT, start_beat)
+            # 区间内出现过“所有行同时抬起” → Near（结尾宽限见上）
+            return self._judge_result(note.id, NEAR, start_beat)
+        if self._inside_ms(states, start_ms, end_ms, note.id) <= 1e-9:
+            # 从未进入空域：Break 优先于 Near 与“离开 ≤50ms → EXACT”的阈值
+            return self._judge_result(note.id, BREAK, start_beat)
         outside = self._outside_ms(states, start_ms, end_ms, note.id)
-        if outside >= (end_ms - start_ms) - 1e-9:
-            return self._judge_result(note.id, BREAK, start_beat)   # 整段都没进去
         if outside <= 50.0 * self.rate:
             grade = EXACT
         elif outside <= 100.0 * self.rate:

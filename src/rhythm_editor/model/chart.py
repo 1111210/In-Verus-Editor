@@ -2,7 +2,7 @@
 
 from __future__ import annotations
 
-from dataclasses import dataclass, field
+from dataclasses import dataclass
 from typing import Any, Dict, Iterable, List, Optional, Sequence, Set
 
 from .. import config
@@ -285,9 +285,6 @@ class Chart:
         self.invalidate_order()
         return note
 
-    def add_many(self, notes: Iterable[Note], group: int | None = None) -> List[Note]:
-        return [self.add(n, group) for n in notes]
-
     def remove(self, note_ids: Iterable[str]) -> List[Note]:
         drop = {str(i) for i in note_ids}
         removed: List[Note] = []
@@ -310,14 +307,6 @@ class Chart:
         if removed:
             self.invalidate_order()
         return removed
-
-    def group_ids_of(self, note_ids: Iterable[str]) -> Set[int]:
-        wanted = {str(i) for i in note_ids}
-        result: Set[int] = set()
-        for group in self.speed_groups:
-            if wanted & set(group.note_ids):
-                result.add(group.id)
-        return result
 
     # ------------------------------------------------------------------ 速度组
     def group_by_id(self, gid: int) -> SpeedGroup:

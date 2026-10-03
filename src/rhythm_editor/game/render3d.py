@@ -17,7 +17,7 @@ from __future__ import annotations
 import os
 import math
 import struct
-from typing import Dict, List, Optional, Tuple
+from typing import Dict, List, Optional
 
 # 轨道几何只有一处真相：game/scene.py 里的常量（长度 / 宽度 / 高度都用同一套
 # 「合法区域宽 = 1」的单位）。这里写死过尺寸，只改 scene.py 时 Panda 画出来的
@@ -133,7 +133,9 @@ class QuadBatch:
     和 numpy / struct 打包出来的字节完全一致。
     """
 
-    _FORMAT = GeomVertexFormat.getV3t2()
+    # 没有 Panda3D 时只为让模块能正常 import（available() 返回 False）；
+    # QuadBatch 只有拿到可用环境后才会被实例化。
+    _FORMAT = GeomVertexFormat.getV3t2() if _AVAILABLE else None
 
     def __init__(self, parent: "NodePath", name: str, texture, color, draw_order: int) -> None:
         self.vdata = GeomVertexData(name, self._FORMAT, Geom.UHDynamic)

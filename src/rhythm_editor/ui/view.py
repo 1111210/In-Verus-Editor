@@ -12,7 +12,7 @@
 
 from __future__ import annotations
 
-from dataclasses import dataclass, field
+from dataclasses import dataclass
 from typing import List, Optional, Tuple
 
 from .. import config
@@ -183,10 +183,6 @@ class ViewState:
         return abs(float(x) - self.layout.divider_x) <= config.DIVIDER_GRAB_PX
 
     @property
-    def layout_mode(self) -> str:
-        return self.layout.mode
-
-    @property
     def split_layout(self) -> bool:
         return self.layout.mode == config.LAYOUT_SPLIT
 
@@ -290,10 +286,6 @@ class ViewState:
     def set_beat(self, beat: float, snap: bool = True) -> None:
         self.current_beat = self.snap_beat(beat) if snap else float(beat)
 
-    def screen_center_beat(self) -> float:
-        low, high = self.beat_range()
-        return (low + high) / 2.0
-
     # ---------------------------------------------------------- 竖向滚动条
     def scroll_doc_range(self) -> Tuple[float, float]:
         """滚动条代表的“文档范围”（**秒**）：谱面起点到终点，两端各留一点余量。"""
@@ -372,16 +364,6 @@ class ViewState:
         if divisions <= 0:
             return float(value)
         return round(float(value) * divisions) / divisions
-
-    def horizontal_grid_values(self) -> List[float]:
-        divisions = self.chart.settings.horizontal_divisions
-        if divisions <= 0:
-            return []
-        return [i / divisions for i in range(divisions + 1)]
-
-    def in_mouse_area(self, x: float) -> bool:
-        """是否位于鼠标平面的合法区域内（0..1 的范围）。"""
-        return self.layout.in_legal_area(x)
 
     def in_mouse_pane(self, x: float) -> bool:
         """是否位于鼠标平面这块画布区域内（比合法区域更宽，含溢出余量）。"""

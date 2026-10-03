@@ -7,17 +7,16 @@
 
 from __future__ import annotations
 
-import copy
 import json
 import os
-from typing import Dict, List, Tuple
+from typing import List, Tuple
 
 from . import config
 from .io.chart_io import load_chart, save_chart
 from .model.chart import Chart, EditorSettings, Metadata
 from .model.document import Document
 from .model.notes import BoundaryCurve, LaneNote, MouseClick, MouseRegion, MouseSlide
-from .model.speed import SpeedGroup, SpeedSegment
+from .model.speed import SpeedSegment
 from .model.timing import BpmSegment, TimingMap
 
 

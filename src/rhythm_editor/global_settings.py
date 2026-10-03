@@ -1,7 +1,7 @@
 """全局编辑器设置：**不写进谱面文件**，而是存在用户配置目录里。
 
 「视图 / 音效 / 编辑器设置」这些偏好（缩放、网格、延迟、节拍音与打击音开关、音量、
-侧轨高亮……）属于**使用者**而不是某一张谱面，所以保存在独立的
+侧轨高亮……）属于**使用者**，与具体谱面无关，所以保存在独立的
 ``settings.json`` 里，换谱面 / 新建谱面都沿用同一份。
 
 位置（可用环境变量 ``VERUS_SETTINGS`` 覆盖，测试里会用到）::
@@ -12,11 +12,11 @@
 
 from __future__ import annotations
 
-import json
 import os
 from typing import Any, Dict, Optional
 
 from .model.chart import EditorSettings
+from .settings_store import read_json_object, user_config_dir, write_json_object
 
 ENV_SETTINGS_PATH = "VERUS_SETTINGS"
 
@@ -26,25 +26,14 @@ def settings_path() -> str:
     override = os.environ.get(ENV_SETTINGS_PATH)
     if override:
         return override
-    if os.name == "nt":
-        base = os.environ.get("APPDATA") or os.path.join(os.path.expanduser("~"), "AppData", "Roaming")
-        return os.path.join(base, "InVerus", "settings.json")
-    base = os.environ.get("XDG_CONFIG_HOME") or os.path.join(os.path.expanduser("~"), ".config")
-    return os.path.join(base, "inverus", "settings.json")
+    return os.path.join(user_config_dir(), "settings.json")
 
 
 def load_settings(path: Optional[str] = None) -> EditorSettings:
     """读取全局设置；文件不存在或损坏时返回默认值（绝不抛异常）。"""
-    target = path or settings_path()
-    data: Dict[str, Any] = {}
-    try:
-        with open(target, encoding="utf-8") as handle:
-            loaded = json.load(handle)
-        if isinstance(loaded, dict):
-            data = loaded.get("editor", loaded)  # 兼容两种写法
-            if not isinstance(data, dict):
-                data = {}
-    except (OSError, ValueError):
+    loaded = read_json_object(path or settings_path())
+    data = loaded.get("editor", loaded)  # 兼容两种写法
+    if not isinstance(data, dict):
         data = {}
     return EditorSettings.from_dict(data)
 
@@ -53,17 +42,10 @@ def save_settings(settings: EditorSettings, path: Optional[str] = None) -> str:
     """把全局设置写回磁盘（尽力而为，失败也不影响使用）。"""
     target = path or settings_path()
     settings.normalize()
-    try:
-        os.makedirs(os.path.dirname(target), exist_ok=True)
-        with open(target, "w", encoding="utf-8") as handle:
-            json.dump(
-                {"format": "inverus.settings", "version": 1, "editor": settings.to_dict()},
-                handle,
-                ensure_ascii=False,
-                indent=2,
-            )
-    except OSError:  # pragma: no cover - 只读目录等
-        pass
+    write_json_object(
+        target,
+        {"format": "inverus.settings", "version": 1, "editor": settings.to_dict()},
+    )
     return target
 
 

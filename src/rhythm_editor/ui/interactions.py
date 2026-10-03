@@ -5,10 +5,9 @@
 
 from __future__ import annotations
 
-from typing import Callable, Dict, List, Optional, Sequence, Tuple
+from typing import Callable, Dict, List, Optional, Tuple
 
 from .. import config
-from ..model.chart import Chart
 from ..model.document import Document
 from ..model.notes import (
     BoundaryCurve,
@@ -19,7 +18,7 @@ from ..model.notes import (
     Note,
 )
 from .geometry import notes_at, notes_in_box
-from .renderer import PendingPreview, RenderState
+from .renderer import RenderState
 from .view import ViewState
 
 RegionEditor = Callable[[float, float, Tuple[float, float], Tuple[float, float]], Optional[Dict]]

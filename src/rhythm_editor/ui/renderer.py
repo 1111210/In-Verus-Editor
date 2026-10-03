@@ -22,7 +22,7 @@ from __future__ import annotations
 import math
 import tkinter.font as tkfont
 from dataclasses import dataclass, field
-from typing import Dict, Iterable, List, Optional, Sequence, Set, Tuple
+from typing import List, Optional, Set, Tuple
 
 from .. import config
 from ..model.chart import Chart
@@ -37,7 +37,6 @@ from ..model.notes import (
     LAYER_SLIDE,
     LaneNote,
     MouseClick,
-    MouseNote,
     MouseRegion,
     MouseSlide,
     Note,
@@ -55,6 +54,7 @@ from .geometry import (
     hit_signature,
     mouse_pane_rect,
     note_in_time,
+    region_edges,
     sample_beats,
 )
 from .scene import Scene
@@ -746,14 +746,7 @@ class Renderer:
         view: ViewState,
         samples: int = REGION_SAMPLES,
     ) -> List[Tuple[float, float]]:
-        group = self._group(chart, note)
-        left_edge: List[Tuple[float, float]] = []
-        right_edge: List[Tuple[float, float]] = []
-        samples = max(2, int(samples))
-        for beat, progress in sample_beats(note.beat_start, note.beat_end, group, samples):
-            y = view.note_y(beat, group)
-            left_edge.append((view.norm_to_x(note.left.value_at(progress)), y))
-            right_edge.append((view.norm_to_x(note.right.value_at(progress)), y))
+        left_edge, right_edge = region_edges(note, chart, view, max(2, int(samples)))
         return left_edge + list(reversed(right_edge))
 
     def _region_sample_count(

@@ -14,9 +14,11 @@ from __future__ import annotations
 
 import math
 from dataclasses import dataclass
-from typing import Dict, Iterable, Iterator, List, Sequence, Tuple
+from typing import Dict, Iterable, List, Sequence, Tuple
 
-INF = float("inf")
+from . import segments as seglib
+
+INF = seglib.INF
 
 
 @dataclass
@@ -57,30 +59,12 @@ class TimingMap:
 
     # ------------------------------------------------------------------ 规整
     def set_segments(self, segments: Iterable[BpmSegment]) -> None:
-        cleaned: List[BpmSegment] = []
-        for seg in segments:
-            cleaned.append(
-                BpmSegment(
-                    start_beat=max(0.0, float(seg.start_beat)),
-                    bpm=max(1e-3, float(seg.bpm)),
-                    # 每小节 0 拍 = 关闭小节线（允许 0；负数按 0 处理）
-                    beats_per_bar=max(0, int(seg.beats_per_bar)),
-                )
-            )
-        cleaned.sort(key=lambda s: s.start_beat)
-        # 去重：同一拍起点只保留最后写入的一条
-        unique: List[BpmSegment] = []
-        for seg in cleaned:
-            if unique and abs(unique[-1].start_beat - seg.start_beat) < 1e-9:
-                unique[-1] = seg
-            else:
-                unique.append(seg)
-        if not unique:
-            unique = [BpmSegment()]
-        # 第 0 拍必须是第一项（从第 0 拍开始的一项不允许删除）
-        if unique[0].start_beat > 1e-9:
-            unique[0] = BpmSegment(0.0, unique[0].bpm, unique[0].beats_per_bar)
-        self.segments = unique
+        self.segments = seglib.normalize_segments(
+            segments,
+            make=_clean_segment,
+            default=BpmSegment,
+            to_zero=_to_zero,
+        )
 
     def copy(self) -> "TimingMap":
         return TimingMap([BpmSegment(s.start_beat, s.bpm, s.beats_per_bar) for s in self.segments],
@@ -98,30 +82,10 @@ class TimingMap:
         return 60.0 / self.bpm_at(beat)
 
     def segment_at(self, beat: float) -> BpmSegment:
-        segs = self.segments
-        if beat < segs[0].start_beat:
-            return segs[0]
-        current = segs[0]
-        for seg in segs:
-            if seg.start_beat <= beat + 1e-12:
-                current = seg
-            else:
-                break
-        return current
-
-    def segment_index_at(self, beat: float) -> int:
-        idx = 0
-        for i, seg in enumerate(self.segments):
-            if seg.start_beat <= beat + 1e-12:
-                idx = i
-            else:
-                break
-        return idx
+        return seglib.segment_at(self.segments, beat)
 
     def segment_end(self, index: int) -> float:
-        if 0 <= index < len(self.segments) - 1:
-            return self.segments[index + 1].start_beat
-        return INF
+        return seglib.segment_end(self.segments, index)
 
     # ------------------------------------------------------------------ 换算
     def beat_to_seconds(self, beat: float) -> float:
@@ -215,14 +179,6 @@ class TimingMap:
         return unique
 
     # ------------------------------------------------------- 小节对齐（BPM 变更点）
-    @staticmethod
-    def _segment_covering(segments: Sequence[BpmSegment], beat: float) -> BpmSegment:
-        seg = segments[0]
-        for candidate in segments:
-            if candidate.start_beat <= float(beat) + 1e-12:
-                seg = candidate
-        return seg
-
     def has_bars_at(self, beat: float) -> bool:
         """该拍所在段落是否画**段内**小节线（``beats_per_bar == 0`` 表示关闭）。
 
@@ -296,7 +252,18 @@ class TimingMap:
         segs = [BpmSegment.from_dict(d) for d in data.get("bpm_segments", [])]  # type: ignore[arg-type]
         return cls(segs or [BpmSegment()], float(data.get("offset_ms", 0.0)))
 
-    # ------------------------------------------------------------------ 工具
-    def iter_bar_starts(self, start_beat: float, end_beat: float) -> Iterator[float]:
-        for b in self.bar_lines(start_beat, end_beat):
-            yield b
+
+def _clean_segment(seg: BpmSegment) -> BpmSegment:
+    return BpmSegment(
+        start_beat=max(0.0, float(seg.start_beat)),
+        bpm=max(1e-3, float(seg.bpm)),
+        # 每小节 0 拍 = 关闭小节线（允许 0；负数按 0 处理）
+        beats_per_bar=max(0, int(seg.beats_per_bar)),
+    )
+
+
+def _to_zero(seg: BpmSegment) -> BpmSegment:
+    """第 0 拍必须是第一项（从第 0 拍开始的一项不允许删除）。"""
+    if seg.start_beat <= 1e-9:
+        return seg
+    return BpmSegment(0.0, seg.bpm, seg.beats_per_bar)

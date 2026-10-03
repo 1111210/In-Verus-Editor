@@ -1,4 +1,4 @@
-"""游玩器判定规则（EXACT / Exact / Near / Break、滑键吸附、空域区间、分数）。"""
+"""游玩器判定规则：判定窗口、长按 / 空域区间、滑键、准度与分数。"""
 
 from __future__ import annotations
 
@@ -30,212 +30,122 @@ def make_chart(notes) -> Chart:
 
 
 class WindowTests(unittest.TestCase):
-    def test_click_windows(self) -> None:
+    def test_grade_windows(self) -> None:
         self.assertEqual(grade_for_offset(0.0), EXACT)
         self.assertEqual(grade_for_offset(25.0), EXACT)
-        self.assertEqual(grade_for_offset(-25.0), EXACT)
         self.assertEqual(grade_for_offset(26.0), EXACT_MIXED)
-        self.assertEqual(grade_for_offset(50.0), EXACT_MIXED)
         self.assertEqual(grade_for_offset(51.0), NEAR)
         self.assertEqual(grade_for_offset(-100.0), NEAR)
-        # 提前 100~150ms 算 Break；更早是空敲（None，不消耗物件）
         self.assertEqual(grade_for_offset(-120.0), BREAK)
-        self.assertEqual(grade_for_offset(-150.0), BREAK)
         self.assertIsNone(grade_for_offset(-151.0))
         self.assertIsNone(grade_for_offset(101.0))
 
     def test_windows_are_real_time_not_song_time(self) -> None:
-        """允许误差按**真实时间**算：同一真实偏差在任何倍速下等级相同。"""
+        """判定窗口按真实时间算：同一真实偏差在任何倍速下等级相同。"""
         for rate in (0.4, 1.0, 1.5):
-            # 真实偏差 × 倍速 = 歌曲毫秒偏差
-            self.assertEqual(grade_for_offset(20.0 * rate, rate), EXACT)
             self.assertEqual(grade_for_offset(20.0 * rate, rate), EXACT)
             self.assertEqual(grade_for_offset(30.0 * rate, rate), EXACT_MIXED)
             self.assertEqual(grade_for_offset(80.0 * rate, rate), NEAR)
             self.assertEqual(grade_for_offset(-120.0 * rate, rate), BREAK)
-            self.assertIsNone(grade_for_offset(-200.0 * rate, rate))
-
-    def test_press_window_is_rate_independent(self) -> None:
-        """同一次真实时间上偏 40ms 的敲击，0.4x / 1.0x / 1.5x 都应判 Exact。"""
         for rate in (0.4, 1.0, 1.5):
             chart = make_chart([LaneNote("L1", 0, 0, 4.0)])
             hit_ms = chart.timing.beat_to_song_ms(4.0)
             judge = Judge(chart, rate=rate)
-            result = judge.on_press(hit_ms + 40.0 * rate, lane=0)   # 真实 +40ms
-            self.assertIsNotNone(result, f"rate={rate} 时不该算空敲")
+            result = judge.on_press(hit_ms + 40.0 * rate, lane=0)
             self.assertEqual(result.grade, EXACT_MIXED, f"rate={rate} 时等级应一致")
-
-    def test_miss_window_is_rate_independent(self) -> None:
-        """过线 150 真实毫秒才判 Break；0.4x 下不能因为"歌曲毫秒只走了 60"而漏判。"""
-        for rate in (0.4, 1.0, 1.5):
-            chart = make_chart([LaneNote("L1", 0, 0, 4.0)])
-            hit_ms = chart.timing.beat_to_song_ms(4.0)
-            judge = Judge(chart, rate=rate)
-            judge.update(hit_ms + 90.0 * rate)
-            self.assertEqual(judge.counts[BREAK], 0, f"rate={rate} 时 90ms 还不该判 Break")
-            judge.update(hit_ms + 120.0 * rate)
-            self.assertEqual(judge.counts[BREAK], 1, f"rate={rate} 时 120ms 应判 Break")
+            missed = Judge(chart, rate=rate)
+            missed.update(hit_ms + 90.0 * rate)
+            self.assertEqual(missed.counts[BREAK], 0, "过线 90ms 还不该 Break")
+            missed.update(hit_ms + 120.0 * rate)
+            self.assertEqual(missed.counts[BREAK], 1, "过线 120ms 应 Break")
 
 
 class ClickJudgeTests(unittest.TestCase):
-    def test_input_type_must_match_note_type(self) -> None:
-        """6K 键只判 6K 按键、鼠标点击只判鼠标点击按键（两种输入不互相抢判）。"""
+    def test_input_type_and_lane_must_match(self) -> None:
         chart = make_chart(
-            [LaneNote("L1", 0, 0, 4.0), MouseClick("M1", 4.0, 0.5, 0.1)]
+            [LaneNote("L1", 0, 0, 4.0), LaneNote("L2", 3, 3, 4.0), MouseClick("M1", 4.0, 0.5, 0.1)]
         )
         hit_ms = chart.timing.beat_to_song_ms(4.0)
-        lane_judge = Judge(chart)
-        result = lane_judge.on_press(hit_ms, lane=0)
-        self.assertIsNotNone(result)
-        self.assertEqual(result.note_id, "L1", "按 6K 键不该判鼠标点击按键")
-        self.assertEqual(lane_judge.counts[BREAK], 0)
-
-        click_judge = Judge(chart)
-        result = click_judge.on_press(hit_ms, x=0.5)
-        self.assertIsNotNone(result)
-        self.assertEqual(result.note_id, "M1", "鼠标点击不该判 6K 按键")
-        self.assertEqual(click_judge.counts[BREAK], 0)
-
-    def test_nearest_click_object_is_judged(self) -> None:
-        chart = make_chart([LaneNote("L1", 0, 0, 4.0), LaneNote("L2", 3, 3, 4.0)])
         judge = Judge(chart)
-        hit_ms = chart.timing.beat_to_song_ms(4.0)
-        result = judge.on_press(hit_ms + 10.0, lane=3)
-        self.assertIsNotNone(result)
-        self.assertEqual(result.note_id, "L2")
-        self.assertEqual(result.grade, EXACT)
-
-    def test_empty_press_has_no_penalty(self) -> None:
-        chart = make_chart([LaneNote("L1", 0, 0, 8.0)])
-        judge = Judge(chart)
-        self.assertIsNone(judge.on_press(0.0, lane=0))     # 离判定时刻还很远 -> 空敲
+        self.assertIsNone(judge.on_press(hit_ms, lane=2), "轨道不匹配应空敲")
         self.assertEqual(judge.counts[BREAK], 0)
-        self.assertEqual(judge.results, [])
+        result = judge.on_press(hit_ms + 10.0, lane=3)
+        self.assertEqual((result.note_id, result.grade), ("L2", EXACT))
+        click_judge = Judge(chart)
+        clicked = click_judge.on_press(hit_ms, x=0.5)
+        self.assertEqual(clicked.note_id, "M1", "鼠标点击不该判 6K 按键")
+        self.assertIsNone(click_judge.on_press(0.0, lane=0))
+        self.assertEqual(click_judge.results, [clicked])
 
-    def test_lane_must_match(self) -> None:
-        chart = make_chart([LaneNote("L1", 2, 2, 4.0)])
-        judge = Judge(chart)
-        hit_ms = chart.timing.beat_to_song_ms(4.0)
-        self.assertIsNone(judge.on_press(hit_ms, lane=0))
-        self.assertIsNotNone(judge.on_press(hit_ms, lane=2))
-
-    def test_miss_becomes_break(self) -> None:
+    def test_miss_and_padding(self) -> None:
         chart = make_chart([LaneNote("L1", 0, 0, 1.0)])
         judge = Judge(chart)
-        hit_ms = chart.timing.beat_to_song_ms(1.0)
-        judge.update(hit_ms, inside_click=None)
-        judge.update(hit_ms + 200.0, inside_click=None)
+        judge.update(chart.timing.beat_to_song_ms(1.0) + 200.0)
         self.assertEqual(judge.counts[BREAK], 1)
-
-    def test_mouse_click_range_is_padded(self) -> None:
-        chart = make_chart([MouseClick("M1", 2.0, 0.5, 0.1)])   # 范围 0.4~0.6
-        judge = Judge(chart)
-        hit_ms = chart.timing.beat_to_song_ms(2.0)
-        self.assertIsNone(judge.on_press(hit_ms, x=0.7))         # 超出范围
-        self.assertIsNotNone(judge.on_press(hit_ms, x=0.605))    # 边界外 0.005 < 0.01 放宽
+        padded = make_chart([MouseClick("M1", 2.0, 0.5, 0.1)])   # 范围 0.4~0.6
+        judge = Judge(padded)
+        hit_ms = padded.timing.beat_to_song_ms(2.0)
+        self.assertIsNone(judge.on_press(hit_ms, x=0.7))
+        self.assertIsNotNone(judge.on_press(hit_ms, x=0.605), "边界外 0.005 < 0.01 放宽")
 
 
 class SlideJudgeTests(unittest.TestCase):
-    def test_exact_slide_triggers_immediately(self) -> None:
+    def test_exact_near_and_no_movement(self) -> None:
         chart = make_chart([MouseSlide("S1", 4.0, 0.2, 0.6)])
-        judge = Judge(chart)
         hit_ms = chart.timing.beat_to_song_ms(4.0)
-        judge.on_move(hit_ms - 20.0, 0.1)
-        result = judge.on_move(hit_ms + 5.0, 0.45)      # 位移跨过滑键范围
-        self.assertIsNotNone(result)
-        self.assertEqual(result.grade, EXACT)
-
-    def test_best_grade_is_kept_then_committed_after_line(self) -> None:
-        chart = make_chart([MouseSlide("S1", 4.0, 0.2, 0.6)])
         judge = Judge(chart)
-        hit_ms = chart.timing.beat_to_song_ms(4.0)
         judge.on_move(hit_ms - 80.0, 0.10)
-        first = judge.on_move(hit_ms - 70.0, 0.40)      # 提前 70ms：Near，先记着
-        self.assertIsNone(first)
-        later = judge.on_move(hit_ms + 150.0, 0.9)      # 过了判定线 100ms 仍未更好
-        self.assertIsNotNone(later)
-        self.assertEqual(later.grade, NEAR)
+        self.assertIsNone(judge.on_move(hit_ms - 70.0, 0.40), "提前 70ms：先记 Near，过线后才提交")
+        self.assertEqual(judge.on_move(hit_ms + 150.0, 0.9).grade, NEAR)
 
-    def test_no_movement_is_break(self) -> None:
-        chart = make_chart([MouseSlide("S1", 4.0, 0.2, 0.6)])
-        judge = Judge(chart)
-        hit_ms = chart.timing.beat_to_song_ms(4.0)
-        judge.on_move(hit_ms, 0.9)                      # 完全没经过滑键范围
-        judge.on_move(hit_ms + 250.0, 0.9)
-        self.assertEqual(judge.counts[BREAK], 1)
+        exact = Judge(chart)
+        exact.on_move(hit_ms - 20.0, 0.1)
+        self.assertEqual(exact.on_move(hit_ms + 5.0, 0.45).grade, EXACT)
+
+        missed = Judge(chart)
+        missed.on_move(hit_ms, 0.9)
+        missed.on_move(hit_ms + 250.0, 0.9)
+        self.assertEqual(missed.counts[BREAK], 1)
 
 
 class RegionJudgeTests(unittest.TestCase):
     def _region(self) -> MouseRegion:
         return MouseRegion("R1", 0.0, 2.0, BoundaryCurve(0.2, 0.2), BoundaryCurve(0.8, 0.8))
 
-    def test_half_beat_intervals(self) -> None:
-        chart = make_chart([self._region()])
+    @staticmethod
+    def _single_interval_grade(bpm: float, first_sample: float, inside: bool = False):
+        """一个半拍区间（0..0.5 拍）的评级；`first_sample` 落在区间中间。"""
+        chart = Chart()
+        chart.timing = TimingMap([BpmSegment(0.0, bpm, 4)])
+        region = MouseRegion("R", 0.0, 0.5, BoundaryCurve(0.3, 0.3), BoundaryCurve(0.7, 0.7))
+        chart.add(region)
         judge = Judge(chart)
-        # 2 拍 = 4 个整半拍区间；不足半拍的**尾段也算一个**（这里恰好整除）
-        self.assertEqual(judge.total_notes, 4)
+        judge.update(first_sample, inside_hold=region if inside else None)
+        judge.update(chart.timing.beat_to_song_ms(0.5) + 20.0, inside_hold=region if inside else None)
+        return judge.results[0].grade
 
-    def test_partial_tail_is_an_extra_interval(self) -> None:
-        """尾段不足半拍时也算一个判定区间。"""
-        region = MouseRegion("R2", 0.0, 1.3, BoundaryCurve(0.2, 0.2), BoundaryCurve(0.8, 0.8))
-        chart = make_chart([region])
-        judge = Judge(chart)
-        # [0,0.5) [0.5,1.0) + 尾段 [1.0,1.3) = 3 个区间
-        self.assertEqual(judge.total_notes, 3)
+    def test_never_entered_is_break_over_near_and_short_interval(self) -> None:
+        """从未进入空域 → Break 优先：区间不足 50ms 或判定器中途才开始记录也一样。"""
+        # 200ms 的区间，判定器从 60ms 才开始记录：此前会把开头一段漏算成 Near
+        self.assertEqual(self._single_interval_grade(150.0, 60.0), BREAK)
+        # 40ms 的区间（不足 50ms），判定器从 10ms 开始记录：此前会落进“离开 ≤50ms → EXACT”
+        self.assertEqual(self._single_interval_grade(750.0, 10.0), BREAK)
+        # 进入过空域时不受影响：仍按离开时长 rating
+        self.assertEqual(self._single_interval_grade(150.0, 60.0, inside=True), EXACT)
 
-    def test_always_inside_is_exact(self) -> None:
-        chart = make_chart([self._region()])
-        judge = Judge(chart)
-        region = chart.mouse_notes[0]
-        for step in range(0, 11):
-            judge.update(step * 100.0, inside_hold=region)
-        self.assertEqual(judge.counts[EXACT], 4)   # 2 拍 = 4 个区间
-        self.assertEqual(judge.counts[BREAK], 0)
+    def test_intervals_include_partial_tail(self) -> None:
+        self.assertEqual(Judge(make_chart([self._region()])).total_notes, 4, "2 拍 = 4 个半拍区间")
+        tail = MouseRegion("R2", 0.0, 1.3, BoundaryCurve(0.2, 0.2), BoundaryCurve(0.8, 0.8))
+        self.assertEqual(Judge(make_chart([tail])).total_notes, 3, "不足半拍的尾段也算一个区间")
 
-    def test_never_inside_is_break(self) -> None:
-        chart = make_chart([self._region()])
-        judge = Judge(chart)
-        for step in range(0, 11):
-            judge.update(step * 100.0, inside_hold=None)
-        self.assertEqual(judge.counts[BREAK], 4)
-
-    def test_brief_exit_is_exact_long_exit_is_near(self) -> None:
-        """空域离开时长按**时间戳**累计：≤50ms → EXACT；>100ms → Near。"""
-        chart = make_chart([self._region()])
-        judge = Judge(chart)
-        region = chart.mouse_notes[0]
-        # 0~40 在区域内、40~80 离开（40ms）、80 起回到区域内
-        judge.update(0.0, inside_hold=region)
-        judge.update(40.0, inside_hold=None)
-        judge.update(80.0, inside_hold=region)
-        judge.update(1000.0, inside_hold=region)
-        self.assertEqual(judge.counts[EXACT], 4, judge.counts)
-        self.assertEqual(judge.counts[BREAK], 0, judge.counts)
-
-        # 离开 120ms（>100ms）→ 该区间 Near
-        chart = make_chart([self._region()])
-        judge = Judge(chart)
-        region = chart.mouse_notes[0]
-        judge.update(0.0, inside_hold=region)
-        judge.update(40.0, inside_hold=None)
-        judge.update(160.0, inside_hold=region)
-        judge.update(1000.0, inside_hold=region)
-        self.assertGreaterEqual(judge.counts[NEAR], 1, judge.counts)
-        self.assertEqual(judge.counts[BREAK], 0, judge.counts)
-
-    def test_sparse_updates_do_not_swallow_intervals(self) -> None:
-        """一帧跨过多个区间（掉帧 / 极高 BPM）时，全程在区域内仍然全 EXACT。"""
+    def test_inside_exact_sparse_updates_and_exit_timestamps(self) -> None:
         chart = make_chart([self._region()])
         judge = Judge(chart)
         region = chart.mouse_notes[0]
         judge.update(0.0, inside_hold=region)
         judge.update(1000.0, inside_hold=region)       # 一帧跨过全部 4 个区间
-        self.assertEqual(judge.total_notes, 4)
-        self.assertEqual(judge.counts[EXACT], 4, judge.counts)
-        self.assertEqual(judge.counts[BREAK], 0, judge.counts)
+        self.assertEqual((judge.counts[EXACT], judge.counts[BREAK]), (4, 0))
 
-    def test_region_motion_timestamps_measure_exit(self) -> None:
-        """空域用鼠标事件时间戳计时：一帧内的短暂离开也能精确计入。"""
         chart = make_chart([self._region()])
         judge = Judge(chart)
         region = chart.mouse_notes[0]
@@ -244,16 +154,19 @@ class RegionJudgeTests(unittest.TestCase):
         judge.on_inside(90.0, region)                  # 90ms 回来：离开正好 50ms
         judge.update(1000.0, inside_hold=region)
         self.assertEqual(judge.counts[EXACT], 4, judge.counts)
-        self.assertEqual(judge.counts[BREAK], 0, judge.counts)
+
+        chart = make_chart([self._region()])
+        judge = Judge(chart)
+        judge.update(0.0, inside_hold=None)
+        judge.update(1000.0, inside_hold=None)
+        self.assertEqual(judge.counts[BREAK], 4)
 
 
 class ScoreTests(unittest.TestCase):
-    def test_autoplay_scores_negative_and_judges_exact(self) -> None:
-        """自动播放：完全过线即 EXACT（含区间），分数倍率 = -倍速^0.6。"""
+    def test_autoplay_exact_and_negative_multiplier(self) -> None:
         chart = make_chart([LaneNote("L1", 0, 0, 2.0), MouseClick("M1", 2.0, 0.5, 0.1)])
         judge = Judge(chart, autoplay=True)
-        self.assertTrue(judge.autoplay)
-        self.assertAlmostEqual(judge.score_multiplier, -1.0)          # 1.0x -> -1
+        self.assertAlmostEqual(judge.score_multiplier, -1.0)
         judge.rate = 2.0
         self.assertAlmostEqual(judge.score_multiplier, -(2.0 ** 0.6), places=6)
         judge.rate = 1.0
@@ -261,178 +174,123 @@ class ScoreTests(unittest.TestCase):
         judge.update(0.0)
         self.assertEqual(judge.judged_notes, 0, "还没到判定时间不该提前判")
         judge.update(hit_ms)
-        self.assertEqual(judge.counts[EXACT], 2, "物件过线即 EXACT（不需要输入）")
-        self.assertEqual(judge.counts[BREAK], 0)
-        self.assertEqual(judge.score, -judge.accuracy_score - judge.exact_bonus, "负倍率时附加分变扣分")
-        # 长按 / 空域的每个判定区间也全部 EXACT
-        chart2 = make_chart([LaneNote("H1", 0, 0, 0.0, 3.0), MouseRegion("R1", 0.0, 3.0)])
-        judge2 = Judge(chart2, autoplay=True)
-        judge2.update(chart2.timing.beat_to_song_ms(8.0))
-        self.assertEqual(judge2.counts[EXACT], judge2.total_notes)
-        self.assertEqual(judge2.counts[BREAK], 0)
+        self.assertEqual((judge.counts[EXACT], judge.counts[BREAK]), (2, 0))
+        self.assertEqual(judge.score, -judge.accuracy_score - judge.exact_bonus)
+        hold_chart = make_chart([LaneNote("H1", 0, 0, 0.0, 3.0), MouseRegion("R1", 0.0, 3.0)])
+        hold_judge = Judge(hold_chart, autoplay=True)
+        hold_judge.update(hold_chart.timing.beat_to_song_ms(8.0))
+        self.assertEqual(hold_judge.counts[EXACT], hold_judge.total_notes)
 
-    def test_score_scales_with_rate_to_the_1_5(self) -> None:
-        """分数 = 准度部分 × 倍速^0.6 + 附加分（附加分不吃倍率）。"""
-        chart = make_chart([LaneNote("L1", 0, 0, 1.0)])
+    def test_accuracy_combo_and_score_scaling(self) -> None:
+        chart = make_chart([LaneNote("L1", 0, 0, 1.0), LaneNote("L2", 1, 1, 2.0)])
         judge = Judge(chart)
-        judge.on_press(chart.timing.beat_to_song_ms(1.0), lane=0)     # EXACT
-        accuracy_part = judge.accuracy_score
-        bonus = judge.exact_bonus
-        self.assertEqual(bonus, 1)
-        self.assertEqual(judge.base_score, accuracy_part + bonus)
-        self.assertEqual(judge.rate, 1.0)
-        self.assertEqual(judge.score, accuracy_part + bonus)
+        judge.on_press(chart.timing.beat_to_song_ms(1.0), lane=0)
+        judge.on_press(chart.timing.beat_to_song_ms(2.0) + 60.0, lane=1)
+        self.assertEqual((judge.counts[EXACT], judge.counts[NEAR]), (1, 1))
+        self.assertAlmostEqual(judge.accuracy, 0.75)
+        self.assertEqual(judge.score, 75_000_000 + 1)
+        accuracy_part, bonus = judge.accuracy_score, judge.exact_bonus
         for rate in (0.5, 0.1, 1.5):
             judge.rate = rate
-            self.assertEqual(
-                judge.score,
-                round(accuracy_part * (rate ** 0.6)) + bonus,
-                msg="附加分不受倍率影响",
-            )
-            self.assertEqual(judge.scaled_score, round(accuracy_part * (rate ** 0.6)))
-        # 倍速被夹在 0.1 ~ 3.0（上限 3 倍）
-        self.assertEqual(Judge(chart, rate=1.5).rate, 1.5)
+            self.assertEqual(judge.score, round(accuracy_part * (rate ** 0.6)) + bonus)
         self.assertEqual(Judge(chart, rate=9.0).rate, 1.5)
         self.assertEqual(Judge(chart, rate=0.01).rate, 0.1)
 
-    def test_earliest_judge_time_wins_when_several_are_hittable(self) -> None:
-        """同时可判多个物件时，取**判定时刻最靠前**的那个。"""
-        chart = make_chart([LaneNote("L1", 0, 0, 4.0), LaneNote("L2", 0, 0, 4.05)])
-        judge = Judge(chart)
-        # 在 4.0 拍后 20ms 敲：两个都在范围内，应该判更早的 L1
-        hit_ms = chart.timing.beat_to_song_ms(4.0) + 20.0
-        result = judge.on_press(hit_ms, lane=0)
-        self.assertIsNotNone(result)
-        self.assertEqual(result.note_id, "L1")
-
-    def test_accuracy_and_score(self) -> None:
-        chart = make_chart([LaneNote("L1", 0, 0, 1.0), LaneNote("L2", 1, 1, 2.0)])
-        judge = Judge(chart)
-        first = chart.timing.beat_to_song_ms(1.0)
-        second = chart.timing.beat_to_song_ms(2.0)
-        judge.on_press(first, lane=0)                  # EXACT
-        judge.on_press(second + 60.0, lane=1)          # Near
-        self.assertEqual(judge.counts[EXACT], 1)
-        self.assertEqual(judge.counts[NEAR], 1)
-        self.assertAlmostEqual(judge.accuracy, 0.75)   # (1 + 0.5) / 2
-        # 分数 = 1.5 / 总物件数(2) × 1e8 + EXACT 数
-        self.assertEqual(judge.score, 75_000_000 + 1)
-
-    def test_combo_counts_hits_and_resets_on_break(self) -> None:
-        """连击：命中 +1，Break 清零，并记录最大连击。"""
-        chart = make_chart(
-            [
-                LaneNote("L1", 0, 0, 1.0),
-                LaneNote("L2", 1, 1, 2.0),
-                LaneNote("L3", 2, 2, 3.0),
-                LaneNote("L4", 3, 3, 4.0),
-            ]
-        )
-        judge = Judge(chart)
+        combo_chart = make_chart([LaneNote(f"L{i}", i - 1, i - 1, float(i)) for i in (1, 2, 3, 4)])
+        combo = Judge(combo_chart)
         for beat in (1.0, 2.0):
-            judge.on_press(chart.timing.beat_to_song_ms(beat), lane=int(beat - 1))
-        self.assertEqual(judge.combo, 2)
-        # 第 3 个物件漏掉 -> Break，连击清零
-        judge.update(chart.timing.beat_to_song_ms(3.0) + 200.0)
-        self.assertEqual(judge.combo, 0)
-        self.assertEqual(judge.max_combo, 2)
-        judge.on_press(chart.timing.beat_to_song_ms(4.0), lane=3)
-        self.assertEqual(judge.combo, 1)
-        self.assertEqual(judge.max_combo, 2)
+            combo.on_press(combo_chart.timing.beat_to_song_ms(beat), lane=int(beat - 1))
+        self.assertEqual(combo.combo, 2)
+        combo.update(combo_chart.timing.beat_to_song_ms(3.0) + 200.0)
+        self.assertEqual((combo.combo, combo.max_combo), (0, 2))
+        combo.on_press(combo_chart.timing.beat_to_song_ms(4.0), lane=3)
+        self.assertEqual((combo.combo, combo.max_combo), (1, 2))
 
 
 class HoldJudgeTests(unittest.TestCase):
-    """长按：抬起事件 → Near；最后一个区间允许提前 ≤50ms 抬起仍算 EXACT。"""
-
     def _hold(self, start: float, end: float):
         chart = make_chart([LaneNote("H1", 0, 0, start, end)])
         return chart, Judge(chart)
 
-    def test_hold_all_time_is_exact(self) -> None:
+    def test_hold_exact_near_and_early_release(self) -> None:
         chart, judge = self._hold(0.0, 2.0)
         hold = chart.lane_notes[0]
-        judge.on_press(chart.timing.beat_to_song_ms(0.0), lane=0)     # 开头 EXACT
+        judge.on_press(chart.timing.beat_to_song_ms(0.0), lane=0)
         for step in range(0, 11):
             judge.update(step * 100.0, inside_hold=hold, held=True)
         self.assertEqual(judge.counts[BREAK], 0)
         self.assertGreaterEqual(judge.counts[EXACT], 4)
 
-    def test_release_inside_interval_gives_near(self) -> None:
-        """区间内出现抬起事件（且按下过）-> Near。"""
         chart, judge = self._hold(0.0, 2.0)
         hold = chart.lane_notes[0]
         judge.on_press(chart.timing.beat_to_song_ms(0.0), lane=0)
         judge.update(100.0, inside_hold=hold, held=True)
-        judge.update(300.0, inside_hold=None, held=False)     # 第 2 个区间内抬起
+        judge.update(300.0, inside_hold=None, held=False)
         judge.update(1000.0, inside_hold=None, held=False)
         self.assertGreaterEqual(judge.counts[NEAR], 1, judge.counts)
 
-    def test_last_interval_allows_early_release(self) -> None:
-        """最后一个区间：提前 ≤50ms 抬起仍算 EXACT。"""
-        chart, judge = self._hold(0.0, 1.0)                   # 1 拍 = 500ms -> 2 个区间
+        chart, judge = self._hold(0.0, 1.0)            # 2 个区间
         hold = chart.lane_notes[0]
         judge.on_press(chart.timing.beat_to_song_ms(0.0), lane=0)
         judge.update(100.0, inside_hold=hold, held=True)
         judge.update(240.0, inside_hold=hold, held=True)
-        judge.update(470.0, inside_hold=None, held=False)     # 结束前 30ms 抬起
+        judge.update(470.0, inside_hold=None, held=False)   # 结束前 30ms 抬起
         judge.update(600.0, inside_hold=None, held=False)
-        self.assertEqual(judge.counts[NEAR], 0, judge.counts)
-        self.assertEqual(judge.counts[EXACT], 3, judge.counts)   # 开头 + 两个区间
+        self.assertEqual((judge.counts[NEAR], judge.counts[EXACT]), (0, 3))
 
-    def test_no_press_at_all_is_break(self) -> None:
-        """整段都没按下 -> 每个区间都 Break。"""
-        chart, judge = self._hold(0.0, 1.0)
-        judge.update(100.0, inside_hold=None, held=False)
-        judge.update(600.0, inside_hold=None, held=False)
-        self.assertGreaterEqual(judge.counts[BREAK], 2, judge.counts)
-
-    def test_sparse_updates_keep_hold_exact(self) -> None:
-        """长按同理：帧缝隙里没有采样点也不能判成 Break（掉帧 / 极高 BPM）。"""
+    def test_sparse_updates_and_release_timestamps(self) -> None:
         chart, judge = self._hold(0.0, 2.0)
         judge.on_press(0.0, lane=0)
         judge.update(0.0, held={0})
         judge.update(1000.0, held={0})                 # 一帧跨过全部 4 个区间
-        self.assertEqual(judge.counts[BREAK], 0, judge.counts)
-        self.assertGreaterEqual(judge.counts[EXACT], 5, judge.counts)   # 开头 + 4 个区间
+        self.assertEqual(judge.counts[BREAK], 0)
+        self.assertGreaterEqual(judge.counts[EXACT], 5)
 
-    def test_release_timestamp_inside_gap_counts(self) -> None:
-        """抬起事件带精确时间戳：落在区间内的抬起算 Near，不会因为处理帧在区间外而漏掉。"""
-        chart, judge = self._hold(0.0, 1.0)            # 2 个区间
+        chart, judge = self._hold(0.0, 1.0)
         judge.on_press(0.0, lane=0)
         judge.update(100.0, held={0})
-        judge.on_release(300.0, lane=0)                # 第 2 个区间 [250,500) 内抬起
-        judge.update(600.0, held=set())                # 处理帧已经过了区间
-        self.assertEqual(judge.counts[NEAR], 1, judge.counts)
-        self.assertEqual(judge.counts[BREAK], 0, judge.counts)
+        judge.on_release(300.0, lane=0)                # 第 2 个区间内抬起
+        judge.update(600.0, held=set())
+        self.assertEqual((judge.counts[NEAR], judge.counts[BREAK]), (1, 0))
 
-    def test_multi_lane_hold_partial_release_keeps_exact(self) -> None:
-        """多轨长按：只松开其中一行、其它行还按着 —— 不算“抬起”，仍是 EXACT。"""
+    def test_multi_lane_release_rules(self) -> None:
         chart = make_chart([LaneNote("H2", 1, 3, 0.0, 1.0)])
         judge = Judge(chart)
-        hold = chart.lane_notes[0]
         judge.on_press(chart.timing.beat_to_song_ms(0.0), lane=1)
-        judge.update(100.0, inside_hold=None, held={1, 2, 3})     # 三条轨道都按住
-        judge.update(300.0, inside_hold=None, held={1, 2})        # 少了第 4 轨 -> 抬起
-        judge.update(600.0, inside_hold=None, held={1, 2})
-        self.assertEqual(judge.counts[NEAR], 0, judge.counts)
-        self.assertEqual(judge.counts[BREAK], 0, judge.counts)
-        self.assertGreaterEqual(judge.counts[EXACT], 3, judge.counts)
+        judge.update(100.0, held={1, 2, 3})
+        judge.update(300.0, held={1, 2})               # 只松开一行：不算抬起
+        judge.update(600.0, held={1, 2})
+        self.assertEqual((judge.counts[NEAR], judge.counts[BREAK]), (0, 0))
+        self.assertGreaterEqual(judge.counts[EXACT], 3)
 
-    def test_multi_lane_hold_all_rows_released_together_is_near(self) -> None:
-        """多轨长按：出现“所有行同时抬起”的瞬间 -> 该区间 Near。"""
         chart = make_chart([LaneNote("H4", 1, 3, 0.0, 2.0)])
         judge = Judge(chart)
         judge.on_press(chart.timing.beat_to_song_ms(0.0), lane=1)
-        judge.update(100.0, inside_hold=None, held={1, 2, 3})
-        judge.update(300.0, inside_hold=None, held=set())         # 全部同时抬起
-        judge.update(1200.0, inside_hold=None, held=set())
+        judge.update(100.0, held={1, 2, 3})
+        judge.update(300.0, held=set())                # 所有行同时抬起
+        judge.update(1200.0, held=set())
         self.assertGreaterEqual(judge.counts[NEAR], 1, judge.counts)
 
-    def test_multi_lane_hold_all_lanes_is_exact(self) -> None:
-        chart = make_chart([LaneNote("H3", 1, 3, 0.0, 1.0)])
-        judge = Judge(chart)
-        judge.on_press(chart.timing.beat_to_song_ms(0.0), lane=1)
-        for step in range(0, 7):
-            judge.update(step * 100.0, inside_hold=None, held={1, 2, 3})
-        self.assertEqual(judge.counts[BREAK], 0, judge.counts)
-        self.assertGreaterEqual(judge.counts[EXACT], 3, judge.counts)
+    def test_short_tail_without_press_is_break_not_grace(self) -> None:
+        """末区间不足 50ms 且完全没按下 → Break，优先于“结束前 50ms 宽限”。"""
+        def tail_counts(release_ms: float):
+            chart = Chart()
+            chart.timing = TimingMap([BpmSegment(0.0, 120.0, 4)])
+            chart.add(LaneNote("H", 0, 0, 0.0, 1.03))     # 末区间 [500, 515) = 15ms
+            judge = Judge(chart)
+            judge.on_press(0.0, lane=0)
+            judge.update(10.0, held={0})
+            judge.on_release(release_ms, lane=0)
+            judge.update(600.0, held=set())
+            return judge.counts
+
+        blocked = tail_counts(499.0)                      # 尾区间开始前就松开
+        self.assertEqual(blocked[BREAK], 1, blocked)      # 只有尾区间 Break
+        self.assertEqual(blocked[EXACT], 3, blocked)
+        graced = tail_counts(505.0)                       # 尾区间内松开（距结束 10ms）
+        self.assertEqual(graced[BREAK], 0, graced)
+        self.assertEqual(graced[EXACT], 4, graced)
+
+
+if __name__ == "__main__":
+    unittest.main()

@@ -26,11 +26,6 @@ from typing import List, Optional, Tuple
 
 from . import config
 
-
-def _fmt_rate(rate: float) -> str:
-    return config.format_rate(rate)
-
-
 _PYGAME = None
 _PYGAME_ERROR: Optional[str] = None
 _MIXER_ERROR: Optional[str] = None
@@ -141,16 +136,22 @@ def audio_silent_reason() -> str:
     return "" if audio_backend_state() == "ok" else _silent_reason()
 
 
-def write_startup_log() -> str:
+_STARTUP_LOG_MAX_BYTES = 256 * 1024
+_STARTUP_LOG_KEEP_LINES = 200
+ENV_STARTUP_LOG = "VERUS_STARTUP_LOG"
+
+
+def write_startup_log(path: Optional[str] = None) -> str:
     """把音频自检写进 ``_diag/audio_startup.log``（排障用，失败也不影响运行）。
 
-    内容：时间、解释器、pygame / numpy 状态、失败原因、最终后端。
-    启动时都会写一次，用户报“没有声音”时直接看这个文件即可。
+    内容：时间、解释器、pygame / numpy 状态、失败原因、最终后端。启动时写一次，
+    用户报“没有声音”时直接看这个文件即可；超过 256 KB 时只保留最近 200 行。
+    可用环境变量 ``VERUS_STARTUP_LOG`` 改到别的路径（测试里会用到）。
     """
     import datetime
 
     root = os.path.dirname(os.path.dirname(os.path.dirname(os.path.abspath(__file__))))
-    target = os.path.join(root, "_diag", "audio_startup.log")
+    target = path or os.environ.get(ENV_STARTUP_LOG) or os.path.join(root, "_diag", "audio_startup.log")
     lines = [
         f"----- {datetime.datetime.now().isoformat(timespec='seconds')} -----",
         f"解释器：{sys.executable}",
@@ -165,12 +166,25 @@ def write_startup_log() -> str:
         "",
     ]
     try:
-        os.makedirs(os.path.dirname(target), exist_ok=True)
+        folder = os.path.dirname(target)
+        if folder:
+            os.makedirs(folder, exist_ok=True)
+        _trim_startup_log(target)
         with open(target, "a", encoding="utf-8") as handle:
             handle.write("\n".join(lines))
     except OSError:  # pragma: no cover - 只读目录等
         pass
     return target
+
+
+def _trim_startup_log(target: str) -> None:
+    """日志超过上限时只保留末尾若干行，避免长期运行无限增长。"""
+    if not os.path.isfile(target) or os.path.getsize(target) <= _STARTUP_LOG_MAX_BYTES:
+        return
+    with open(target, encoding="utf-8", errors="replace") as handle:
+        tail = handle.readlines()[-_STARTUP_LOG_KEEP_LINES:]
+    with open(target, "w", encoding="utf-8") as handle:
+        handle.writelines(tail)
 
 
 def audio_backend_available() -> bool:
@@ -490,7 +504,7 @@ class StretchedSoundBackend:  # pragma: no cover - 依赖 pygame + numpy
         """用当前的时刻表 / 音量重新合成**已排队**的窗口。
 
         正在播的窗口已经交给通道、改不了；排队窗口是马上要播的那一段，
-        重新合成它就能让改设置 / 编辑在**下一个窗口**生效，而不是等两个窗口
+        重新合成它就能让改设置 / 编辑在**下一个窗口**生效，不必等两个窗口
         （约 16 秒）。改动不频繁，一次重合成的代价可以接受。
 
         只有确认“锚点窗口还在播、排队窗口还没开始”时才替换：排队窗口一旦
@@ -695,10 +709,6 @@ class StretchedSoundBackend:  # pragma: no cover - 依赖 pygame + numpy
                 self._queued = nxt
                 self._handed_end_ms = nxt[2]
 
-    def _prune(self) -> None:
-        """保留接口：现在没有需要裁剪的队列（单槽位）。"""
-        return
-
     def stop(self) -> None:
         if self._channel is not None:
             try:
@@ -897,16 +907,16 @@ class AudioPlayer:
                 if audio_backend_state() == "ok":
                     return (
                         f"音频后端：{audio_backend_name()}"
-                        f"（未载入歌曲，播放为静音时钟）· {_fmt_rate(self.rate)}"
+                        f"（未载入歌曲，播放为静音时钟）· {config.format_rate(self.rate)}"
                     )
-                return f"音频后端：silent（{_silent_reason()}，静音）· {_fmt_rate(self.rate)}"
-            text = f"音频后端：{self.backend.name}（未载入歌曲）· {_fmt_rate(self.rate)}"
+                return f"音频后端：silent（{_silent_reason()}，静音）· {config.format_rate(self.rate)}"
+            text = f"音频后端：{self.backend.name}（未载入歌曲）· {config.format_rate(self.rate)}"
             return f"{text} · {self.last_error}" if self.last_error else text
         base = os.path.basename(self.path)
         if not self.usable_audio:
-            return f"音频后端：silent（{_silent_reason()}，静音播放）· {base} · {_fmt_rate(self.rate)}"
+            return f"音频后端：silent（{_silent_reason()}，静音播放）· {base} · {config.format_rate(self.rate)}"
         tone = "· 变调" if self.stretch_active and abs(self.rate - 1.0) > 1e-9 else ""
-        text = f"音频后端：{self.backend.name} · {base} · {_fmt_rate(self.rate)}{tone}"
+        text = f"音频后端：{self.backend.name} · {base} · {config.format_rate(self.rate)}{tone}"
         return f"{text} · {self.last_error}" if self.last_error else text
 
     # ------------------------------------------------------------------ 载入

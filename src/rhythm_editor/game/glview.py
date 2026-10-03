@@ -12,26 +12,19 @@
 
 from __future__ import annotations
 
-from typing import Optional, Tuple
+from typing import Tuple
 
 import pygame
 
 try:  # pragma: no cover - 依赖可选依赖
     from OpenGL import GL  # type: ignore
-
-    _GL_ERROR: Optional[str] = None
-except Exception as exc:  # pragma: no cover
+except Exception:  # pragma: no cover
     GL = None  # type: ignore[assignment]
-    _GL_ERROR = str(exc)
 
 
 def available() -> bool:
     """PyOpenGL 是否可用（不代表一定能创建上下文）。"""
     return GL is not None
-
-
-def gl_error() -> str:
-    return _GL_ERROR or ""
 
 
 class GLPresenter:

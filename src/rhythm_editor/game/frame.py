@@ -79,7 +79,7 @@ def note_scroll_ms(chart: Chart, note: Note, now_ms: float) -> float:
 def note_ahead(chart: Chart, note: Note, now_ms: float, span_ms: float) -> bool:
     """物件是否已进入可视范围。
 
-    按**滚动距离**判断，而不是拍差：流速可正可负，拍差排序 ≠ 位置排序。
+    按**滚动距离**判断（流速可正可负，拍差排序 ≠ 位置排序）。
     """
     return note_scroll_ms(chart, note, now_ms) <= span_ms
 
