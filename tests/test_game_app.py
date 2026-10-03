@@ -1146,6 +1146,26 @@ class PlayerAppSmokeTests(unittest.TestCase):
         self.assertAlmostEqual(by_name["slide_arrow_left"][0], left_end + height / 2.0)
         self.assertAlmostEqual(by_name["slide_arrow_left"][1], height)
 
+    def test_panda_wide_window_camera_fills_window_width(self) -> None:
+        """Panda3D / OpenGL 路径同样把游玩区横向拉伸到铺满可用宽度。"""
+        from rhythm_editor.game import render3d
+        from rhythm_editor.game import scene as game_scene
+
+        if not render3d.available():
+            self.skipTest("没有 Panda3D")
+        width, height = 1920, 1080
+        scene = render3d.Scene3D(width, height, self.app.texture_dir)
+        try:
+            field = game_scene.PlayerScene(game_scene.Camera())
+            xs = [scene.project(*corner)[0] for corner in field._field_corners()]
+        finally:
+            scene.close()
+        usable = width - 2 * game_scene.PlayerScene.FIT_MARGIN_X
+        self.assertAlmostEqual(
+            max(xs) - min(xs), usable, delta=2.0, msg="宽度应当铺满可用区域"
+        )
+        self.assertAlmostEqual((min(xs) + max(xs)) / 2.0, width / 2.0, delta=2.0)
+
     def test_region_edge_thickness_matches_panda(self) -> None:
         """同一段空域在两种渲染器里的边线**像素宽度**要一致（同一个世界宽度常量）。"""
         from rhythm_editor.game import app as game_app

@@ -30,6 +30,8 @@ from .scene import (
     MOUSE_PLANE_HEIGHT,
     START_Z,
     UNIT_SCALE,
+    Camera,
+    PlayerScene,
 )
 
 _IMPORT_ERROR: Optional[str] = None
@@ -332,6 +334,28 @@ class Scene3D:
         lens.setFov(horizontal_deg, vertical_deg)
         lens.setNearFar(0.05, 200.0)
         self.camera.node().setLens(lens)
+        # 与软件渲染一致：**水平方向单独拉伸**，让整个游玩区铺满可用宽度
+        # （宽窗口下 6K 平面一直铺到接近左右边缘）。投影宽度与 tan(hfov/2)
+        # 成反比，所以先用等比例镜头量一次游玩区的实际宽度即可。
+        horizontal_deg = self._stretched_horizontal_fov(horizontal_deg, vertical_deg)
+        lens.setFov(horizontal_deg, vertical_deg)
+        self.camera.node().setLens(lens)
+
+    def _stretched_horizontal_fov(self, horizontal_deg: float, vertical_deg: float) -> float:
+        """把水平 FOV 换算成“铺满可用宽度”的那一档（竖直 FOV 不动）。"""
+        field = PlayerScene(Camera())
+        width = max(80.0, self.width - 2 * PlayerScene.FIT_MARGIN_X)
+        span = 0.0
+        points = [self.project(*corner) for corner in field._field_corners()]
+        xs = [point[0] for point in points if point is not None]
+        if len(xs) >= 2:
+            span = max(xs) - min(xs)
+        if span <= 1e-6:  # pragma: no cover - 镜头 / 几何异常时保持等比例
+            return horizontal_deg
+        factor = span / width
+        return math.degrees(
+            2.0 * math.atan(math.tan(math.radians(horizontal_deg) / 2.0) * factor)
+        )
 
     def texture(self, name: str) -> Optional["Texture"]:
         cached = self._textures.get(name)

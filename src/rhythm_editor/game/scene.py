@@ -73,7 +73,8 @@ class PlayerScene:
     def __init__(self, camera: Camera | None = None) -> None:
         self.camera = camera or Camera()
         self._fit_key: Tuple[int, int] = (0, 0)
-        self._fit_value: Tuple[float, float, float] = (1.0, 0.0, 0.0)
+        # (水平缩放, 竖直缩放, dx, dy)：水平方向单独拉伸，竖直方向按整体比例
+        self._fit_value: Tuple[float, float, float, float] = (1.0, 1.0, 0.0, 0.0)
         self._visible_near_cache: Dict[Tuple[float, int, int], float] = {}
         # 鼠标平面的远端**在 6K 轨道远端之上**（它更靠近相机，同一个 z 投影更高）——
         # 两个平面共用同一个 z 行程 START_Z。
@@ -116,8 +117,13 @@ class PlayerScene:
                 for x in (K6_LEFT, -K6_LEFT):
                     yield (x, y, z)
 
-    def _fit_transform(self, width: int, height: int) -> Tuple[float, float, float]:
-        """返回 (scale, dx, dy)：把相机投影结果整体缩放平移到铺满窗口。"""
+    def _fit_transform(self, width: int, height: int) -> Tuple[float, float, float, float]:
+        """返回 ``(scale_x, scale_y, dx, dy)``：把相机投影缩放平移到铺满窗口。
+
+        **水平方向单独拉伸**到可用宽度：宽窗口下 6K 平面会一直铺到接近左右
+        窗口边缘（否则竖直方向限制整体比例，两侧会留很宽的黑边）；
+        竖直方向仍是整体比例（不上下变形，顶部留 HUD 边距）。
+        """
         key = (int(width), int(height))
         if key == self._fit_key:
             return self._fit_value
@@ -130,17 +136,24 @@ class PlayerScene:
         span_y = max(1.0, max(ys) - min(ys))
         usable_w = max(80.0, width - 2 * self.FIT_MARGIN_X)
         usable_h = max(80.0, height - self.FIT_MARGIN_TOP - self.FIT_MARGIN_BOTTOM)
-        scale = min(usable_w / span_x, usable_h / span_y)
-        dx = (width - span_x * scale) / 2.0 - min(xs) * scale
-        dy = self.FIT_MARGIN_TOP - min(ys) * scale
+        scale_x = usable_w / span_x                     # 水平：铺满可用宽度
+        scale_y = min(usable_w / span_x, usable_h / span_y)   # 竖直：整体比例
+        dx = (width - span_x * scale_x) / 2.0 - min(xs) * scale_x
+        dy = self.FIT_MARGIN_TOP - min(ys) * scale_y
         self._fit_key = key
-        self._fit_value = (scale, dx, dy)
+        self._fit_value = (scale_x, scale_y, dx, dy)
         return self._fit_value
 
     def point(self, x: float, y: float, z: float, width: int, height: int):
         sx, sy, view_scale = self.camera.project((x, y, z), width, height)
-        scale, dx, dy = self._fit_transform(width, height)
-        return sx * scale + dx, sy * scale + dy, view_scale * scale
+        scale_x, scale_y, dx, dy = self._fit_transform(width, height)
+        # 线宽 / 边界半宽按**水平**缩放换算（竖线、边界带都是横向定宽）
+        return sx * scale_x + dx, sy * scale_y + dy, view_scale * scale_x
+
+    def horizontal_stretch(self, width: int, height: int) -> float:
+        """当前窗口下的水平拉伸系数（``scale_x / scale_y``，≥ 1 表示被横向拉伸）。"""
+        scale_x, scale_y, _dx, _dy = self._fit_transform(width, height)
+        return scale_x / max(1e-9, scale_y)
 
     def visible_z_near(self, y: float, width: int, height: int) -> float:
         """平面 ``y`` 上“还在画面里”的**最近 z**（判定平面在 ``z = 0``，所以是负值）。

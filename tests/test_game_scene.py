@@ -129,6 +129,35 @@ class ProjectionTests(unittest.TestCase):
                 self.assertGreaterEqual(sx, -W)
                 self.assertLessEqual(sx, W * 2)
 
+    def test_wide_window_stretches_the_field_horizontally(self) -> None:
+        """宽窗口下把游玩区**横向拉伸**铺满可用宽度：6K 平面接近窗口左右边缘。
+
+        竖直方向仍按整体比例（不上下变形），所以 4:3 等本来就铺满宽度的窗口
+        不会被额外拉伸。
+        """
+        scene = self.scene
+        for width, height in ((1920, 1080), (1296, 839), (1600, 900)):
+            points = [scene.point(*corner, width, height) for corner in scene._field_corners()]
+            xs = [point[0] for point in points]
+            usable = width - 2 * S.PlayerScene.FIT_MARGIN_X
+            self.assertAlmostEqual(
+                max(xs) - min(xs), usable, delta=1.0,
+                msg=f"{width}x{height}: 游玩区应当铺满可用宽度",
+            )
+            self.assertAlmostEqual((min(xs) + max(xs)) / 2.0, width / 2.0, delta=1.0)
+            self.assertGreater(scene.horizontal_stretch(width, height), 1.05)
+            # 6K 平面本身也要接近窗口左右边缘
+            k6 = [scene.point(x, 0.0, 0.0, width, height)[0]
+                  for x in (S.K6_LEFT, -S.K6_LEFT)]
+            self.assertGreater(abs(k6[1] - k6[0]) / width, 0.9)
+        # 4:3：本来就铺满宽度，不额外拉伸
+        self.assertAlmostEqual(scene.horizontal_stretch(960, 720), 1.0, delta=1e-6)
+        # 竖直方向不能被拉伸：远近比例与原来一致（整体比例缩放）
+        near = scene.point(0.0, 0.0, 0.0, 1920, 1080)
+        far = scene.point(0.0, 0.0, S.START_Z, 1920, 1080)
+        self.assertLess(far[1], near[1])
+        self.assertLess(far[2], near[2])
+
     def test_field_fills_the_window(self) -> None:
         """整个游玩区尽量铺满窗口：竖直方向基本用满、水平居中且不越界。"""
         scene = S.PlayerScene()
