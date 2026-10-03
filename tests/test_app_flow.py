@@ -290,6 +290,38 @@ class AppFlowTest(unittest.TestCase):
         finally:
             app_module.effect_events = original  # type: ignore[assignment]
 
+    def test_play_from_earlier_position_keeps_effects(self) -> None:
+        """暂停后往回滚再播放：时刻表按**新的起播位置**裁剪。
+
+        回归：以前用旧暂停位置裁剪，起播点到旧暂停点之间的音效被整段裁掉，
+        合成出来的缓冲里没有它们 —— 表现就是“有时候打击音不播放”。
+        """
+        app = self.app
+        chart = app.document.chart
+        chart.settings.hit_enabled = True
+        calls: list = []
+        original = app.audio.set_effects
+        app.audio.set_effects = lambda events: calls.append(list(events))  # type: ignore[assignment]
+        app.audio.path = "stub.wav"        # 别让 play() 重新载入音频（会把位置清 0）
+        try:
+            app.set_metronome("beat")
+            app.audio._paused_at_ms = 60_000.0      # 模拟停在 60s
+            app.view.set_beat(4.0)
+            start_ms = chart.timing.beat_to_song_ms(4.0)
+            app.play()
+        finally:
+            app.audio.set_effects = original  # type: ignore[assignment]
+            app.audio.pause()
+            app.audio.path = None
+
+        events = calls[-1]
+        self.assertTrue(events, "起播时应当下发时刻表")
+        self.assertGreaterEqual(events[0][0], start_ms - 1e-6, "起播位置之前的条目仍然裁掉")
+        self.assertLess(
+            events[0][0], 60_000.0,
+            "起播点到旧暂停点之间的音效不能被裁掉（否则这一段打击音不响）",
+        )
+
     def test_help_menu_has_guide_and_shortcuts_only(self) -> None:
         # 帮助已并入「编辑器设置」菜单
         menu = self.app.toolbar._menus["编辑器设置"]

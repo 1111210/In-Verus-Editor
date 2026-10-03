@@ -50,7 +50,7 @@ python -m unittest discover -s tests -t .
 ```
 
 本机（Windows + Python 3.14.7 + Tk 9.0 + pygame-ce 2.5.8 + Panda3D 1.10）：
-**392 项全部通过**（约 17 秒），其中包含真实 Tk 画布与 headless pygame 的界面测试。
+**395 项全部通过**（约 17 秒），其中包含真实 Tk 画布与 headless pygame 的界面测试。
 
 | 测试文件 | 覆盖内容 |
 | --- | --- |
@@ -144,6 +144,8 @@ python tools/check_audio.py
 | 游玩器两条渲染路径共用世界几何 | `game/frame.py`；`test_game_app.py` 的两条路径像素断言 |
 | 编辑器与游玩器共用图层顺序 | `model/notes.py::layer_rank()`；`test_editor_smoke.py::test_hit_priority_follows_layer_order` |
 | 音效时刻表按歌曲毫秒预计算、增量维护（编辑只重算打击音、音量 / 倍速不重算） | `test_app_flow.py::test_sound_effects_are_precomputed_from_the_song_clock`、`test_effect_schedule_is_maintained_incrementally` |
+| 起播裁剪用新的起播位置、播放中新增音效立刻进缓冲（打击音不漏） | `test_app_flow.py::test_play_from_earlier_position_keeps_effects`、`test_metronome.py::test_current_window_is_rebuilt_when_change_lands_ahead_of_playhead` |
+| 播放中改音量 / 音效增益立刻生效（重合成当前窗口，音乐不跳时间） | `test_metronome.py::test_volume_changes_apply_immediately` |
 | 音效混进歌曲输出（不参与重采样、窗口边界不截断） | `test_metronome.py::EffectMixTests` |
 | 判定线跟随听到的位置（延迟补偿按倍速缩放） | `test_audio_rate.py`、`test_app_flow.py` |
 | 判定窗口不随倍速改变 | `test_game_judge.py::test_windows_are_real_time_not_song_time` |

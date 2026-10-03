@@ -4,6 +4,7 @@ from __future__ import annotations
 
 import os
 import sys
+import time
 import unittest
 
 sys.path.insert(0, os.path.join(os.path.dirname(os.path.dirname(os.path.abspath(__file__))), "src"))
@@ -315,6 +316,177 @@ class EffectMixTests(unittest.TestCase):
         self.assertIsNone(backend._queued)
         self.assertIs(backend._anchor[0], current)
         self.assertIs(channel.queued, current, "通道里的排队窗口不能被换掉")
+
+    def test_current_window_is_rebuilt_when_change_lands_ahead_of_playhead(self) -> None:
+        """播放中新增 / 删除“还没播到”的音效：当前窗口要重合成。
+
+        回归：只换排队窗口的话，落在当前窗口剩余部分里的音效（例如播放中
+        在判定线前方刚放的物件）永远听不到 —— 缓冲里根本没有它。
+        """
+        import numpy as np
+        import pygame
+
+        from rhythm_editor.audio import StretchedSoundBackend
+
+        try:
+            backend = StretchedSoundBackend()
+        except Exception:  # pragma: no cover - 无音频设备
+            self.skipTest("本机音频设备不可用，跳过")
+        shape = (
+            (backend.freq * 17, backend.channels)
+            if backend.channels > 1
+            else (backend.freq * 17,)
+        )
+        backend._samples = np.zeros(shape, dtype=np.int16)
+        backend._length_ms = 17_000.0
+
+        def pulse_factory(kind, rate, channels):
+            data = np.full(int(rate * 5.0 / 1000.0), 20000, dtype=np.int16)
+            if channels > 1:
+                data = np.repeat(data.reshape(-1, 1), channels, axis=1)
+            return data
+
+        class StubChannel:
+            def __init__(self) -> None:
+                self.playing = None
+                self.queued = None
+                self.plays = 0
+
+            def play(self, sound):
+                self.playing = sound
+                self.queued = None
+                self.plays += 1
+
+            def queue(self, sound):
+                self.queued = sound
+
+            def get_sound(self):
+                return self.playing
+
+            def get_busy(self) -> bool:
+                return True
+
+            def stop(self) -> None:
+                return
+
+        def pulses(sound):
+            data = pygame.sndarray.array(sound).astype(np.int32)
+            mono = np.abs(data[:, 0] if data.ndim > 1 else data)
+            return np.flatnonzero(mono >= 10000)
+
+        backend.set_rate(1.0)
+        backend.set_effects([], pulse_factory)
+        backend.set_effect_gains({"beat": 1.0})
+        channel = StubChannel()
+        backend._channel = channel
+        backend._playing = True
+        backend._anchor_time = time.perf_counter()
+        backend._anchor = backend._make_window(0.0)
+        backend._queued = backend._make_window(backend._anchor[2])
+        channel.play(backend._anchor[0])
+        channel.queue(backend._queued[0])
+
+        # 1) 落在当前窗口里：从当前位置重合成，音效立刻进缓冲
+        backend.set_effects([(2_000.0, "beat")], pulse_factory)
+        self.assertEqual(channel.plays, 2, "应当重新接管当前窗口")
+        anchor = backend._anchor
+        self.assertLess(abs(anchor[1]), 50.0, "新窗口应当从当前位置（约 0ms）开始")
+        index = pulses(anchor[0])
+        self.assertTrue(index.size, "新增的音效应当出现在新窗口里")
+        placed_ms = anchor[1] + index[0] / backend.freq * 1000.0
+        self.assertAlmostEqual(placed_ms, 2_000.0, delta=2.0)
+        self.assertIsNotNone(backend._queued, "重合成后要立刻补上排队窗口")
+
+        # 2) 只改到当前窗口之后：不重播当前窗口，只换排队窗口
+        plays = channel.plays
+        backend.set_effects([(2_000.0, "beat"), (9_000.0, "beat")], pulse_factory)
+        self.assertEqual(channel.plays, plays, "窗口后面的改动不该重播当前窗口")
+        queued = backend._queued
+        self.assertIsNotNone(queued)
+        index = pulses(queued[0])
+        self.assertTrue(index.size)
+        placed_ms = queued[1] + index[0] / backend.freq * 1000.0
+        self.assertAlmostEqual(placed_ms, 9_000.0, delta=2.0)
+
+    def test_volume_changes_apply_immediately(self) -> None:
+        """播放中改音量 / 音效增益：从当前位置重合成当前窗口，立即生效。"""
+        import numpy as np
+        import pygame
+
+        from rhythm_editor.audio import StretchedSoundBackend
+
+        try:
+            backend = StretchedSoundBackend()
+        except Exception:  # pragma: no cover - 无音频设备
+            self.skipTest("本机音频设备不可用，跳过")
+        shape = (
+            (backend.freq * 17, backend.channels)
+            if backend.channels > 1
+            else (backend.freq * 17,)
+        )
+        backend._samples = np.full(shape, 2_000, dtype=np.int16)   # 音乐是个常数
+        backend._length_ms = 17_000.0
+
+        def pulse_factory(kind, rate, channels):
+            data = np.full(int(rate * 5.0 / 1000.0), 20_000, dtype=np.int16)
+            if channels > 1:
+                data = np.repeat(data.reshape(-1, 1), channels, axis=1)
+            return data
+
+        class StubChannel:
+            def __init__(self) -> None:
+                self.playing = None
+                self.queued = None
+                self.plays = 0
+
+            def play(self, sound):
+                self.playing = sound
+                self.queued = None
+                self.plays += 1
+
+            def queue(self, sound):
+                self.queued = sound
+
+            def get_sound(self):
+                return self.playing
+
+            def get_busy(self) -> bool:
+                return True
+
+            def stop(self) -> None:
+                return
+
+        def sample_at(sound, ms):
+            data = pygame.sndarray.array(sound).astype(np.int32)
+            mono = data[:, 0] if data.ndim > 1 else data
+            return int(mono[int(round(ms / 1000.0 * backend.freq))])
+
+        backend.set_rate(1.0)
+        backend.set_effects([(2_000.0, "beat")], pulse_factory)
+        backend.set_mix(1.0, {"beat": 1.0})
+        channel = StubChannel()
+        backend._channel = channel
+        backend._playing = True
+        backend._anchor_time = time.perf_counter()
+        backend._anchor = backend._make_window(0.0)
+        backend._queued = backend._make_window(backend._anchor[2])
+        channel.play(backend._anchor[0])
+        channel.queue(backend._queued[0])
+        self.assertEqual(sample_at(backend._anchor[0], 1_000.0), 2_000, "音乐原始音量")
+        self.assertEqual(sample_at(backend._anchor[0], 2_000.0), 22_000, "音效原始增益")
+
+        backend.set_mix(0.5, {"beat": 0.25})       # 播放中：应当立刻重合成
+        self.assertEqual(channel.plays, 2, "音量变化要立刻重合成当前窗口")
+        anchor = backend._anchor
+        self.assertLess(abs(anchor[1]), 50.0, "新窗口从当前位置开始")
+        self.assertEqual(sample_at(anchor[0], 1_000.0), 1_000, "歌曲音量减半立即生效")
+        self.assertEqual(sample_at(anchor[0], 2_000.0), 6_000, "音效增益 0.25 立即生效")
+        self.assertIsNotNone(backend._queued, "重合成后要补上排队窗口")
+
+        # 值没变就不重合成
+        plays = channel.plays
+        backend.set_mix(0.5, {"beat": 0.25})
+        self.assertEqual(channel.plays, plays)
 
 
 if __name__ == "__main__":

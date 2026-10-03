@@ -341,7 +341,9 @@ class EditorApp:
                 f"播放结束（音乐与谱面都已播完 {config.PLAY_END_MARGIN_SECONDS:g} 秒）"
             )
 
-    def _refresh_effects(self, refilter: bool = False) -> None:
+    def _refresh_effects(
+        self, refilter: bool = False, from_ms: Optional[float] = None
+    ) -> None:
         """把节拍音 / 打击音的**播放时刻预先算好**交给音频层混进输出。
 
         **增量维护**（不做全量重算）：
@@ -357,6 +359,10 @@ class EditorApp:
 
         每帧都会调用：**没有变化时只比较几个键**；``beat_bounds()``（要遍历
         全部物件）也只在谱面版本 / 音频长度变化时才重算。
+
+        ``from_ms`` 指定“从哪个歌曲毫秒起播”：裁剪过去的条目必须按**新的
+        起播位置**算。默认用当前音频位置；起播时要显式传入目标位置，否则
+        暂停后往回滚再播放会把中间那一段的音效一起裁掉（打击音不响）。
         """
         chart = self.document.chart
         settings = chart.settings
@@ -391,7 +397,7 @@ class EditorApp:
             self._effects_merged = sorted(self._effects_clicks + self._effects_hits)
         if not changed and not refilter:
             return
-        start_ms = self.audio.position_ms()
+        start_ms = self.audio.position_ms() if from_ms is None else float(from_ms)
         self.audio.set_effects(
             [item for item in self._effects_merged if item[0] > start_ms + 1e-6]
         )
@@ -804,7 +810,9 @@ class EditorApp:
         timing = self.document.chart.timing
         self.audio.latency_ms = self.document.chart.settings.audio_latency_ms
         song_ms = timing.beat_to_song_ms(self.view.current_beat)
-        self._refresh_effects(refilter=True)   # 时刻表按新的起播位置裁掉过去的条目
+        # 按**新的起播位置**裁剪（不能用旧暂停位置：往回滚再播放会把中间
+        # 整段音效裁掉，听起来就是“有时打击音不响”）
+        self._refresh_effects(refilter=True, from_ms=song_ms)
         self.audio.play(song_ms)
         reason = audio_silent_reason()
         notes = []
@@ -921,15 +929,15 @@ class EditorApp:
         )
 
     def _apply_volumes(self) -> None:
-        """把设置里的三个音量同步给音频后端（音效音量在混音时各自应用）。"""
+        """把设置里的三个音量同步给音频后端（一次设置，混音只重合成一次窗口）。"""
         settings = self.document.chart.settings
-        self.audio.set_volume(settings.music_volume)
-        self.audio.set_effect_gains(
+        self.audio.set_mix(
+            settings.music_volume,
             {
                 "bar": settings.metronome_volume,
                 "beat": settings.metronome_volume,
                 "hit": settings.hit_volume,
-            }
+            },
         )
         self.hit_volume = settings.hit_volume
         # 音量只更新混音增益（键没变就不会重算时刻表）；开关打击音会改键

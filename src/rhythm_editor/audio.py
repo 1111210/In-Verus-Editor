@@ -78,6 +78,18 @@ def stretch_window_ms(rate: float) -> float:
     )
 
 
+def _events_in_range(events, start_ms: float, stop_ms: float) -> list:
+    """取出 ``(start_ms, stop_ms)`` 之间的音效（``events`` 已按时刻排序）。"""
+    result = []
+    first = bisect.bisect_right(events, start_ms, key=lambda item: item[0])
+    for index in range(first, len(events)):
+        item = events[index]
+        if item[0] >= stop_ms:
+            break
+        result.append(item)
+    return result
+
+
 def audio_backend_name() -> str:
     if _PYGAME is None:
         return "silent"
@@ -421,19 +433,57 @@ class StretchedSoundBackend:  # pragma: no cover - 依赖 pygame + numpy
         只做一次浅拷贝（不排序、不重建时间数组）——时刻表由上层增量维护，
         避免每次编辑都全量重算。``factory(kind, rate, channels)`` 合成波形。
         """
+        previous = self._effects
         self._effects = list(events)
         if factory is not None and factory is not self._effect_factory:
             self._effect_factory = factory
             self._effect_cache.clear()      # 换工厂才需要重合成
             self._effect_margin_ms = EFFECT_TAIL_MS
+        if self._playing and self._channel is not None and self._anchor is not None:
+            # 变化落在**当前窗口还没播到**的那一段（例如播放中在判定线前方
+            # 放了物件）时，光换排队窗口不够：这一段缓冲里永远不会有它
+            position = self.position_ms()
+            stop = self._anchor[2]
+            if _events_in_range(previous, position, stop) != _events_in_range(
+                self._effects, position, stop
+            ):
+                self._apply_now()           # 变化落在当前窗口：立刻重合成
+                return
         self._refresh_queued()
 
     def set_effect_gains(self, gains) -> None:
         """每种音效的音量（0..1）：与歌曲音量互相独立。"""
+        self.set_mix(self._volume, gains)
+
+    def set_mix(self, volume: float, gains) -> None:
+        """一次设置**歌曲音量 + 各音效音量**，混音模式下只重合成一次。
+
+        混音模式把歌曲音量烘进缓冲、音效各自带增益，所以两者只有在下次
+        合成窗口时才会变 —— 要立刻生效就得重合成**正在播**的窗口。
+        合并成一个入口是为了“同时改音乐与音效音量”时只重合成一次。
+        """
+        volume = max(0.0, min(1.0, float(volume)))
         normalized = {str(k): float(v) for k, v in gains.items()}
-        if normalized == self._effect_gains:
+        if abs(volume - self._volume) < 1e-9 and normalized == self._effect_gains:
             return
+        self._volume = volume
         self._effect_gains = normalized
+        if self._effect_factory is not None:
+            self._apply_now()                   # 混音音量：重合成当前窗口
+            return
+        # 没有混音：音量直接作用于 Sound 通道，立即生效，不需要重合成
+        for window in [w for w in (self._anchor, self._queued) if w is not None]:
+            try:
+                window[0].set_volume(volume)
+            except Exception:
+                pass
+
+    def _apply_now(self) -> None:
+        """让音量 / 时刻表变化立刻生效：重合成正在播的窗口，再补排队窗口。"""
+        if self._playing and self._channel is not None and self._anchor is not None:
+            if self._restart_current(self.position_ms()):
+                self.poll()                     # 立刻补上下一个排队窗口
+                return
         self._refresh_queued()
 
     def _refresh_queued(self) -> None:
@@ -471,6 +521,29 @@ class StretchedSoundBackend:  # pragma: no cover - 依赖 pygame + numpy
         except Exception:  # pragma: no cover - 依赖驱动
             return
         self._queued = window
+
+    def _restart_current(self, position_ms: float) -> bool:
+        """从当前位置重新合成**正在播**的窗口（时刻表在没播到的部分变了）。
+
+        已经交给通道的音频改不了：不重合成的话，播放中在判定线前方新增 /
+        删除的音效要么不响、要么多响一声。新窗口从当前位置开始，音乐接着
+        往下走；正好在响的那一声会被截掉尾巴（音效只有 45ms，代价很小）。
+        """
+        window = self._make_window(position_ms)
+        if window is None:
+            return False
+        try:
+            self._channel.play(window[0])       # 顶掉当前窗口与旧排队窗口
+        except Exception:  # pragma: no cover - 依赖驱动
+            return False
+        self._anchor = window
+        # 让 position_ms() 在新窗口上仍然返回 position_ms（音乐不跳时间）
+        self._anchor_time = time.perf_counter() - (
+            (float(position_ms) - window[1]) / 1000.0 / max(1e-6, self.rate)
+        )
+        self._queued = None
+        self._handed_end_ms = window[2]
+        return True
 
     def _effect_data(self, kind: str):
         data = self._effect_cache.get(kind)
@@ -659,21 +732,7 @@ class StretchedSoundBackend:  # pragma: no cover - 依赖 pygame + numpy
         return min(position, self._anchor[2], self._length_ms)
 
     def set_volume(self, volume: float) -> None:
-        volume = max(0.0, min(1.0, float(volume)))
-        if abs(volume - self._volume) < 1e-9:
-            return
-        self._volume = volume
-        if self._effect_factory is not None:
-            # 混音模式下歌曲音量是烘进缓冲的（音效各自带音量），
-            # 只改通道音量会把音效一起缩放，所以要重合成排队窗口
-            self._refresh_queued()
-            return
-        channel_volume = self._volume
-        for window in [w for w in (self._anchor, self._queued) if w is not None]:
-            try:
-                window[0].set_volume(channel_volume)
-            except Exception:
-                pass
+        self.set_mix(volume, self._effect_gains)
 
     @property
     def is_playing(self) -> bool:
@@ -782,6 +841,17 @@ class AudioPlayer:
         self._effect_gains = {str(k): float(v) for k, v in gains.items()}
         if isinstance(self.backend, StretchedSoundBackend):
             self.backend.set_effect_gains(self._effect_gains)
+
+    def set_mix(self, volume: float, gains) -> None:
+        """一次设置歌曲音量 + 音效音量：混音模式下只重合成一次窗口。"""
+        self._effect_gains = {str(k): float(v) for k, v in gains.items()}
+        if isinstance(self.backend, StretchedSoundBackend):
+            try:
+                self.backend.set_mix(float(volume), self._effect_gains)
+            except Exception:                        # pragma: no cover
+                pass
+            return
+        self.set_volume(volume)
 
     def _sync_effects(self) -> None:
         if isinstance(self.backend, StretchedSoundBackend):
