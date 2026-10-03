@@ -50,7 +50,7 @@ python -m unittest discover -s tests -t .
 ```
 
 本机（Windows + Python 3.14.7 + Tk 9.0 + pygame-ce 2.5.8 + Panda3D 1.10）：
-**400 项全部通过**（约 17 秒），其中包含真实 Tk 画布与 headless pygame 的界面测试。
+**403 项全部通过**（约 17 秒），其中包含真实 Tk 画布与 headless pygame 的界面测试。
 
 | 测试文件 | 覆盖内容 |
 | --- | --- |
@@ -154,6 +154,7 @@ python tools/check_audio.py
 | 判定窗口不随倍速改变 | `test_game_judge.py::test_windows_are_real_time_not_song_time` |
 | 演示视图不画鼠标指针、跟随编辑器独立的演示视图设置（固定软件渲染） | `test_game_softview.py::test_mouse_position_does_not_change_frame`、`test_demo_view_follows_editor_settings_not_player_json`、`test_app_flow.py::test_demo_view_settings_are_independent_and_applied` |
 | 弹出窗口只有一个确认按钮（没有「取消」） | `test_dialogs.py::DialogButtonTests` |
+| 鼠标图案（滑键 / 鼠标点击按键）以鼠标运动平面为中点，软件与 Panda3D / OpenGL 两条路径一致 | `test_game_softview.py::test_mouse_patterns_are_centered_on_the_mouse_plane`、`test_game_app.py::test_software_mouse_patterns_centered_on_plane`、`test_panda_mouse_patterns_centered_on_plane` |
 
 ### 7.3 游玩器实测
 

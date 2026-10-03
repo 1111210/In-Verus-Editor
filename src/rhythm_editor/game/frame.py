@@ -22,6 +22,7 @@ from .scene import (
     LANE_WIDTH,
     MOUSE_LEFT,
     MOUSE_LEGAL_WIDTH,
+    MOUSE_PLANE_HEIGHT,
     UNIT_SCALE,
 )
 
@@ -154,3 +155,23 @@ def hold_head_height(note_thickness: float) -> float:
 def pattern_height(thickness: float) -> float:
     """滑键 / 鼠标点击图案的厚度（含下限）。"""
     return max(PATTERN_MIN_THICKNESS, thickness)
+
+
+def pattern_center(thickness: float) -> Tuple[float, float]:
+    """滑键 / 鼠标点击图案的 ``(竖直中心 y, 竖直尺寸)``。
+
+    中心落在鼠标运动平面上（``MOUSE_PLANE_HEIGHT``）——与编辑器画布一致
+    （那里图案以判定时刻为垂直中点），不是底边贴在平面上。
+    """
+    return (MOUSE_PLANE_HEIGHT, pattern_height(thickness))
+
+
+def pattern_span(thickness: float) -> Tuple[float, float]:
+    """滑键 / 鼠标点击图案的竖直范围 ``(下沿, 上沿)``。
+
+    由 :func:`pattern_center` 推出；软件渲染按这两个高度投影，Panda3D 路径
+    直接用其中心与尺寸画卡片。
+    """
+    center, height = pattern_center(thickness)
+    half = height / 2.0
+    return (center - half, center + half)

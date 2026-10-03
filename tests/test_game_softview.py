@@ -113,6 +113,49 @@ class SoftwareViewTests(unittest.TestCase):
         self.assertAlmostEqual(view.settings.note_thickness, 0.9)
         self.assertAlmostEqual(view.settings.speed, 2.0)
 
+    def test_mouse_patterns_are_centered_on_the_mouse_plane(self) -> None:
+        """滑键 / 鼠标点击图案以鼠标运动平面为**中点**（不是底边贴在平面上）。"""
+        from rhythm_editor.game import softview
+        from rhythm_editor.game.scene import MOUSE_PLANE_HEIGHT
+        from rhythm_editor.model.chart import Chart, EditorSettings
+        from rhythm_editor.model.notes import MouseClick, MouseSlide
+        from rhythm_editor.model.timing import BpmSegment, TimingMap
+
+        chart = Chart()
+        chart.timing = TimingMap([BpmSegment(0.0, 120.0, 4)])
+        chart.add(MouseClick("C1", 4.0, 0.5, 0.2))
+        chart.add(MouseSlide("S1", 4.0, 0.2, 0.8))
+        now = chart.timing.beat_to_song_ms(4.0)
+        settings = EditorSettings(demo_click_thickness=0.2, demo_slide_thickness=0.2)
+        view = softview.create_software_view(
+            640, 480, view_settings=softview.view_settings_for(settings)
+        )
+        captured: list = []
+        original = view._blit_tex_quad
+        view._blit_tex_quad = lambda name, quad, **kwargs: (
+            captured.append((name, list(quad))),
+            True,
+        )[1]
+        try:
+            softview.draw_frame(view, chart, now, rate=1.0)
+        finally:
+            view._blit_tex_quad = original
+
+        plane_y = view._proj(0.0, MOUSE_PLANE_HEIGHT, 0.0)[1]
+        names = ("click_range", "click_diamond", "slide_body_right", "slide_arrow_right")
+        drawn = [entry for entry in captured if entry[0] in names]
+        self.assertEqual(
+            {name for name, _quad in drawn}, set(names), "应当画出点击范围 / 菱形 / 滑键"
+        )
+        for name, quad in drawn:
+            ys = [point[1] for point in quad]
+            self.assertLess(min(ys), plane_y - 1.0, f"{name} 应当伸到平面上方")
+            self.assertGreater(max(ys), plane_y + 1.0, f"{name} 应当伸到平面下方")
+            self.assertAlmostEqual(
+                (min(ys) + max(ys)) / 2.0, plane_y, delta=2.0,
+                msg=f"{name} 应当以鼠标运动平面为中点",
+            )
+
 
 if __name__ == "__main__":
     unittest.main()

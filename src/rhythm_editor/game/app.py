@@ -2641,9 +2641,8 @@ class PlayerApp:
                 z = max(0.0, self._note_z(self._head_ms(note), now_ms))
                 shape = frame.slide_shape(note)
                 name = "right" if shape.direction > 0 else "left"
-                thick = self.settings.slide_thickness
-                # 贴图底边 = 判定线：楔形挂在判定线上方
-                center_y = MOUSE_PLANE_HEIGHT + thick / 2.0
+                # 图案**中点**落在鼠标运动平面上（不是底边贴平面，见 frame.pattern_center）
+                center_y, thick = frame.pattern_center(self.settings.slide_thickness)
                 scene.quad(f"slide_body_{name}", (shape.start_x + shape.end_x) / 2.0, z,
                            abs(shape.end_x - shape.start_x), thick, center_y, (1, 1, 1, 1),
                            vertical=True, layer=layer)
@@ -2652,8 +2651,7 @@ class PlayerApp:
             elif isinstance(note, MouseClick):
                 z = max(0.0, self._note_z(self._head_ms(note), now_ms))
                 shape = frame.click_shape(note)
-                height = self.settings.click_thickness
-                center_y = MOUSE_PLANE_HEIGHT + height / 2.0
+                center_y, height = frame.pattern_center(self.settings.click_thickness)
                 scene.quad("click_range", (shape.x0 + shape.x1) / 2.0, z,
                            shape.x1 - shape.x0, height, center_y,
                            (1, 1, 1, 1), vertical=True, layer=layer)
@@ -2921,16 +2919,17 @@ class PlayerApp:
             direction = shape.direction
             name = "right" if direction > 0 else "left"
             height = frame.pattern_height(self.settings.slide_thickness)
+            low, high = frame.pattern_span(self.settings.slide_thickness)
             start_x, end_x = shape.start_x, shape.end_x
             # 贴图的左边界要绑**屏幕左边**（不是"起点"）：左滑键的起点在右、
             # 终点在左，若按起点绑就会把整张贴图左右镜像（Panda 路径按中心+宽度画，
             # 本来就是绑屏幕左边的，两条路径必须一致）
             left_x, right_x = shape.left_x, shape.right_x
             body_quad = [
-                self._proj(left_x, MOUSE_PLANE_HEIGHT + height, z),
-                self._proj(right_x, MOUSE_PLANE_HEIGHT + height, z),
-                self._proj(right_x, MOUSE_PLANE_HEIGHT, z),
-                self._proj(left_x, MOUSE_PLANE_HEIGHT, z),
+                self._proj(left_x, high, z),
+                self._proj(right_x, high, z),
+                self._proj(right_x, low, z),
+                self._proj(left_x, low, z),
             ]
             if not self._blit_tex_quad(f"slide_body_{name}", body_quad):
                 return False
@@ -2940,23 +2939,24 @@ class PlayerApp:
                 inner = end_x - height * direction       # 箭头朝内延伸，宽度 = 厚度（不拉伸）
                 inner_left, inner_right = min(inner, end_x), max(inner, end_x)
                 arrow_quad = [
-                    self._proj(inner_left, MOUSE_PLANE_HEIGHT + height, z),
-                    self._proj(inner_right, MOUSE_PLANE_HEIGHT + height, z),
-                    self._proj(inner_right, MOUSE_PLANE_HEIGHT, z),
-                    self._proj(inner_left, MOUSE_PLANE_HEIGHT, z),
+                    self._proj(inner_left, high, z),
+                    self._proj(inner_right, high, z),
+                    self._proj(inner_right, low, z),
+                    self._proj(inner_left, low, z),
                 ]
                 self._blit_tex_quad(f"slide_arrow_{name}", arrow_quad, flip_x=direction < 0)
             return True
         assert isinstance(note, MouseClick)
-        height = frame.pattern_height(self.settings.click_thickness)
+        low, high = frame.pattern_span(self.settings.click_thickness)
+        height = high - low
         shape = frame.click_shape(note)
         x0, x1, cx = shape.x0, shape.x1, shape.center
-        middle = MOUSE_PLANE_HEIGHT + height / 2.0
+        middle = MOUSE_PLANE_HEIGHT          # 图案以鼠标运动平面为中点
         range_quad = [
-            self._proj(x0, MOUSE_PLANE_HEIGHT + height, z),
-            self._proj(x1, MOUSE_PLANE_HEIGHT + height, z),
-            self._proj(x1, MOUSE_PLANE_HEIGHT, z),
-            self._proj(x0, MOUSE_PLANE_HEIGHT, z),
+            self._proj(x0, high, z),
+            self._proj(x1, high, z),
+            self._proj(x1, low, z),
+            self._proj(x0, low, z),
         ]
         if not self._blit_tex_quad("click_range", range_quad):
             return False
@@ -3016,12 +3016,13 @@ class PlayerApp:
                 ha = thin + (height - thin) * t0
                 hb = thin + (height - thin) * t1
                 alpha = int(round(alpha_near + (alpha_far - alpha_near) * (t0 + t1) / 2.0))
+                # 图案以鼠标运动平面为中点（不是底边贴平面）
                 self._alpha_quad(
                     [
-                        self._proj(xa, MOUSE_PLANE_HEIGHT, z),
-                        self._proj(xb, MOUSE_PLANE_HEIGHT, z),
-                        self._proj(xb, MOUSE_PLANE_HEIGHT + hb, z),
-                        self._proj(xa, MOUSE_PLANE_HEIGHT + ha, z),
+                        self._proj(xa, MOUSE_PLANE_HEIGHT - ha / 2.0, z),
+                        self._proj(xb, MOUSE_PLANE_HEIGHT - hb / 2.0, z),
+                        self._proj(xb, MOUSE_PLANE_HEIGHT + hb / 2.0, z),
+                        self._proj(xa, MOUSE_PLANE_HEIGHT + ha / 2.0, z),
                     ],
                     color,
                     alpha,
@@ -3032,7 +3033,7 @@ class PlayerApp:
         height = self.settings.click_thickness
         shape = frame.click_shape(note)
         x0, x1 = shape.x0, shape.x1
-        middle = MOUSE_PLANE_HEIGHT + height / 2.0
+        middle = MOUSE_PLANE_HEIGHT          # 图案以鼠标运动平面为中点
         # 形状是**中间厚、两边薄的菱形**，并且透明度一起渐变（中间实、两端淡）
         span_px = abs(
             self._proj(x1, MOUSE_PLANE_HEIGHT, z)[0]

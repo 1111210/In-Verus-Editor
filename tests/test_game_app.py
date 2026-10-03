@@ -745,6 +745,87 @@ class PlayerAppSmokeTests(unittest.TestCase):
         app._start_play()
         app._draw_play()                    # 各厚度都要能画出来
 
+    def test_software_mouse_patterns_centered_on_plane(self) -> None:
+        """软件路径：滑键 / 鼠标点击图案以鼠标运动平面为中点（演示模式同一份代码）。"""
+        from rhythm_editor.game.scene import MOUSE_PLANE_HEIGHT
+        from rhythm_editor.model.notes import MouseClick, MouseSlide
+
+        app = self.app
+        app._enter_loading()
+        app._start_play()
+        app.settings.speed = 5.0
+        app.settings.click_thickness = app.settings.slide_thickness = 0.2
+        app.chart.mouse_notes = [
+            MouseClick("C1", 0.0, 0.5, 0.2),
+            MouseSlide("S1", 0.0, 0.2, 0.8),
+        ]
+        app.chart.invalidate_order()
+        app.scene3d = None                       # 强制软件绘制
+        now = app.chart.timing.beat_to_song_ms(0.0)   # 物件正好在判定线上
+        captured: list = []
+        original = app._blit_tex_quad
+        app._blit_tex_quad = lambda name, quad, **kwargs: (
+            captured.append((name, list(quad))),
+            True,
+        )[1]
+        try:
+            app.screen.fill((10, 10, 14))
+            app._draw_planes(now)
+            app._draw_notes(now)
+        finally:
+            app._blit_tex_quad = original
+        plane_y = app._proj(0.0, MOUSE_PLANE_HEIGHT, 0.0)[1]
+        names = ("click_range", "click_diamond", "slide_body_right", "slide_arrow_right")
+        drawn = [entry for entry in captured if entry[0] in names]
+        self.assertEqual({name for name, _quad in drawn}, set(names))
+        for name, quad in drawn:
+            ys = [point[1] for point in quad]
+            self.assertAlmostEqual(
+                (min(ys) + max(ys)) / 2.0, plane_y, delta=2.0,
+                msg=f"{name} 应当以鼠标运动平面为中点",
+            )
+
+    def test_panda_mouse_patterns_centered_on_plane(self) -> None:
+        """Panda3D / OpenGL 路径：图案卡片中心也是鼠标运动平面（不是底边贴平面）。
+
+        用桩场景记录 ``quad`` 参数，不需要 GL 上下文。
+        """
+        from rhythm_editor.game.scene import MOUSE_PLANE_HEIGHT
+        from rhythm_editor.model.notes import MouseClick, MouseSlide
+
+        class StubScene:
+            def __init__(self) -> None:
+                self.quads: list = []
+
+            def quad(self, name, x, z, sx, sz, y, *args, **kwargs) -> None:
+                self.quads.append((name, float(sx), float(sz), float(y)))
+
+            def __getattr__(self, item):
+                return lambda *args, **kwargs: None
+
+        app = self.app
+        app._enter_loading()
+        app._start_play()
+        app.settings.speed = 5.0
+        app.settings.click_thickness = app.settings.slide_thickness = 0.2
+        app.chart.mouse_notes = [
+            MouseClick("C1", 0.0, 0.5, 0.2),
+            MouseSlide("S1", 0.0, 0.2, 0.8),
+        ]
+        app.chart.invalidate_order()
+        original = app.scene3d
+        scene = StubScene()
+        app.scene3d = scene  # type: ignore[assignment]
+        try:
+            app._render_scene3d(0.0)
+        finally:
+            app.scene3d = original
+        names = ("click_range", "click_diamond", "slide_body_right", "slide_arrow_right")
+        drawn = [entry for entry in scene.quads if entry[0] in names]
+        self.assertEqual({name for name, *_rest in drawn}, set(names))
+        for name, _sx, _sz, y in drawn:
+            self.assertAlmostEqual(y, MOUSE_PLANE_HEIGHT, places=6, msg=name)
+
     def test_region_edge_thickness_matches_panda(self) -> None:
         """同一段空域在两种渲染器里的边线**像素宽度**要一致（同一个世界宽度常量）。"""
         from rhythm_editor.game import app as game_app
