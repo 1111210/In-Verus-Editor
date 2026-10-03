@@ -35,7 +35,7 @@ from .global_settings import (
     save_settings,
 )
 from .metronome import LABELS as METRONOME_LABELS
-from .metronome import MODE_BAR, MODE_BEAT, MODE_OFF, Metronome, clicks_between, hits_between
+from .metronome import MODE_BAR, MODE_OFF, effect_events, effect_samples
 from .ui.dialogs import (
     BpmDialog,
     HelpDialog,
@@ -102,6 +102,17 @@ class EditorApp:
         self.view = ViewState(self.document.chart)
         self.render_state = RenderState()
         self.audio = AudioPlayer()
+        # 音效（节拍音 / 打击音）走“预先算好时刻 + 混进音频输出”的路径
+        self.audio.enable_effects(effect_samples)
+        # 时刻表两半各自缓存（键相同就不重算）：节拍音只看时间轴 / 模式，
+        # 打击音还要看谱面内容（Document.revision）
+        self._effects_clicks: list = []
+        self._effects_hits: list = []
+        self._effects_merged: list = []
+        self._effects_clicks_key = None
+        self._effects_hits_key = None
+        self._effects_scope_key = None
+        self._effects_bucket = 0
         self.demo_mode = False
         self._last_message = ""
         self._last_info = ""
@@ -114,13 +125,7 @@ class EditorApp:
         # 拖动分界线：正在拖动 + 当前光标样式
         self._divider_drag = False
         self._divider_cursor = ""
-        # 节拍音：上一帧判定线所在拍（None = 未在播放）
-        self._metronome_last_beat: Optional[float] = None
-        self.metronome = Metronome()
-        # 打击音效：单独一个播放器，音量可独立调节
-        self.hits = Metronome()
         self.hit_volume = 1.0
-        self._hit_last_beat: Optional[float] = None
         # 演示模式：画布上贴的是游玩器软件渲染的离屏帧（见 game/softview.py）
         self._demo_view = None                 # 离屏软渲染视图（懒创建）
         self._demo_photo: Optional[tk.PhotoImage] = None
@@ -258,6 +263,7 @@ class EditorApp:
     def _tick(self) -> None:
         if self._closed:
             return
+        self._refresh_effects()         # 谱面 / 音效设置变化时重算时刻表
         self._advance_playback()
         self.audio.poll()          # 变速后端：提前准备后续音频窗口
         # 二级菜单展开时暂停画布重绘：否则画布每帧重画会把弹出的菜单"闪"掉
@@ -315,21 +321,11 @@ class EditorApp:
 
     def _advance_playback(self) -> None:
         if not self.audio.is_playing:
-            self._metronome_last_beat = None
-            self._hit_last_beat = None
             return
         timing = self.document.chart.timing
         song_ms = self.audio.heard_position_ms()
         beat = timing.song_ms_to_beat(song_ms)
         self.view.current_beat = beat
-        # 音效（节拍音 / 打击音）要跟**音乐**同步，不是跟 UI 同步：
-        # 我们自己播放的声音同样要经过 latency 才被听到，所以按“软件位置”
-        # （还没减延迟的后端位置）触发；等听到时正好与歌曲对拍。
-        # UI 的判定线仍然用 heard（耳朵听到的位置），所以物件到达判定线时
-        # 音效早已在 latency 之前触发过了。
-        sound_beat = timing.song_ms_to_beat(self.audio.position_ms())
-        self._tick_metronome(timing, sound_beat)
-        self._tick_hit_sound(sound_beat)
         backend = getattr(self.audio, "backend", None)
         if backend is not None and not getattr(backend, "is_playing", True):
             # 音乐刚播完：记下此刻的播放位置（秒），之后还要再走 margin 秒才考虑停止
@@ -345,25 +341,60 @@ class EditorApp:
                 f"播放结束（音乐与谱面都已播完 {config.PLAY_END_MARGIN_SECONDS:g} 秒）"
             )
 
-    def _tick_metronome(self, timing, beat: float) -> None:
-        """播放中按设置发出“滴”声（一次 tick 最多一声）。"""
-        previous = self._metronome_last_beat
-        self._metronome_last_beat = beat
-        mode = self.document.chart.settings.metronome
-        if previous is None or mode == MODE_OFF:
-            return
-        hits = clicks_between(timing, mode, previous, beat)
-        if hits:
-            self.metronome.play(mode)
+    def _refresh_effects(self, refilter: bool = False) -> None:
+        """把节拍音 / 打击音的**播放时刻预先算好**交给音频层混进输出。
 
-    def _tick_hit_sound(self, beat: float) -> None:
-        """物件到达判定线时响一声打击音（白噪声），一次 tick 最多一声。"""
-        previous = self._hit_last_beat
-        self._hit_last_beat = beat
-        if previous is None:
+        **增量维护**（不做全量重算）：
+
+        * 节拍音只由 BPM / 每小节拍数 / 偏移 / 模式 / 覆盖范围决定；
+        * 打击音由物件（与时间轴）决定，用 ``Document.revision`` 判断有没有改过；
+        * 编辑物件只重算打击音，改音量完全不重算（只更新混音音量）；
+        * **倍速不参与时刻表** —— 时刻表永远是歌曲毫秒，倍速只在混音时决定
+          音效落在输出的哪个位置（``输出位置 = (时刻 − 窗口起点) / 倍速``），
+          所以调速 / 慢放不需要重建时刻表。
+
+        覆盖范围按 30 秒取整，小幅编辑不会改变范围、缓存可以复用。
+
+        每帧都会调用：**没有变化时只比较几个键**；``beat_bounds()``（要遍历
+        全部物件）也只在谱面版本 / 音频长度变化时才重算。
+        """
+        chart = self.document.chart
+        settings = chart.settings
+        timing = chart.timing
+        length_ms = self.audio.length_ms
+        scope_key = (self.document.revision, int(length_ms // 30000.0))
+        if scope_key != self._effects_scope_key:
+            _, end_beat = chart.beat_bounds()
+            end_ms = max(length_ms, timing.beat_to_song_ms(end_beat) + 4000.0)
+            self._effects_bucket = int(end_ms // 30000.0)
+            self._effects_scope_key = scope_key
+        bucket = self._effects_bucket
+        until_ms = (bucket + 1) * 30000.0
+        base_key = (
+            timing.offset_ms,
+            tuple((seg.start_beat, seg.bpm, seg.beats_per_bar) for seg in timing.segments),
+            bucket,
+        )
+        clicks_key = (settings.metronome, base_key)
+        hits_key = (self.document.revision, bool(settings.hit_enabled), base_key)
+        changed = False
+        if clicks_key != self._effects_clicks_key:
+            self._effects_clicks = effect_events(chart, settings.metronome, False, until_ms)
+            self._effects_clicks_key = clicks_key
+            changed = True
+        if hits_key != self._effects_hits_key:
+            self._effects_hits = effect_events(chart, MODE_OFF, bool(settings.hit_enabled), until_ms)
+            self._effects_hits_key = hits_key
+            changed = True
+        if changed:
+            # 两个已排序列表的合并（Timsort 走 C 层，比重新逐条计算快得多）
+            self._effects_merged = sorted(self._effects_clicks + self._effects_hits)
+        if not changed and not refilter:
             return
-        if hits_between(self.document.chart, previous, beat):
-            self.hits.play_hit()
+        start_ms = self.audio.position_ms()
+        self.audio.set_effects(
+            [item for item in self._effects_merged if item[0] > start_ms + 1e-6]
+        )
 
     def set_metronome(self, mode: str) -> None:
         """视图菜单：关闭 / 小节音 / 节拍音。"""
@@ -371,12 +402,12 @@ class EditorApp:
             return
         # 编辑器设置与谱面无关：直接改值，不进撤销栈
         self.document.chart.settings.metronome = mode
-        self._metronome_last_beat = None
+        self._refresh_effects()                 # 只重算节拍音那一半
         if mode == MODE_OFF:
             self.status("节拍音已关闭")
             return
         detail = "每小节响一声" if mode == MODE_BAR else "每拍响一声"
-        if not self.metronome.available:
+        if not self.audio.usable_audio:
             self.status(f"节拍音已开启（{detail}），但当前音频设备不可用，暂时听不到声音")
         else:
             self.status(f"节拍音已开启：{detail}（小节音比节拍音高一点）")
@@ -773,6 +804,7 @@ class EditorApp:
         timing = self.document.chart.timing
         self.audio.latency_ms = self.document.chart.settings.audio_latency_ms
         song_ms = timing.beat_to_song_ms(self.view.current_beat)
+        self._refresh_effects(refilter=True)   # 时刻表按新的起播位置裁掉过去的条目
         self.audio.play(song_ms)
         reason = audio_silent_reason()
         notes = []
@@ -889,14 +921,19 @@ class EditorApp:
         )
 
     def _apply_volumes(self) -> None:
-        """把设置里的三个音量同步给音频后端与音效播放器。"""
+        """把设置里的三个音量同步给音频后端（音效音量在混音时各自应用）。"""
         settings = self.document.chart.settings
         self.audio.set_volume(settings.music_volume)
-        self.metronome.set_volume(settings.metronome_volume)
-        self.metronome.set_enabled(settings.metronome != MODE_OFF)
-        self.hits.set_volume(settings.hit_volume)
-        self.hits.set_enabled(settings.hit_enabled)
+        self.audio.set_effect_gains(
+            {
+                "bar": settings.metronome_volume,
+                "beat": settings.metronome_volume,
+                "hit": settings.hit_volume,
+            }
+        )
         self.hit_volume = settings.hit_volume
+        # 音量只更新混音增益（键没变就不会重算时刻表）；开关打击音会改键
+        self._refresh_effects()
 
     def toggle_hit_sound(self) -> None:
         """音效菜单：开关打击音效。"""

@@ -201,54 +201,94 @@ class AppFlowTest(unittest.TestCase):
         self.assertTrue(narrow, "窄窗口应自动出现横向滚动条")
         self.assertEqual(toolbar._hscroll.winfo_manager(), "pack")
 
-    def test_sound_effects_follow_the_music_clock_not_the_ui(self) -> None:
-        """延迟不为 0 时：音效按“软件位置”触发（与音乐同步），UI 仍用听到的位置。
-
-        场景：后端位置 1000ms、系统延迟 200ms -> 耳朵听到的是 800ms。
-        120BPM 下 800ms 是第 1.6 拍、1000ms 是第 2 拍；在 2.0 拍放一个物件：
-        音效应当在**后端位置到达第 2 拍**时触发（此刻 UI 才显示到 1.6 拍），
-        这样听到音效时正好与歌曲对齐。
-        """
+    def test_sound_effects_are_precomputed_from_the_song_clock(self) -> None:
+        """节拍音 / 打击音：时刻表按**歌曲毫秒**预先算好交给音频层（不再逐帧触发）。"""
         from rhythm_editor.model.notes import LaneNote
 
         app = self.app
-        app.document.chart.add(LaneNote("L1", 0, 0, 2.0))
-        from rhythm_editor.model.timing import BpmSegment
-
-        app.document.chart.timing.set_segments([BpmSegment(0.0, 120.0, 4)])
-        app.document.chart.timing.offset_ms = 0.0
-
-        class StubAudio:
-            latency_ms = 200.0
-            rate = 1.0
-            path = "stub.wav"
-            is_playing = True
-            backend = None
-            usable_audio = True
-
-            def position_ms(self) -> float:
-                return 1000.0
-
-            def heard_position_ms(self) -> float:
-                return 800.0
-
-            def poll(self) -> None:  # pragma: no cover
-                return
-
-        fired: list = []
-        app.hits.play_hit = lambda: fired.append(app.view.current_beat)  # type: ignore[assignment]
-        original_audio = app.audio
-        app.audio = StubAudio()  # type: ignore[assignment]
-        app._hit_last_beat = 1.9
-        app._metronome_last_beat = 1.9
+        chart = app.document.chart
+        chart.add(LaneNote("L1", 0, 0, 2.0))
+        calls: list = []
+        original = app.audio.set_effects
+        app.audio.set_effects = lambda events, gains=None: calls.append(list(events))  # type: ignore[assignment]
         try:
-            app._advance_playback()
+            app.set_metronome("beat")
+            chart.settings.hit_enabled = True
+            app._refresh_effects(refilter=True)
         finally:
-            app.audio = original_audio
+            app.audio.set_effects = original  # type: ignore[assignment]
 
-        self.assertEqual(len(fired), 1, "后端位置到达第 2 拍时应当触发打击音")
-        self.assertAlmostEqual(app.view.current_beat, 1.6, places=6, msg="判定线用听到的位置")
+        self.assertTrue(calls, "应当把预先算好的音效时刻交给音频层")
+        events = calls[-1]
+        self.assertEqual(events, sorted(events), "时刻表要按时间排序")
+        timing = chart.timing
+        beat_events = [t for t, kind in events if kind == "beat"]
+        hit_events = [t for t, kind in events if kind == "hit"]
+        self.assertGreaterEqual(len(beat_events), 2)
+        # 相邻节拍音的间隔 = 一拍的歌曲毫秒（按该处 BPM 换算）
+        step = beat_events[1] - beat_events[0]
+        bpm = timing.bpm_at(timing.song_ms_to_beat(beat_events[0]))
+        self.assertAlmostEqual(step, 60000.0 / bpm, delta=1.0)
+        # 打击音时刻 = 物件开头判定时刻（和弦只响一声）
+        note_times = {round(timing.beat_to_song_ms(note.head_beat)) for note in chart.all_notes()}
+        hit_times = {round(t) for t in hit_events}
+        self.assertTrue(hit_times, "应当有打击音时刻")
+        self.assertLessEqual(hit_times, note_times)
+        self.assertIn(round(timing.beat_to_song_ms(2.0)), hit_times)
+        # 起播位置之前的条目被裁掉（过去的音效不会补发）
+        start = app.audio.position_ms()
+        self.assertTrue(all(t > start + 1e-6 for t, _kind in events))
 
+    def test_effect_schedule_is_maintained_incrementally(self) -> None:
+        """增量维护：改物件只重算打击音，切模式只重算节拍音，
+        音量 / 倍速变化完全不重算时刻表。"""
+        import rhythm_editor.app as app_module
+        from rhythm_editor.model.notes import LaneNote
+
+        app = self.app
+        app.document.chart.settings.hit_enabled = True
+        app.set_metronome("beat")
+        app._refresh_effects(refilter=True)
+        clicks, clicks_key = app._effects_clicks, app._effects_clicks_key
+        hits, hits_key = app._effects_hits, app._effects_hits_key
+
+        calls: list = []
+        original = app_module.effect_events
+
+        def counting(*args, **kwargs):
+            calls.append(args[1] if len(args) > 1 else kwargs.get("mode"))
+            return original(*args, **kwargs)
+
+        app_module.effect_events = counting  # type: ignore[assignment]
+        try:
+            # 1) 编辑物件：节拍音与谱面无关，列表对象原样复用；打击音重算
+            app.document.add_note(LaneNote("L99", 0, 1, 6.0))
+            app._refresh_effects()
+            self.assertEqual(calls, ["off"], "改物件只该重算打击音那一半")
+            self.assertIs(app._effects_clicks, clicks, "节拍音列表应原样复用（不重算）")
+            self.assertEqual(app._effects_clicks_key, clicks_key)
+            self.assertNotEqual(app._effects_hits_key, hits_key)
+            self.assertIsNot(app._effects_hits, hits)
+
+            # 2) 切换节拍音模式：只重算节拍音那一半
+            recomputed = app._effects_hits
+            calls.clear()
+            app.set_metronome("bar")
+            self.assertEqual(calls, ["bar"], "切模式只该重算节拍音")
+            self.assertIs(app._effects_hits, recomputed, "打击音列表应原样复用")
+
+            # 3) 音量 / 倍速：只影响混音，不碰时刻表
+            calls.clear()
+            settings = app.document.chart.settings
+            settings.music_volume, settings.metronome_volume = 0.4, 0.4
+            app._apply_volumes()
+            app.audio.set_rate(0.5)
+            app.audio.set_rate(1.0)
+            app._refresh_effects()
+            self.assertEqual(calls, [], "音量 / 倍速变化不应重算时刻表")
+            self.assertIs(app._effects_hits, recomputed)
+        finally:
+            app_module.effect_events = original  # type: ignore[assignment]
 
     def test_help_menu_has_guide_and_shortcuts_only(self) -> None:
         # 帮助已并入「编辑器设置」菜单

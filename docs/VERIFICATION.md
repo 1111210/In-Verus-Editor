@@ -50,7 +50,7 @@ python -m unittest discover -s tests -t .
 ```
 
 本机（Windows + Python 3.14.7 + Tk 9.0 + pygame-ce 2.5.8 + Panda3D 1.10）：
-**355 项全部通过**（约 16 秒），其中包含真实 Tk 画布与 headless pygame 的界面测试。
+**392 项全部通过**（约 17 秒），其中包含真实 Tk 画布与 headless pygame 的界面测试。
 
 | 测试文件 | 覆盖内容 |
 | --- | --- |
@@ -70,7 +70,7 @@ python -m unittest discover -s tests -t .
 | `test_editor_smoke.py` | 真实 Tk 画布：全部放置工具、图层、空域、滚动 / 缩放、拖拽 |
 | `test_app_flow.py` | 应用级：菜单、播放 / 暂停、演示模式、设置与保存、窗口模式 |
 | `test_audio_rate.py` | 倍速档位（含 0.01 ~ 0.1 细档）与重采样、延迟补偿、分窗口调度、连续播放 |
-| `test_metronome.py` | 节拍音与打击音效、音量、慢放不改变音效长度 |
+| `test_metronome.py` | 音效时刻表（预计算 / 排序 / 极高 BPM）、波形、慢放不改变音效长度、混音位置与窗口边界衔接 |
 | `test_launcher.py` | 启动脚本、启动日志、音频后端诊断 |
 | `test_game_judge.py` | 游玩器判定窗口、长按 / 空域区间、滑键、准度与分数 |
 | `test_game_scene.py` | 游玩器 3D 布局、投影、取景 |
@@ -143,7 +143,9 @@ python tools/check_audio.py
 | 命中测试与渲染共用几何 | `test_perf_hit.py`、`ui/geometry.py::HitCache` |
 | 游玩器两条渲染路径共用世界几何 | `game/frame.py`；`test_game_app.py` 的两条路径像素断言 |
 | 编辑器与游玩器共用图层顺序 | `model/notes.py::layer_rank()`；`test_editor_smoke.py::test_hit_priority_follows_layer_order` |
-| 音效与音乐同步、判定线跟随听到的位置 | `test_app_flow.py::test_sound_effects_follow_the_music_clock_not_the_ui` |
+| 音效时刻表按歌曲毫秒预计算、增量维护（编辑只重算打击音、音量 / 倍速不重算） | `test_app_flow.py::test_sound_effects_are_precomputed_from_the_song_clock`、`test_effect_schedule_is_maintained_incrementally` |
+| 音效混进歌曲输出（不参与重采样、窗口边界不截断） | `test_metronome.py::EffectMixTests` |
+| 判定线跟随听到的位置（延迟补偿按倍速缩放） | `test_audio_rate.py`、`test_app_flow.py` |
 | 判定窗口不随倍速改变 | `test_game_judge.py::test_windows_are_real_time_not_song_time` |
 
 ### 7.3 游玩器实测

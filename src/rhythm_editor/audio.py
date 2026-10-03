@@ -21,6 +21,7 @@ from __future__ import annotations
 import os
 import sys
 import time
+import bisect
 from typing import List, Optional, Tuple
 
 from . import config
@@ -62,6 +63,11 @@ STRETCH_TARGET_OUTPUT_MS = 8_000.0
 # 源窗口下限：极慢倍速下也至少给插值这么多样本（否则一次插值的跨度太大）
 STRETCH_SOURCE_MIN_MS = 250.0
 STRETCH_WINDOW_MAX_MS = 8_000.0   # 源窗口上限
+
+# 音效混音时向窗口起点左侧回看的余量（毫秒）：音效不参与时间伸缩，
+# 长度固定（编辑器当前是 45ms 的“滴”声），取 100ms 留足余量，
+# 保证跨窗口边界的音效尾巴也能接着混完（见 StretchedSoundBackend._mix_effects）
+EFFECT_TAIL_MS = 100.0
 
 
 def stretch_window_ms(rate: float) -> float:
@@ -374,6 +380,13 @@ class StretchedSoundBackend:  # pragma: no cover - 依赖 pygame + numpy
         self._start_time = 0.0
         self._paused_ms = 0.0
         self._length_ms = 0.0
+        # 预计算的音效轨道（歌曲毫秒 + 种类）：合成窗口时直接混进输出
+        self._effects: List[Tuple[float, str]] = []
+        self._effect_gains: dict = {}
+        self._effect_factory = None
+        self._effect_cache: dict = {}
+        # 窗口起点往左回看多少：把上一个窗口里开始的音效尾巴接着混完（见 _mix_effects）
+        self._effect_margin_ms = EFFECT_TAIL_MS
 
     # ------------------------------------------------------------------ 载入
     def load(self, path: str) -> bool:
@@ -401,6 +414,114 @@ class StretchedSoundBackend:  # pragma: no cover - 依赖 pygame + numpy
         self._queued = None
         self._handed_end_ms = 0.0
 
+    # ------------------------------------------------------------------ 音效
+    def set_effects(self, events, factory=None) -> None:
+        """设置**预先算好、且已按时间排序**的音效轨道：``events = [(歌曲毫秒, 种类)]``。
+
+        只做一次浅拷贝（不排序、不重建时间数组）——时刻表由上层增量维护，
+        避免每次编辑都全量重算。``factory(kind, rate, channels)`` 合成波形。
+        """
+        self._effects = list(events)
+        if factory is not None and factory is not self._effect_factory:
+            self._effect_factory = factory
+            self._effect_cache.clear()      # 换工厂才需要重合成
+            self._effect_margin_ms = EFFECT_TAIL_MS
+        self._refresh_queued()
+
+    def set_effect_gains(self, gains) -> None:
+        """每种音效的音量（0..1）：与歌曲音量互相独立。"""
+        normalized = {str(k): float(v) for k, v in gains.items()}
+        if normalized == self._effect_gains:
+            return
+        self._effect_gains = normalized
+        self._refresh_queued()
+
+    def _refresh_queued(self) -> None:
+        """用当前的时刻表 / 音量重新合成**已排队**的窗口。
+
+        正在播的窗口已经交给通道、改不了；排队窗口是马上要播的那一段，
+        重新合成它就能让改设置 / 编辑在**下一个窗口**生效，而不是等两个窗口
+        （约 16 秒）。改动不频繁，一次重合成的代价可以接受。
+
+        只有确认“锚点窗口还在播、排队窗口还没开始”时才替换：排队窗口一旦
+        已经开始播，替换会让同一段音乐播两遍（或整段断流），此时按 ``poll()``
+        的规则把它滚动成锚点，改动留到下一个窗口。
+        """
+        if not self._playing or self._queued is None or self._channel is None:
+            return
+        try:
+            playing = self._channel.get_sound()
+        except Exception:  # pragma: no cover - 依赖驱动
+            return
+        if playing is self._queued[0]:
+            due = self._anchor_time + (
+                (self._queued[1] - self._anchor[1]) / 1000.0 / max(1e-6, self.rate)
+            )
+            self._anchor = self._queued
+            self._anchor_time = due
+            self._queued = None
+            return
+        if self._anchor is None or playing is not self._anchor[0]:
+            return                              # 正在切换：这一轮不替换
+        window = self._make_window(self._queued[1])
+        if window is None:
+            return
+        try:
+            self._channel.queue(window[0])      # 覆盖掉旧的排队窗口
+        except Exception:  # pragma: no cover - 依赖驱动
+            return
+        self._queued = window
+
+    def _effect_data(self, kind: str):
+        data = self._effect_cache.get(kind)
+        if data is None and self._effect_factory is not None:
+            data = self._effect_factory(kind, self.freq, self.channels)
+            self._effect_cache[kind] = data
+            length_ms = float(data.shape[0]) / self.freq * 1000.0
+            self._effect_margin_ms = max(self._effect_margin_ms, length_ms)
+        return data
+
+    def _mix_effects(self, output, start_ms: float, stop_ms: float) -> None:
+        """把落在这一窗口里的音效混进输出缓冲。
+
+        音效按**自己的采样长度**叠加（不参与歌曲的时间伸缩），所以慢放时
+        “滴”声依然是 45ms；输出位置 = ``(音效时刻 − 窗口起点) / 倍速``。
+        窗口起点左侧 ``音效长度 × 倍速`` 内开始的音效也要回看：它们在本窗口
+        里只剩尾巴，不回看就会被窗口边界截断。
+        """
+        if not self._effects or self._effect_factory is None or output.size == 0:
+            return
+        rate = max(1e-6, float(self.rate))
+        index = bisect.bisect_left(
+            self._effects, start_ms - self._effect_margin_ms * rate, key=lambda item: item[0]
+        )
+        total = int(output.shape[0])
+        for position in range(index, len(self._effects)):
+            song_ms, kind = self._effects[position]
+            if song_ms >= stop_ms:
+                break
+            data = self._effect_data(kind)
+            if data is None:
+                continue
+            offset = int(round((song_ms - start_ms) / rate * self.freq / 1000.0))
+            skip = 0
+            if offset < 0:                       # 上一个窗口就开始的音效：接尾巴
+                skip = min(int(data.shape[0]), -offset)
+                offset = 0
+            if offset >= total:
+                break
+            count = min(int(data.shape[0]) - skip, total - offset)
+            if count <= 0:
+                continue
+            gain = float(self._effect_gains.get(kind, 1.0))
+            piece = output[offset:offset + count].astype(_NP.int32)
+            mix = data[skip:skip + count].astype(_NP.int32)
+            if abs(gain - 1.0) > 1e-9:
+                mix = (mix * gain).astype(_NP.int32)
+            output[offset:offset + count] = _NP.clip(
+                piece + mix, -32768, 32767
+            ).astype(_NP.int16)
+
     # ------------------------------------------------------------------ 播放
     def _make_window(self, start_ms: float):
         if self._samples is None:
@@ -418,8 +539,21 @@ class StretchedSoundBackend:  # pragma: no cover - 依赖 pygame + numpy
             return None
         chunk = self._samples[start:stop]
         stretched = time_stretch(chunk, self.rate)
+        volume = max(0.0, min(1.0, self._volume))
+        if self._effect_factory is not None:
+            # 音效混音模式：歌曲音量烘进缓冲，音效按各自音量叠加（两者互不影响）；
+            # 通道 / Sound 音量固定 1.0，避免把音效一起缩放
+            stretched = _NP.array(stretched, copy=True)
+            if volume < 0.999:
+                stretched = _NP.clip(
+                    stretched.astype(_NP.float32) * volume, -32768, 32767
+                ).astype(_NP.int16)
+            self._mix_effects(
+                stretched, start / self.freq * 1000.0, stop / self.freq * 1000.0
+            )
+            volume = 1.0
         sound = _PYGAME.sndarray.make_sound(_NP.ascontiguousarray(stretched))
-        sound.set_volume(max(0.0, min(1.0, self._volume)))
+        sound.set_volume(volume)
         return sound, start / self.freq * 1000.0, stop / self.freq * 1000.0
 
     def play(self, start_ms: float) -> None:
@@ -525,10 +659,19 @@ class StretchedSoundBackend:  # pragma: no cover - 依赖 pygame + numpy
         return min(position, self._anchor[2], self._length_ms)
 
     def set_volume(self, volume: float) -> None:
-        self._volume = float(volume)
+        volume = max(0.0, min(1.0, float(volume)))
+        if abs(volume - self._volume) < 1e-9:
+            return
+        self._volume = volume
+        if self._effect_factory is not None:
+            # 混音模式下歌曲音量是烘进缓冲的（音效各自带音量），
+            # 只改通道音量会把音效一起缩放，所以要重合成排队窗口
+            self._refresh_queued()
+            return
+        channel_volume = self._volume
         for window in [w for w in (self._anchor, self._queued) if w is not None]:
             try:
-                window[0].set_volume(max(0.0, min(1.0, self._volume)))
+                window[0].set_volume(channel_volume)
             except Exception:
                 pass
 
@@ -566,6 +709,10 @@ class AudioPlayer:
         self._plain_backend = self._create_plain_backend()
         self._stretch_backend = None
         self.backend = self._plain_backend
+        # 预计算的音效轨道（编辑器用）：[(歌曲毫秒, 种类)] + 各自音量 + 波形工厂
+        self._effects: List[Tuple[float, str]] = []
+        self._effect_gains: dict = {}
+        self._effect_factory = None
 
     # ------------------------------------------------------------------ 后端
     @staticmethod
@@ -588,8 +735,9 @@ class AudioPlayer:
         target = self.path if path is None else path
         if not target:
             return self._silent_clock
-        # 只要不是 1.0x 就必须用重采样后端（< 1 慢放，> 1 加速）
-        want_stretch = abs(self.rate - 1.0) > 1e-9
+        # 只要不是 1.0x 就必须用重采样后端（< 1 慢放，> 1 加速）；
+        # 启用音效混音时也必须用它（普通流式后端无法把音效混进输出）
+        want_stretch = abs(self.rate - 1.0) > 1e-9 or self._effect_factory is not None
         if want_stretch and STRETCH_AVAILABLE:
             if self._stretch_backend is None:
                 try:
@@ -603,6 +751,65 @@ class AudioPlayer:
     @property
     def stretch_active(self) -> bool:
         return isinstance(self.backend, StretchedSoundBackend)
+
+    # ------------------------------------------------------------------ 音效
+    def enable_effects(self, factory) -> None:
+        """启用“音效混音”路径：后端优先选择可混音的重采样后端。
+
+        ``factory(kind, sample_rate, channels)`` 按种类合成波形。
+        """
+        self._effect_factory = factory
+        backend = self._select_backend()
+        if backend is self.backend:
+            self._sync_effects()
+            return
+        position = self.position_ms()
+        was_playing = self._playing
+        self._stop_all_backends()
+        self._reload_backend(backend)
+        self._paused_at_ms = position
+        self._playing = False
+        if was_playing and self.path:
+            self.play(position)
+
+    def set_effects(self, events) -> None:
+        """设置**预先算好、已排序**的音效轨道：``events = [(歌曲毫秒, 种类)]``。"""
+        self._effects = list(events)
+        self._sync_effects()
+
+    def set_effect_gains(self, gains) -> None:
+        """音效各自的音量（0..1）：与歌曲音量互相独立。"""
+        self._effect_gains = {str(k): float(v) for k, v in gains.items()}
+        if isinstance(self.backend, StretchedSoundBackend):
+            self.backend.set_effect_gains(self._effect_gains)
+
+    def _sync_effects(self) -> None:
+        if isinstance(self.backend, StretchedSoundBackend):
+            self.backend.set_effects(self._effects, self._effect_factory)
+            self.backend.set_effect_gains(self._effect_gains)
+
+    def _reload_backend(self, backend) -> None:
+        """换后端：载入当前歌曲、套用倍速，并把音效轨道同步过去。"""
+        self.backend = backend
+        if self.path:
+            try:
+                if not backend.load(self.path):      # pragma: no cover - 载入失败
+                    self.backend = self._plain_backend
+            except Exception:                        # pragma: no cover
+                self.backend = self._plain_backend
+        try:
+            self.backend.set_rate(self.rate)
+        except Exception:                            # pragma: no cover
+            pass
+        self._sync_effects()
+
+    @property
+    def length_ms(self) -> float:
+        """当前后端知道的歌曲长度（毫秒；未知时为 0）。"""
+        try:
+            return float(self.backend.length_ms)
+        except Exception:                            # pragma: no cover
+            return 0.0
 
     # ------------------------------------------------------------------ 属性
     @property
@@ -628,7 +835,7 @@ class AudioPlayer:
         base = os.path.basename(self.path)
         if not self.usable_audio:
             return f"音频后端：silent（{_silent_reason()}，静音播放）· {base} · {_fmt_rate(self.rate)}"
-        tone = "· 变调" if self.stretch_active else ""
+        tone = "· 变调" if self.stretch_active and abs(self.rate - 1.0) > 1e-9 else ""
         text = f"音频后端：{self.backend.name} · {base} · {_fmt_rate(self.rate)}{tone}"
         return f"{text} · {self.last_error}" if self.last_error else text
 
@@ -656,6 +863,7 @@ class AudioPlayer:
         if ok:
             self.path = path
             self.backend.set_rate(self.rate)
+            self._sync_effects()
         return ok
 
     def unload(self) -> None:
@@ -699,17 +907,13 @@ class AudioPlayer:
         self._stop_all_backends()
         backend = self._select_backend()
         if backend is not self.backend:
-            self.backend = backend
-            if self.path:
-                try:
-                    if not backend.load(self.path):  # pragma: no cover
-                        self.backend = self._plain_backend
-                except Exception:  # pragma: no cover
-                    self.backend = self._plain_backend
-        try:
-            self.backend.set_rate(self.rate)
-        except Exception:  # pragma: no cover
-            pass
+            self._reload_backend(backend)
+        else:
+            try:
+                self.backend.set_rate(self.rate)
+            except Exception:  # pragma: no cover
+                pass
+            self._sync_effects()
         self._paused_at_ms = position
         self._playing = False
         # 播放中改倍速会换成另一个后端（普通 ↔ 重采样），无缝接力很容易出现

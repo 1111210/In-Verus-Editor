@@ -121,8 +121,8 @@ python -m unittest discover -s tests -t . -v
 | 9 速度组 | `model/speed.py`、`ui/dialogs.py::SpeedGroupDialog` | 每条流速记录（起始拍 + 倍率，支持 0/负数反向）；物件与组双向记录；删除组时物件回到默认组；位置由“判定时刻在判定线上”反推 |
 | 10 播放 / 暂停 | `audio.py`、`app.py` | 任意位置起播、延迟补偿、暂停时判定线吸附网格 |
 | 11 演示模式 | `app.py::set_demo_mode` | 两平面叠加、只读、支持滚动 / 缩放 / 播放 / 暂停 |
-| 12 节拍音 | `metronome.py`、`app.py::set_metronome` | 「视图 → 节拍音」：关闭（默认）/ 小节音 / 节拍音；播放时按小节线或整拍发一声“滴”，慢放不改变这声的长度 |
-| 13 打击音效 + 音量 | `metronome.py::hits_between/hit_samples`、`ui/dialogs.py::VolumeDialog` | 「音效」菜单：打击音效开关、节拍音模式、音量…（音乐 / 节拍音 / 打击音，写入谱面 `editor` 段） |
+| 12 节拍音 | `metronome.py::effect_events/effect_samples`、`audio.py::StretchedSoundBackend` | 「视图 → 节拍音」：关闭（默认）/ 小节音 / 节拍音；时刻预先算好并混进歌曲输出（慢放不改变这声的长度，极高 BPM / 掉帧不漏响） |
+| 13 打击音效 + 音量 | `metronome.py::effect_events/hit_samples`、`ui/dialogs.py::VolumeDialog` | 「音效」菜单：打击音效开关、节拍音模式、音量…（音乐 / 节拍音 / 打击音，写入谱面 `editor` 段；时刻表按编辑 / 设置增量维护） |
 | 14 侧轨高亮 / 放大 / 滚动条反向 | `ui/renderer.py`、`config.py`、`ui/view.py` | 视图菜单「侧轨高亮」（第 1 / 6 轨暗紫）；最大放大到 0.2 秒；右侧滚动条方向反向（1 = 曲首） |
 
 > 速度组的流速可正可负并叠加，因此**物件位置不是判定时刻的单调函数**（远处的物件可能被

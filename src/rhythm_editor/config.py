@@ -157,6 +157,3 @@ EPS = 1e-7
 
 # 播放自动停止的余量（秒）：音乐与谱面都播完这么久之后才停
 PLAY_END_MARGIN_SECONDS = 3.0
-
-# 节拍音：播放中一次 tick 最多补响一声，跳过这么多拍以上的跳转不补响
-METRONOME_MAX_JUMP_BEATS = 2.0

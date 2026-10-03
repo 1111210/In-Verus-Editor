@@ -1,12 +1,13 @@
 """播放音效：节拍音（打拍器）与打击音效。
 
-* :func:`clicks_between` —— 纯函数，算出这一段时间里应该响几声（便于单测）；
-* :func:`hits_between`  —— 算出这段时间里有哪些物件正好到达判定线（打击音）；
-* :class:`Metronome`    —— 用 pygame 合成音效并播放（正弦“滴”声 / 白噪声打击声），
+* :func:`effect_events` —— 纯函数，**预先算出整条时间轴上所有音效的时刻**
+  （歌曲毫秒），播放时由音频层直接混进输出流，不再逐帧判断；
+* :func:`effect_samples` —— 按种类合成波形（正弦“滴”声 / 白噪声打击声）；
+* :class:`Metronome`    —— 即时的独立通道路径（游玩器的打击音用），
   缺依赖时静默降级。
 
-声音是**独立于歌曲**的（pygame 的 Sound 走单独通道），所以开着音效不影响播放；
-音量由「编辑器设置 → 音量」分别控制（音乐 / 节拍音 / 打击音）。
+编辑器走的是“预计算 + 混音”：音效在音频窗口合成时按时刻叠加，所以极高 BPM /
+掉帧也不会漏响、迟到；音效各自带音量（音乐 / 节拍音 / 打击音三个音量互相独立）。
 """
 
 from __future__ import annotations
@@ -14,11 +15,8 @@ from __future__ import annotations
 import math
 from typing import TYPE_CHECKING, List, Optional
 
-from . import config
-
 if TYPE_CHECKING:  # 只用于类型标注，避免和 model 包循环导入
     from .model.chart import Chart
-    from .model.timing import TimingMap
 
 MODE_OFF = "off"
 MODE_BAR = "bar"
@@ -40,31 +38,6 @@ BEAT_FREQ = 880.0
 VOLUME = 0.20
 # 打击音：白噪声（与节拍音同长度、同包络、同基准音量）
 HIT_NOISE_SEED = 20240929
-
-
-def clicks_between(
-    timing: "TimingMap", mode: str, prev_beat: float, now_beat: float
-) -> List[float]:
-    """返回 ``(prev_beat, now_beat]`` 之间该响的拍位置（最多一条）。
-
-    * ``MODE_BAR``：小节线（每段起点重新起算，BPM 变更处一定有线）；
-    * ``MODE_BEAT``：整数拍；
-    * ``MODE_OFF`` / 时间没有前进 / 跳转太远（seek、卡顿）都返回空列表，
-      不会一口气补发一串“滴”声。
-    """
-    prev = float(prev_beat)
-    now = float(now_beat)
-    if mode not in (MODE_BAR, MODE_BEAT) or now <= prev:
-        return []
-    if now - prev > config.METRONOME_MAX_JUMP_BEATS:
-        return []
-    if mode == MODE_BAR:
-        lines = timing.bar_lines(prev, now)
-        return [b for b in lines if prev < b <= now + 1e-9][:1]
-    first = math.floor(prev) + 1
-    if first <= now + 1e-9:
-        return [float(first)]
-    return []
 
 
 def click_samples(freq: float, sample_rate: int = SAMPLE_RATE, channels: int = 1):
@@ -105,26 +78,62 @@ def hit_samples(sample_rate: int = SAMPLE_RATE, channels: int = 1):
     return np.ascontiguousarray(data)
 
 
-def hits_between(chart: "Chart", prev_beat: float, now_beat: float) -> List[str]:
-    """返回 ``(prev_beat, now_beat]`` 之间**到达判定线**的物件 id。
+def effect_samples(kind: str, sample_rate: int = SAMPLE_RATE, channels: int = 1):
+    """按音效种类合成波形（供音频层直接混进输出）。"""
+    if kind == "hit":
+        return hit_samples(sample_rate, channels)
+    freq = BAR_FREQ if kind == "bar" else BEAT_FREQ
+    return click_samples(freq, sample_rate, channels)
 
-    * 按键 / 多轨按键 / 滑键 / 鼠标点击按键：判定时刻就是它们的 ``beat``；
-    * 长按、空域：取**开头**（``beat_start``）；
-    * 一次 tick 最多返回一个（同一拍的和弦只响一声，避免叠成噪音）；
-      倒放或跳跃（> ``METRONOME_MAX_JUMP_BEATS`` 拍）不补发。
+
+def _chart_end_ms(chart: "Chart") -> float:
+    """谱面最后一个物件的结束时刻（歌曲毫秒；没有物件时为 0）。"""
+    end_beat = 0.0
+    for note in chart.all_notes():
+        end_beat = max(end_beat, float(note.tail_beat))
+    return chart.timing.beat_to_song_ms(end_beat)
+
+
+def effect_events(
+    chart: "Chart",
+    mode: str = MODE_OFF,
+    hit_enabled: bool = True,
+    until_ms: Optional[float] = None,
+) -> List[tuple]:
+    """预先算出整条时间轴上所有音效的**歌曲毫秒时刻**。
+
+    * 节拍音：``MODE_BAR`` 取小节线（BPM 变更处一定有），``MODE_BEAT`` 取整数拍；
+    * 打击音：每个物件的**开头判定时刻**（长按 / 空域取开头），
+      同一时刻的和弦只响一声；
+    * 返回按时间排序的 ``[(song_ms, kind)]``，``kind`` ∈ ``bar`` / ``beat`` / ``hit``。
+
+    音频层按这张表把音效混进输出流；起播位置之前的条目不会被混（等于
+    “跳转 / 暂停恢复不补发一串滴声”）。
     """
-    prev = float(prev_beat)
-    now = float(now_beat)
-    if now <= prev or now - prev > config.METRONOME_MAX_JUMP_BEATS:
-        return []
-    for note in chart.sorted_notes():          # 已按 (head_beat, tail_beat, id) 排序
-        head = float(note.head_beat)
-        if head <= prev:
-            continue
-        if head <= now + 1e-9:
-            return [note.id]
-        break
-    return []
+    timing = chart.timing
+    events: List[tuple] = []
+    end_ms = float(until_ms) if until_ms else _chart_end_ms(chart)
+    if mode in (MODE_BAR, MODE_BEAT):
+        end_beat = timing.song_ms_to_beat(end_ms)
+        if mode == MODE_BAR:
+            for beat in timing.bar_lines(0.0, end_beat):
+                events.append((timing.beat_to_song_ms(float(beat)), "bar"))
+        else:
+            last = int(math.floor(end_beat)) + 1
+            for beat in range(0, max(0, last)):
+                events.append((timing.beat_to_song_ms(float(beat)), "beat"))
+    if hit_enabled:
+        previous_ms: Optional[float] = None
+        for note in chart.sorted_notes():      # 已按 (head_beat, tail_beat, id) 排序
+            ms = timing.beat_to_song_ms(note.head_beat)
+            if ms > end_ms:
+                break
+            if previous_ms is not None and abs(ms - previous_ms) < 1e-6:
+                continue                       # 同一拍的和弦只响一声
+            events.append((ms, "hit"))
+            previous_ms = ms
+    events.sort(key=lambda item: (item[0], item[1]))
+    return events
 
 
 class Metronome:

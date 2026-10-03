@@ -62,6 +62,8 @@ class Document:
         self._undo: List[UndoRecord] = []
         self._redo: List[UndoRecord] = []
         self.max_undo = 500
+        # 谱面数据的版本号：每次编辑 / 撤销 / 重做 / 换谱面都 +1（供音效时刻表等缓存失效）
+        self.revision = 0
 
     # ------------------------------------------------------------------ 文件
     @property
@@ -76,6 +78,7 @@ class Document:
         self.chart = chart
         self.path = path
         self.dirty = False
+        self.revision += 1
         self.selection.clear()
         self._undo.clear()
         self._redo.clear()
@@ -88,6 +91,7 @@ class Document:
             self._undo.pop(0)
         self._redo.clear()
         self.dirty = True
+        self.revision += 1          # 谱面数据变了（供缓存失效用）
 
     def can_undo(self) -> bool:
         return bool(self._undo)
@@ -109,6 +113,7 @@ class Document:
         self.selection = {sid for sid in record.selection_before if self.chart.find(sid)}
         self._redo.append(record)
         self.dirty = True
+        self.revision += 1
         return True
 
     def redo(self) -> bool:
@@ -119,6 +124,7 @@ class Document:
         self.selection = {sid for sid in record.selection_after if self.chart.find(sid)}
         self._undo.append(record)
         self.dirty = True
+        self.revision += 1
         return True
 
     # -------------------------------------------------------- 轻量结构编辑
