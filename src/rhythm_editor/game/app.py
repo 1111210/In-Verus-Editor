@@ -2641,17 +2641,24 @@ class PlayerApp:
                 z = max(0.0, self._note_z(self._head_ms(note), now_ms))
                 shape = frame.slide_shape(note)
                 name = "right" if shape.direction > 0 else "left"
-                # 图案**中点**落在鼠标运动平面上（不是底边贴平面，见 frame.pattern_center）
-                center_y, thick = frame.pattern_center(self.settings.slide_thickness)
+                # 滑键贴图是双倍高（上半楔形 / 下半透明）：图片中心 = 鼠标运动平面，
+                # 可见楔形仍然整条落在平面上方（见 frame.slide_center）
+                center_y, thick = frame.slide_center(self.settings.slide_thickness)
                 scene.quad(f"slide_body_{name}", (shape.start_x + shape.end_x) / 2.0, z,
                            abs(shape.end_x - shape.start_x), thick, center_y, (1, 1, 1, 1),
                            vertical=True, layer=layer)
-                scene.quad(f"slide_arrow_{name}", shape.end_x, z, thick, thick, center_y,
-                           (1, 1, 1, 1), vertical=True, layer=layer)
+                # 箭头画在滑动终点**内侧**：宽 = 厚度的 1/2（贴图 1:2），与软件路径一致
+                arrow_width = thick / 2.0
+                scene.quad(
+                    f"slide_arrow_{name}",
+                    shape.end_x - arrow_width / 2.0 * shape.direction,
+                    z, arrow_width, thick, center_y, (1, 1, 1, 1),
+                    vertical=True, layer=layer,
+                )
             elif isinstance(note, MouseClick):
                 z = max(0.0, self._note_z(self._head_ms(note), now_ms))
                 shape = frame.click_shape(note)
-                center_y, height = frame.pattern_center(self.settings.click_thickness)
+                center_y, height = frame.click_center(self.settings.click_thickness)
                 scene.quad("click_range", (shape.x0 + shape.x1) / 2.0, z,
                            shape.x1 - shape.x0, height, center_y,
                            (1, 1, 1, 1), vertical=True, layer=layer)
@@ -2919,7 +2926,8 @@ class PlayerApp:
             direction = shape.direction
             name = "right" if direction > 0 else "left"
             height = frame.pattern_height(self.settings.slide_thickness)
-            low, high = frame.pattern_span(self.settings.slide_thickness)
+            # 贴图是双倍高（上半楔形 / 下半透明）：所见楔形仍在平面上方
+            low, high = frame.slide_span(self.settings.slide_thickness)
             start_x, end_x = shape.start_x, shape.end_x
             # 贴图的左边界要绑**屏幕左边**（不是"起点"）：左滑键的起点在右、
             # 终点在左，若按起点绑就会把整张贴图左右镜像（Panda 路径按中心+宽度画，
@@ -2944,10 +2952,11 @@ class PlayerApp:
                     self._proj(inner_right, low, z),
                     self._proj(inner_left, low, z),
                 ]
-                self._blit_tex_quad(f"slide_arrow_{name}", arrow_quad, flip_x=direction < 0)
+                # 左 / 右箭头是各自方向的贴图（与主体一样镜像成对），不再二次翻转
+                self._blit_tex_quad(f"slide_arrow_{name}", arrow_quad)
             return True
         assert isinstance(note, MouseClick)
-        low, high = frame.pattern_span(self.settings.click_thickness)
+        low, high = frame.click_span(self.settings.click_thickness)
         height = high - low
         shape = frame.click_shape(note)
         x0, x1, cx = shape.x0, shape.x1, shape.center
@@ -3016,13 +3025,13 @@ class PlayerApp:
                 ha = thin + (height - thin) * t0
                 hb = thin + (height - thin) * t1
                 alpha = int(round(alpha_near + (alpha_far - alpha_near) * (t0 + t1) / 2.0))
-                # 图案以鼠标运动平面为中点（不是底边贴平面）
+                # 缺贴图时的兜底：与贴图版可见效果一致 —— 楔形底边贴平面、向上收尖
                 self._alpha_quad(
                     [
-                        self._proj(xa, MOUSE_PLANE_HEIGHT - ha / 2.0, z),
-                        self._proj(xb, MOUSE_PLANE_HEIGHT - hb / 2.0, z),
-                        self._proj(xb, MOUSE_PLANE_HEIGHT + hb / 2.0, z),
-                        self._proj(xa, MOUSE_PLANE_HEIGHT + ha / 2.0, z),
+                        self._proj(xa, MOUSE_PLANE_HEIGHT, z),
+                        self._proj(xb, MOUSE_PLANE_HEIGHT, z),
+                        self._proj(xb, MOUSE_PLANE_HEIGHT + hb, z),
+                        self._proj(xa, MOUSE_PLANE_HEIGHT + ha, z),
                     ],
                     color,
                     alpha,

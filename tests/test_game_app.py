@@ -746,7 +746,8 @@ class PlayerAppSmokeTests(unittest.TestCase):
         app._draw_play()                    # 各厚度都要能画出来
 
     def test_software_mouse_patterns_centered_on_plane(self) -> None:
-        """软件路径：滑键 / 鼠标点击图案以鼠标运动平面为中点（演示模式同一份代码）。"""
+        """软件路径：点击图案上下各一半；滑键贴图双倍高，但图片中心都在平面上。"""
+        from rhythm_editor.game import frame as game_frame
         from rhythm_editor.game.scene import MOUSE_PLANE_HEIGHT
         from rhythm_editor.model.notes import MouseClick, MouseSlide
 
@@ -758,6 +759,7 @@ class PlayerAppSmokeTests(unittest.TestCase):
         app.chart.mouse_notes = [
             MouseClick("C1", 0.0, 0.5, 0.2),
             MouseSlide("S1", 0.0, 0.2, 0.8),
+            MouseSlide("S2", 0.0, 0.8, 0.2),
         ]
         app.chart.invalidate_order()
         app.scene3d = None                       # 强制软件绘制
@@ -775,14 +777,92 @@ class PlayerAppSmokeTests(unittest.TestCase):
         finally:
             app._blit_tex_quad = original
         plane_y = app._proj(0.0, MOUSE_PLANE_HEIGHT, 0.0)[1]
-        names = ("click_range", "click_diamond", "slide_body_right", "slide_arrow_right")
+        names = (
+            "click_range", "click_diamond",
+            "slide_body_right", "slide_arrow_right",
+            "slide_body_left", "slide_arrow_left",
+        )
         drawn = [entry for entry in captured if entry[0] in names]
         self.assertEqual({name for name, _quad in drawn}, set(names))
         for name, quad in drawn:
             ys = [point[1] for point in quad]
             self.assertAlmostEqual(
-                (min(ys) + max(ys)) / 2.0, plane_y, delta=2.0,
-                msg=f"{name} 应当以鼠标运动平面为中点",
+                (min(ys) + max(ys)) / 2.0, plane_y, delta=4.0,
+                msg=f"{name} 的图片中心应当落在鼠标运动平面上",
+            )
+        heights = {name: max(point[1] for point in quad) - min(point[1] for point in quad)
+                   for name, quad in drawn}
+        self.assertLess(heights["click_range"], heights["slide_body_right"],
+                        "滑键贴图比点击图案高一倍（下半是透明填充）")
+        self.assertAlmostEqual(
+            game_frame.slide_center(app.settings.slide_thickness)[1],
+            2.0 * game_frame.pattern_height(app.settings.slide_thickness),
+        )
+        self.assertAlmostEqual(
+            game_frame.click_center(app.settings.click_thickness)[0], MOUSE_PLANE_HEIGHT
+        )
+
+    def test_software_slide_arrow_direction_and_placement(self) -> None:
+        """箭头渲染路径（临时可见贴图验证）：贴终点内侧、朝滑动方向、在平面上方。
+
+        正式箭头美术尚未实装（贴图全透明），这里在内存里换上一张可见箭头，
+        把渲染路径的几何与朝向锁住。
+        """
+        import numpy as np
+
+        from rhythm_editor.game import frame as game_frame
+        from rhythm_editor.game.scene import MOUSE_PLANE_HEIGHT
+        from rhythm_editor.model.notes import MouseSlide
+
+        pygame = self.pygame
+        app = self.app
+        app._enter_loading()
+        app._start_play()
+        app._load_textures()
+
+        def arrow_surface(direction: int, size: int = 48):
+            """两倍高、上半是洋红三角箭头（尖朝 direction）；正式美术的占位替身。"""
+            xs = np.linspace(-1.0, 1.0, size, dtype=np.float32)[None, :]
+            ys = np.linspace(-1.0, 1.0, size, dtype=np.float32)[:, None]
+            if direction < 0:
+                xs = -xs
+            inside = np.abs(ys) <= (1.0 - xs) / 2.0
+            rgba = np.zeros((size * 2, size, 4), dtype=np.uint8)
+            rgba[:size, ..., 0] = 255
+            rgba[:size, ..., 2] = 255
+            rgba[:size, ..., 3] = np.where(inside, 255, 0)
+            return pygame.image.frombuffer(rgba.tobytes(), (size, size * 2), "RGBA")
+
+        app.textures["slide_arrow_right"] = arrow_surface(1).convert_alpha()
+        app.textures["slide_arrow_left"] = arrow_surface(-1).convert_alpha()
+        app.scene3d = None                       # 强制软件绘制
+        app.settings.speed = 5.0
+        app.settings.slide_thickness = 0.12
+        now = app.chart.timing.beat_to_song_ms(0.0)
+        plane_y = app._proj(0.0, MOUSE_PLANE_HEIGHT, 0.0)[1]
+        for start, end, direction in ((0.2, 0.8, 1), (0.8, 0.2, -1)):
+            app.chart.mouse_notes = [MouseSlide("S", 0.0, start, end)]
+            app.chart.invalidate_order()
+            app.screen.fill((10, 10, 14))
+            app._draw_planes(now)
+            app._draw_notes(now)
+            arr = np.transpose(pygame.surfarray.array3d(app.screen), (1, 0, 2)).astype(int)
+            arrow = (arr[:, :, 0] > 180) & (arr[:, :, 2] > 180) & (arr[:, :, 1] < 120)
+            cols = np.flatnonzero(arrow.any(axis=0))
+            rows = np.flatnonzero(arrow.any(axis=1))
+            self.assertTrue(cols.size, f"应当画出箭头（direction={direction}）")
+            widths = arrow.sum(axis=0)
+            left_h = float(widths[cols.min():cols.min() + 3].mean())
+            right_h = float(widths[cols.max() - 2:cols.max() + 1].mean())
+            if direction > 0:
+                self.assertGreater(left_h, right_h, "右滑键的箭头应当朝右")
+            else:
+                self.assertLess(left_h, right_h, "左滑键的箭头应当朝左")
+            self.assertLess(int(rows.max()), plane_y + 1, "箭头应当整条在平面上方")
+            end_x = app._proj(-0.5 + end, MOUSE_PLANE_HEIGHT, 0.0)[0]
+            tip_x = cols.max() if direction > 0 else cols.min()
+            self.assertLessEqual(
+                abs(int(tip_x) - end_x), 8.0, "箭头尖端应当落在滑动终点处（内侧）"
             )
 
     def test_panda_mouse_patterns_centered_on_plane(self) -> None:
@@ -790,6 +870,7 @@ class PlayerAppSmokeTests(unittest.TestCase):
 
         用桩场景记录 ``quad`` 参数，不需要 GL 上下文。
         """
+        from rhythm_editor.game import frame as game_frame
         from rhythm_editor.game.scene import MOUSE_PLANE_HEIGHT
         from rhythm_editor.model.notes import MouseClick, MouseSlide
 
@@ -798,7 +879,7 @@ class PlayerAppSmokeTests(unittest.TestCase):
                 self.quads: list = []
 
             def quad(self, name, x, z, sx, sz, y, *args, **kwargs) -> None:
-                self.quads.append((name, float(sx), float(sz), float(y)))
+                self.quads.append((name, float(x), float(sx), float(sz), float(y)))
 
             def __getattr__(self, item):
                 return lambda *args, **kwargs: None
@@ -811,6 +892,7 @@ class PlayerAppSmokeTests(unittest.TestCase):
         app.chart.mouse_notes = [
             MouseClick("C1", 0.0, 0.5, 0.2),
             MouseSlide("S1", 0.0, 0.2, 0.8),
+            MouseSlide("S2", 0.0, 0.8, 0.2),
         ]
         app.chart.invalidate_order()
         original = app.scene3d
@@ -820,11 +902,33 @@ class PlayerAppSmokeTests(unittest.TestCase):
             app._render_scene3d(0.0)
         finally:
             app.scene3d = original
-        names = ("click_range", "click_diamond", "slide_body_right", "slide_arrow_right")
+        names = (
+            "click_range", "click_diamond",
+            "slide_body_right", "slide_arrow_right",
+            "slide_body_left", "slide_arrow_left",
+        )
         drawn = [entry for entry in scene.quads if entry[0] in names]
         self.assertEqual({name for name, *_rest in drawn}, set(names))
-        for name, _sx, _sz, y in drawn:
+        for name, _x, _sx, sz, y in drawn:
             self.assertAlmostEqual(y, MOUSE_PLANE_HEIGHT, places=6, msg=name)
+            if "slide" in name:
+                self.assertAlmostEqual(
+                    sz, 2.0 * game_frame.pattern_height(app.settings.slide_thickness),
+                    msg=f"{name} 是双倍高贴图（上半内容 / 下半透明）",
+                )
+            else:
+                self.assertAlmostEqual(
+                    sz, game_frame.pattern_height(app.settings.click_thickness),
+                    msg=f"{name} 内容占满整张图（上下各一半）",
+                )
+        by_name = {name: (x, sx) for name, x, sx, _sz, _y in drawn}
+        height = game_frame.pattern_height(app.settings.slide_thickness)
+        right_end = -0.5 + 0.8
+        left_end = -0.5 + 0.2
+        self.assertAlmostEqual(by_name["slide_arrow_right"][0], right_end - height / 2.0)
+        self.assertAlmostEqual(by_name["slide_arrow_right"][1], height)
+        self.assertAlmostEqual(by_name["slide_arrow_left"][0], left_end + height / 2.0)
+        self.assertAlmostEqual(by_name["slide_arrow_left"][1], height)
 
     def test_region_edge_thickness_matches_panda(self) -> None:
         """同一段空域在两种渲染器里的边线**像素宽度**要一致（同一个世界宽度常量）。"""

@@ -146,11 +146,12 @@ def region_area(width: int = 256, height: int = 256) -> np.ndarray:
 
 
 def slide_body(direction: int, width: int = 256, height: int = 128) -> np.ndarray:
-    """滑键主体：直角三角形（direction=+1 右滑）。
+    """滑键主体：直角三角形（direction=+1 右滑），**两倍高**贴图。
 
-    **贴图底边就是判定线**（渲染时楔形挂在判定线**上方**）：
-    水平直角边贴着判定线、最不透明；宽的一侧朝向滑动方向（直角顶点在那一侧），
-    斜面朝相反方向落下；左滑镜像。
+    **上半 = 楔形**：水平直角边贴着贴图中线（= 判定线）、最不透明；宽的一侧朝向
+    滑动方向（直角顶点在那一侧），斜面朝相反方向落下；左滑镜像。
+    **下半 = 完全透明**。渲染时按“图片中心对齐鼠标运动平面”摆放，于是可见的
+    楔形依旧整条落在平面上方（底边贴平面），与旧版视觉一致。
     """
     xs = np.linspace(0.0, 1.0, width, dtype=np.float32)[None, :]
     top = np.linspace(1.0, 0.0, height, dtype=np.float32)[:, None]      # 1 = 图顶，0 = 判定线
@@ -166,9 +167,10 @@ def slide_body(direction: int, width: int = 256, height: int = 128) -> np.ndarra
          else np.array([235, 210, 110], dtype=np.float32)),
         (height, width, 3),
     )
-    rgba = np.zeros((height, width, 4), dtype=np.float32)
-    rgba[..., :3] = color
-    rgba[..., 3] = alpha * 255.0
+    # 两倍高：上半放楔形，下半完全透明（贴图中心 = 判定线）
+    rgba = np.zeros((height * 2, width, 4), dtype=np.float32)
+    rgba[:height, ..., :3] = color
+    rgba[:height, ..., 3] = alpha * 255.0
     return rgba.astype(np.uint8)
 
 
@@ -235,9 +237,14 @@ def single_pixel(color, alpha: float) -> np.ndarray:
     return np.ascontiguousarray(rgba.astype(np.uint8))
 
 
-def transparent(size: int = 48) -> np.ndarray:
-    """全透明图（滑键箭头当前不使用，保留接口）。"""
-    return np.zeros((size, size, 4), dtype=np.uint8)
+def slide_arrow(size: int = 48) -> np.ndarray:
+    """滑键箭头（**尚未实装**，当前是全透明占位）。
+
+    与 :func:`slide_body` 同一套约定：两倍高，可见箭头画在**上半**、下半完全透明，
+    渲染时按“图片中心对齐鼠标运动平面”摆放；左 / 右是各自方向的镜像贴图
+    （渲染时不再二次翻转）。
+    """
+    return np.zeros((size * 2, size, 4), dtype=np.uint8)
 
 
 def mouse_marker(filled: bool, size: int = 96) -> np.ndarray:
@@ -273,7 +280,7 @@ def build_all(out_dir: str) -> list:
     written.append(_save("region_line.png", single_pixel(np.array([90, 220, 255], dtype=np.float32), 255), out_dir))
     written.append(_save("region_area.png", region_area(), out_dir))
     for direction, name in ((1, "right"), (-1, "left")):
-        written.append(_save(f"slide_arrow_{name}.png", transparent(), out_dir))
+        written.append(_save(f"slide_arrow_{name}.png", slide_arrow(), out_dir))
         written.append(_save(f"slide_body_{name}.png", slide_body(direction), out_dir))
     written.append(_save("click_diamond.png", click_diamond(), out_dir))
     written.append(_save("click_range.png", click_range(), out_dir))

@@ -100,6 +100,26 @@ class TextureLoadTests(unittest.TestCase):
         for name, expected in T.expected_sizes().items():
             self.assertEqual(loaded[name].get_size(), expected, name)
 
+    def test_slide_textures_put_visible_art_in_top_half(self) -> None:
+        """滑键贴图两倍高：上半是可见内容、下半完全透明（图片中心 = 判定线）。"""
+        directory = os.path.join(ROOT, "assets", "textures", "player")
+        names = ["slide_body_right", "slide_body_left", "slide_arrow_right", "slide_arrow_left"]
+        if not os.path.isdir(directory):
+            self.skipTest("缺少贴图目录（先跑 tools/make_player_textures.py）")
+        loaded = T.load_textures(directory, names=names)
+        for name in names:
+            surface = loaded[name]
+            width, height = surface.get_size()
+            self.assertEqual(height % 2, 0, f"{name} 应当是两倍高（上半内容 / 下半透明）")
+            half = height // 2
+            top = [surface.get_at((x, y))[3] for y in range(half) for x in range(0, width, 4)]
+            bottom = [surface.get_at((x, y))[3] for y in range(half, height) for x in range(0, width, 4)]
+            self.assertEqual(max(bottom), 0, f"{name} 下半必须完全透明")
+            if "body" in name:
+                self.assertGreater(max(top), 0, f"{name} 上半应当有楔形")
+            else:
+                self.assertEqual(max(top), 0, "箭头尚未实装（占位应当全透明）")
+
     def test_hold_head_and_body_share_one_center_line(self) -> None:
         """长按开头与主体的中心白线必须一样粗（都用 ``HOLD_LINE_FRACTION``）。"""
         directory = os.path.join(ROOT, "assets", "textures", "player")

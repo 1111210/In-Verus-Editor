@@ -113,9 +113,14 @@ class SoftwareViewTests(unittest.TestCase):
         self.assertAlmostEqual(view.settings.note_thickness, 0.9)
         self.assertAlmostEqual(view.settings.speed, 2.0)
 
-    def test_mouse_patterns_are_centered_on_the_mouse_plane(self) -> None:
-        """滑键 / 鼠标点击图案以鼠标运动平面为**中点**（不是底边贴在平面上）。"""
+    def test_mouse_pattern_images_are_centered_on_the_mouse_plane(self) -> None:
+        """滑键 / 鼠标点击图案的**图片中心**都在鼠标运动平面上。
+
+        点击图案的内容占满整张图（可见部分上下各一半）；滑键贴图是双倍高
+        （上半楔形、下半透明），所以可见的楔形依旧整条落在平面上方。
+        """
         from rhythm_editor.game import softview
+        from rhythm_editor.game import frame as game_frame
         from rhythm_editor.game.scene import MOUSE_PLANE_HEIGHT
         from rhythm_editor.model.chart import Chart, EditorSettings
         from rhythm_editor.model.notes import MouseClick, MouseSlide
@@ -147,14 +152,65 @@ class SoftwareViewTests(unittest.TestCase):
         self.assertEqual(
             {name for name, _quad in drawn}, set(names), "应当画出点击范围 / 菱形 / 滑键"
         )
+        slide_height = game_frame.slide_center(settings.demo_slide_thickness)[1]
+        self.assertAlmostEqual(
+            slide_height, 2.0 * game_frame.pattern_height(settings.demo_slide_thickness),
+            msg="滑键贴图应当是两倍高（上半内容 / 下半透明）",
+        )
+        self.assertAlmostEqual(
+            game_frame.click_center(settings.demo_click_thickness)[0], MOUSE_PLANE_HEIGHT
+        )
+        self.assertAlmostEqual(
+            game_frame.slide_center(settings.demo_slide_thickness)[0], MOUSE_PLANE_HEIGHT
+        )
         for name, quad in drawn:
             ys = [point[1] for point in quad]
             self.assertLess(min(ys), plane_y - 1.0, f"{name} 应当伸到平面上方")
             self.assertGreater(max(ys), plane_y + 1.0, f"{name} 应当伸到平面下方")
             self.assertAlmostEqual(
-                (min(ys) + max(ys)) / 2.0, plane_y, delta=2.0,
-                msg=f"{name} 应当以鼠标运动平面为中点",
+                (min(ys) + max(ys)) / 2.0, plane_y, delta=3.0,
+                msg=f"{name} 的图片中心应当落在鼠标运动平面上",
             )
+        heights = {name: max(point[1] for point in quad) - min(point[1] for point in quad)
+                   for name, quad in drawn}
+        self.assertLess(heights["click_range"], heights["slide_body_right"],
+                        "滑键贴图比点击图案高一倍（下半是透明填充）")
+
+    def test_slide_texture_content_stays_above_the_mouse_plane(self) -> None:
+        """滑键贴图下半透明：可见楔形（含箭头）依旧整条在平面上方。"""
+        import numpy as np
+
+        from rhythm_editor.game import softview
+        from rhythm_editor.game import frame as game_frame
+        from rhythm_editor.game.scene import MOUSE_PLANE_HEIGHT
+        from rhythm_editor.model.chart import Chart, EditorSettings
+        from rhythm_editor.model.notes import MouseSlide
+        from rhythm_editor.model.timing import BpmSegment, TimingMap
+
+        chart = Chart()
+        chart.timing = TimingMap([BpmSegment(0.0, 120.0, 4)])
+        chart.add(MouseSlide("S1", 4.0, 0.15, 0.85))
+        now = chart.timing.beat_to_song_ms(4.0)
+        settings = EditorSettings(demo_slide_thickness=0.12)
+        view = softview.create_software_view(
+            960, 720, view_settings=softview.view_settings_for(settings)
+        )
+        frame = softview.draw_frame(view, chart, now, rate=1.0)
+        arr = np.transpose(pygame.surfarray.array3d(frame), (1, 0, 2)).astype(int)
+        plane_y = view._proj(0.0, MOUSE_PLANE_HEIGHT, 0.0)[1]
+        # 右滑键是绿色：G 明显高于 R / B（鼠标平面、判定线都不是这个颜色）
+        wedge = (arr[:, :, 1] > 90) & (arr[:, :, 1] - arr[:, :, 0] > 25) & (
+            arr[:, :, 1] - arr[:, :, 2] > 25
+        )
+        rows = np.flatnonzero(wedge.any(axis=1))
+        self.assertTrue(rows.size, "应当画出绿色楔形")
+        self.assertLessEqual(int(rows.max()), plane_y + 2.0, "楔形不应低于平面")
+        height = game_frame.slide_center(settings.demo_slide_thickness)[1] / 2.0
+        apex_y = view._proj(0.0, MOUSE_PLANE_HEIGHT + height, 0.0)[1]
+        self.assertGreater(
+            plane_y - int(rows.min()), 0.4 * (plane_y - apex_y),
+            "楔形应当明显伸到平面上方（接近平面 + 厚度处收尖）",
+        )
 
 
 if __name__ == "__main__":

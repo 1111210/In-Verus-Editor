@@ -153,25 +153,47 @@ def hold_head_height(note_thickness: float) -> float:
 
 
 def pattern_height(thickness: float) -> float:
-    """滑键 / 鼠标点击图案的厚度（含下限）。"""
+    """滑键 / 鼠标点击图案的可见厚度（含下限）。"""
     return max(PATTERN_MIN_THICKNESS, thickness)
 
 
-def pattern_center(thickness: float) -> Tuple[float, float]:
-    """滑键 / 鼠标点击图案的 ``(竖直中心 y, 竖直尺寸)``。
+def click_center(thickness: float) -> Tuple[float, float]:
+    """点击图案的 ``(竖直中心 y, 竖直尺寸)``。
 
-    中心落在鼠标运动平面上（``MOUSE_PLANE_HEIGHT``）——与编辑器画布一致
-    （那里图案以判定时刻为垂直中点），不是底边贴在平面上。
+    贴图内容占满整张图，中心落在鼠标运动平面上（``MOUSE_PLANE_HEIGHT``）——
+    与编辑器画布一致（那里图案以判定时刻为垂直中点），不是底边贴在平面上。
     """
     return (MOUSE_PLANE_HEIGHT, pattern_height(thickness))
 
 
-def pattern_span(thickness: float) -> Tuple[float, float]:
-    """滑键 / 鼠标点击图案的竖直范围 ``(下沿, 上沿)``。
+def click_span(thickness: float) -> Tuple[float, float]:
+    """点击图案的竖直范围 ``(下沿, 上沿)``：上下各一半。"""
+    center, height = click_center(thickness)
+    half = height / 2.0
+    return (center - half, center + half)
 
-    由 :func:`pattern_center` 推出；软件渲染按这两个高度投影，Panda3D 路径
+
+# 滑键主体 / 箭头贴图是“可见楔形在上半、下半完全透明”的双倍高图
+# （见 ``tools/make_player_textures.py::slide_body``）：按图片中心对齐鼠标平面
+# 摆放时，可见的楔形依旧整条落在平面上方（底边贴平面），与旧版视觉一致。
+SLIDE_IMAGE_SCALE = 2.0
+
+
+def slide_center(thickness: float) -> Tuple[float, float]:
+    """滑键（主体 / 箭头）的 ``(竖直中心 y, 竖直尺寸)``。
+
+    与点击图案同一套约定：**图片中心**落在鼠标运动平面上；滑键贴图是双倍高，
+    所以可见的楔形只占上半、落在平面上方。
+    """
+    return (MOUSE_PLANE_HEIGHT, SLIDE_IMAGE_SCALE * pattern_height(thickness))
+
+
+def slide_span(thickness: float) -> Tuple[float, float]:
+    """滑键贴图画到画面上的竖直范围 ``(下沿, 上沿)``（可见楔形只占上半）。
+
+    由 :func:`slide_center` 推出；软件渲染按这两个高度投影，Panda3D 路径
     直接用其中心与尺寸画卡片。
     """
-    center, height = pattern_center(thickness)
+    center, height = slide_center(thickness)
     half = height / 2.0
     return (center - half, center + half)
