@@ -36,6 +36,9 @@ class GlobalSettingsTests(unittest.TestCase):
         settings.side_lane_highlight = True
         settings.show_past_notes = True
         settings.hit_volume = 0.3
+        settings.demo_note_thickness = 0.45
+        settings.demo_speed = 2.5
+        settings.demo_side_lane_highlight = True
         global_settings.save_settings(settings)
         self.assertTrue(os.path.isfile(self.path))
         restored = global_settings.load_settings()
@@ -44,6 +47,9 @@ class GlobalSettingsTests(unittest.TestCase):
         self.assertTrue(restored.side_lane_highlight)
         self.assertTrue(restored.show_past_notes)
         self.assertAlmostEqual(restored.hit_volume, 0.3)
+        self.assertAlmostEqual(restored.demo_note_thickness, 0.45)
+        self.assertAlmostEqual(restored.demo_speed, 2.5)
+        self.assertTrue(restored.demo_side_lane_highlight)
 
     def test_broken_file_falls_back_to_defaults(self) -> None:
         with open(self.path, "w", encoding="utf-8") as handle:

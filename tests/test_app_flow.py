@@ -330,7 +330,7 @@ class AppFlowTest(unittest.TestCase):
             for i in range(menu.index("end") + 1)
             if menu.type(i) == "command"
         ]
-        self.assertEqual(labels, ["编辑器设置…", "操作指南…", "快捷键…"])
+        self.assertEqual(labels, ["编辑器设置…", "演示视图设置…", "操作指南…", "快捷键…"])
         self.assertNotIn("关于", labels)
 
     def test_auto_check_is_in_edit_menu_and_selects_issues(self) -> None:
@@ -639,6 +639,57 @@ class AppFlowTest(unittest.TestCase):
         if not softview.available():  # pragma: no cover
             self.skipTest("没有 pygame")
         return softview
+
+    def test_demo_view_settings_are_independent_and_applied(self) -> None:
+        """「编辑器设置 → 演示视图设置…」独立保存，改完立刻套到离屏演示视图。"""
+        import rhythm_editor.app as app_module
+
+        self._softview()
+        app = self.app
+        menu = app.toolbar._menus["编辑器设置"]
+        labels = [
+            menu.entrycget(i, "label")
+            for i in range(menu.index("end") + 1)
+            if menu.type(i) == "command"
+        ]
+        self.assertIn("演示视图设置…", labels)
+
+        # 先建出演示视图（用默认演示视图设置），再改设置：应当原地刷新
+        app.set_demo_mode(True)
+        app._tick()
+        try:
+            view = app._demo_view
+            if view is None:  # pragma: no cover - 初始化失败
+                self.skipTest("演示视图不可用")
+            self.assertEqual(view.settings.renderer, "software", "演示视图只支持软件渲染")
+            self.assertAlmostEqual(
+                view.settings.note_thickness, app.editor_settings.demo_note_thickness
+            )
+
+            result = {
+                "demo_note_thickness": 0.5,
+                "demo_multi_thickness": 0.4,
+                "demo_slide_thickness": 0.1,
+                "demo_click_thickness": 0.05,
+                "demo_speed": 1.5,
+                "demo_side_lane_highlight": True,
+            }
+            original = app_module.run_dialog
+            app_module.run_dialog = lambda *args, **kwargs: result  # type: ignore[assignment]
+            try:
+                app.edit_demo_view_settings()
+            finally:
+                app_module.run_dialog = original  # type: ignore[assignment]
+            self.assertAlmostEqual(app.editor_settings.demo_note_thickness, 0.5)
+            self.assertAlmostEqual(app.editor_settings.demo_speed, 1.5)
+            self.assertTrue(app.editor_settings.demo_side_lane_highlight)
+            # 离屏视图立刻跟着变，且仍然固定软件渲染
+            self.assertAlmostEqual(view.settings.note_thickness, 0.5)
+            self.assertAlmostEqual(view.settings.speed, 1.5)
+            self.assertTrue(view.settings.side_lane_highlight)
+            self.assertEqual(view.settings.renderer, "software")
+        finally:
+            app.set_demo_mode(False)
 
     def test_demo_mode_uses_player_software_render(self) -> None:
         """演示模式贴的是游玩器软件渲染的帧（game/softview），不再画编辑器叠加视图。"""

@@ -229,6 +229,7 @@ class Toolbar(ttk.Frame):
         # 帮助（操作指南 / 快捷键）收进「编辑器设置」菜单里
         editor_group = Group("编辑器设置", [
             Entry("编辑器设置…", app.edit_settings),
+            Entry("演示视图设置…", app.edit_demo_view_settings),
             Entry(separator=True),
             Entry("操作指南…", app.show_guide),
             Entry("快捷键…", app.show_shortcuts),

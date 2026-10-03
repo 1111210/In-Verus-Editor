@@ -14,13 +14,19 @@ from unittest import mock
 sys.path.insert(0, os.path.join(os.path.dirname(os.path.dirname(os.path.abspath(__file__))), "src"))
 
 import tkinter as tk
+from tkinter import ttk
 
 from rhythm_editor.model.chart import Chart
 from rhythm_editor.model.document import Document
 from rhythm_editor.model.notes import BoundaryCurve, LaneNote, MouseRegion, MouseSlide
 from rhythm_editor.model.timing import BpmSegment, TimingMap
 from rhythm_editor.ui import dialogs as dialogs_module
-from rhythm_editor.ui.dialogs import BpmDialog, NoteEditDialog, SpeedGroupDialog
+from rhythm_editor.ui.dialogs import (
+    BpmDialog,
+    DemoViewDialog,
+    NoteEditDialog,
+    SpeedGroupDialog,
+)
 from rhythm_editor.ui.theme import DARK
 
 
@@ -40,8 +46,8 @@ class DialogTestCase(unittest.TestCase):
         except tk.TclError:  # pragma: no cover
             pass
 
-    def make_dialog(self, cls, *args):
-        dialog = cls(self.root, DARK, *args)
+    def make_dialog(self, cls, *args, **kwargs):
+        dialog = cls(self.root, DARK, *args, **kwargs)
         self.addCleanup(lambda: dialog.winfo_exists() and dialog.destroy())
         return dialog
 
@@ -211,6 +217,96 @@ class NoteEditDialogTests(DialogTestCase):
         data = dialog.result
         self.assertNotAlmostEqual(data["x_end"], data["x_start"])
         self.assertLess(data["x_start"], data["x_end"])
+
+
+class DialogButtonTests(DialogTestCase):
+    """弹出窗口只有确认按钮（不再单列「取消」，取消走 Esc / 关闭窗口）。"""
+
+    @staticmethod
+    def _button_texts(widget) -> list:
+        texts: list = []
+        for child in widget.winfo_children():
+            if isinstance(child, ttk.Button):
+                texts.append(str(child.cget("text")))
+            texts.extend(DialogButtonTests._button_texts(child))
+        return texts
+
+    def test_dialogs_have_only_the_confirm_button(self) -> None:
+        from rhythm_editor.model.chart import Chart, EditorSettings
+        from rhythm_editor.ui.dialogs import HelpDialog, SettingsDialog, VolumeDialog
+
+        chart = Chart()
+        timing = TimingMap([BpmSegment(0.0, 120.0, 4)])
+        dialogs = (
+            self.make_dialog(BpmDialog, timing),
+            self.make_dialog(VolumeDialog, chart),
+            self.make_dialog(SettingsDialog, chart),
+            self.make_dialog(DemoViewDialog, EditorSettings()),
+            self.make_dialog(HelpDialog, "操作指南", "内容"),
+        )
+        for dialog in dialogs:
+            texts = self._button_texts(dialog)
+            self.assertNotIn("取消", texts, f"{type(dialog).__name__} 不应有取消按钮")
+            self.assertIn(dialog.ok_text, texts, f"{type(dialog).__name__} 缺少确认按钮")
+            self.assertEqual(
+                sum(1 for text in texts if text == dialog.ok_text),
+                1,
+                f"{type(dialog).__name__} 应当只有一个确认按钮",
+            )
+
+    def test_demo_view_dialog_returns_render_settings(self) -> None:
+        from rhythm_editor.model.chart import EditorSettings
+
+        settings = EditorSettings(
+            demo_note_thickness=0.5,
+            demo_speed=2.0,
+            demo_side_lane_highlight=True,
+        )
+        dialog = self.make_dialog(DemoViewDialog, settings)
+        dialog._vars["demo_note_thickness"].set(0.3)
+        dialog._vars["demo_slide_thickness"].set(0.1)
+        dialog._vars["demo_speed"].set(3.0)
+        dialog.var_side.set(False)
+        dialog._ok()
+        self.assertAlmostEqual(dialog.result["demo_note_thickness"], 0.3)
+        self.assertAlmostEqual(dialog.result["demo_slide_thickness"], 0.1)
+        self.assertAlmostEqual(dialog.result["demo_speed"], 3.0)
+        self.assertFalse(dialog.result["demo_side_lane_highlight"])
+
+    def test_text_input_dialog_parses_int_and_stays_open_on_bad_input(self) -> None:
+        from rhythm_editor.ui.dialogs import TextInputDialog
+
+        dialog = self.make_dialog(
+            TextInputDialog, "标题", "提示", "8", kind="int", minimum=1
+        )
+        texts = self._button_texts(dialog)
+        self.assertIn("确定", texts)
+        self.assertNotIn("取消", texts)
+        dialog.entry.delete(0, "end")
+        dialog.entry.insert(0, "abc")
+        dialog._ok()
+        self.assertIsNone(dialog.result, "非法输入不应关闭窗口")
+        self.assertTrue(dialog.winfo_exists())
+        dialog.entry.delete(0, "end")
+        dialog.entry.insert(0, "12")
+        dialog._ok()
+        self.assertEqual(dialog.result, 12)
+
+    def test_save_changes_dialog_has_save_and_discard_only(self) -> None:
+        """未保存修改的询问框：保存 / 不保存，没有「取消」；Esc 仍可放弃操作。"""
+        from rhythm_editor.ui.dialogs import SaveChangesDialog
+
+        dialog = self.make_dialog(SaveChangesDialog)
+        texts = self._button_texts(dialog)
+        self.assertNotIn("取消", texts)
+        self.assertIn("保存", texts)
+        self.assertIn("不保存", texts)
+        dialog._discard()
+        self.assertIs(dialog.result, False)
+
+        escape_dialog = self.make_dialog(SaveChangesDialog)
+        escape_dialog._cancel()
+        self.assertIsNone(escape_dialog.result, "Esc / 关窗 = 放弃这次操作")
 
 
 if __name__ == "__main__":

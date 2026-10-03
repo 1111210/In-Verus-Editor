@@ -38,11 +38,14 @@ from .metronome import LABELS as METRONOME_LABELS
 from .metronome import MODE_BAR, MODE_OFF, effect_events, effect_samples
 from .ui.dialogs import (
     BpmDialog,
+    DemoViewDialog,
     HelpDialog,
     MetadataDialog,
     NoteEditDialog,
+    SaveChangesDialog,
     SettingsDialog,
     SpeedGroupDialog,
+    TextInputDialog,
     VolumeDialog,
     run_dialog,
 )
@@ -132,7 +135,6 @@ class EditorApp:
         self._demo_image_id: Optional[int] = None
         self._demo_hint_id: Optional[int] = None
         self._demo_size: Tuple[int, int] = (0, 0)
-        self._demo_mouse_x: Optional[float] = None
         self._demo_dirty = True
         self._demo_next_frame = 0.0
 
@@ -517,9 +519,7 @@ class EditorApp:
     def _on_motion(self, event) -> None:
         self.toolbar.mark_interaction()
         if self.demo_mode:
-            # 演示画面里的鼠标指针跟随画布上的鼠标位置
-            self._demo_mouse_x = float(event.x)
-            self._demo_dirty = True
+            # 演示视图不画鼠标指针：画布上的鼠标移动不触发重绘
             return
         self.controller.on_motion(event.x, event.y)
         self._hover_status(event.x, event.y)
@@ -773,9 +773,7 @@ class EditorApp:
     def _confirm_discard(self) -> bool:
         if not self.document.dirty:
             return True
-        answer = messagebox.askyesnocancel(
-            "未保存的修改", "当前谱面有未保存的修改，是否保存？", parent=self.root
-        )
+        answer = run_dialog(SaveChangesDialog, self.root, self.theme)
         if answer is None:
             return False
         if answer:
@@ -928,6 +926,40 @@ class EditorApp:
             f"打击 {self.document.chart.settings.hit_volume * 100:.0f}%"
         )
 
+    def edit_demo_view_settings(self) -> None:
+        """编辑器设置菜单「演示视图设置…」：游玩器软件渲染的独立画面参数。"""
+        result = run_dialog(DemoViewDialog, self.root, self.theme, self.editor_settings)
+        if not result:
+            return
+        settings = self.editor_settings
+
+        def _apply() -> None:
+            for key, value in result.items():
+                setattr(settings, key, value)
+            settings.normalize()
+
+        _apply()          # 编辑器设置：不进撤销栈
+        self._refresh_demo_view_settings()
+        self.status(
+            "演示视图已更新："
+            f"单键 {settings.demo_note_thickness:.2f} · "
+            f"滑键 {settings.demo_slide_thickness:.3f} · "
+            f"流速 {settings.demo_speed:g}（可视 {1500.0 / max(0.1, settings.demo_speed):.0f} ms）"
+            + (" · 侧轨高亮" if settings.demo_side_lane_highlight else "")
+        )
+
+    def _refresh_demo_view_settings(self) -> None:
+        """把演示视图设置套到已创建的离屏视图上（下次绘制就用新参数）。"""
+        if self._demo_view is None:
+            return
+        try:
+            from .game import softview
+
+            self._demo_view.settings = softview.view_settings_for(self.editor_settings)
+        except Exception:  # pragma: no cover - 没有 pygame / 贴图缺失
+            return
+        self._demo_dirty = True
+
     def _apply_volumes(self) -> None:
         """把设置里的三个音量同步给音频后端（一次设置，混音只重合成一次窗口）。"""
         settings = self.document.chart.settings
@@ -996,32 +1028,34 @@ class EditorApp:
 
     def set_grid_division_custom(self) -> None:
         """视图菜单「时间网格细分 → 自定义…」：输入一拍细分多少份。"""
-        from tkinter import simpledialog
-
         settings = self.document.chart.settings
-        value = simpledialog.askinteger(
+        value = run_dialog(
+            TextInputDialog,
+            self.root,
+            self.theme,
             "自定义时间网格",
             f"一拍细分为多少个音（不小于 {config.GRID_DIVISION_MIN}）：",
-            initialvalue=settings.grid_division,
-            minvalue=config.GRID_DIVISION_MIN,
-            parent=self.root,
+            str(settings.grid_division),
+            kind="int",
+            minimum=config.GRID_DIVISION_MIN,
         )
-        if value:
-            self.set_grid_division(str(value))
-        else:
+        if value is None:
             self.status("已取消自定义时间网格")
+            return
+        self.set_grid_division(str(value))
 
     def set_horizontal_divisions_custom(self) -> None:
         """视图菜单「横向辅助网格 → 自定义…」：输入 0..1 合法区域几等分。"""
-        from tkinter import simpledialog
-
         settings = self.document.chart.settings
-        value = simpledialog.askinteger(
+        value = run_dialog(
+            TextInputDialog,
+            self.root,
+            self.theme,
             "自定义横向辅助网格",
             "0..1 合法区域几等分（0 = 关闭）：",
-            initialvalue=settings.horizontal_divisions,
-            minvalue=0,
-            parent=self.root,
+            str(settings.horizontal_divisions),
+            kind="int",
+            minimum=0,
         )
         if value is None:
             self.status("已取消自定义横向辅助网格")
@@ -1228,7 +1262,8 @@ class EditorApp:
         """演示模式：把游玩器软件渲染的一帧贴到画布上。
 
         复用 ``game/softview.py``（也就是 PlayerApp 的软件绘制方法），
-        因此画面与游玩器完全一致，只是不画分数 / 判定 / 元数据等 HUD。
+        因此画面与游玩器完全一致，只是不画分数 / 判定 / 元数据等 HUD，
+        也不画鼠标指针；渲染参数来自「演示视图设置」（与 player.json 独立）。
         没有 pygame 时返回 ``False``，调用方回退到编辑器自己的叠加绘制。
         """
         try:
@@ -1248,7 +1283,11 @@ class EditorApp:
         if self._demo_view is None or self._demo_size != (width, height):
             try:
                 if self._demo_view is None:
-                    self._demo_view = softview.create_software_view(width, height)
+                    self._demo_view = softview.create_software_view(
+                        width,
+                        height,
+                        view_settings=softview.view_settings_for(self.editor_settings),
+                    )
                 else:
                     softview.resize(self._demo_view, width, height)
             except Exception as exc:  # pragma: no cover - 贴图缺失 / 无 pygame
@@ -1258,22 +1297,12 @@ class EditorApp:
             self._demo_size = (width, height)
             self._demo_photo = None
             self._demo_dirty = True
-        mouse_norm, mouse_raw = 0.5, None
-        if self._demo_mouse_x is not None:
-            try:
-                mouse_norm, mouse_raw = softview.mouse_norm_at(
-                    self._demo_view, self._demo_mouse_x
-                )
-            except Exception:  # pragma: no cover - 投影异常
-                mouse_norm, mouse_raw = 0.5, None
         started = time.perf_counter()
         frame = softview.draw_frame(
             self._demo_view,
             self.document.chart,
             self.audio.heard_position_ms(),
             rate=self.audio.rate,
-            mouse_norm=mouse_norm,
-            mouse_raw=mouse_raw,
         )
         self._present_demo_frame(frame)
         cost = time.perf_counter() - started

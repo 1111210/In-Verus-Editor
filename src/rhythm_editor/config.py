@@ -157,3 +157,15 @@ EPS = 1e-7
 
 # 播放自动停止的余量（秒）：音乐与谱面都播完这么久之后才停
 PLAY_END_MARGIN_SECONDS = 3.0
+
+# ---------------------------------------------------------------- 演示视图
+# 编辑器演示模式用**游玩器的软件渲染**，但渲染参数是独立的一份（与 player.json
+# 互不影响）。厚度单位与游玩器一致：世界单位，鼠标合法区宽 = 1。
+DEMO_NOTE_THICKNESS = 0.25
+DEMO_MULTI_THICKNESS = 0.25
+DEMO_SLIDE_THICKNESS = 0.03 * 5.0 / 7.0
+DEMO_CLICK_THICKNESS = 0.03 * 5.0 / 7.0
+DEMO_SPEED = 1.0                 # 流速：可视毫秒 = 1500 / 流速
+DEMO_NOTE_THICKNESS_RANGE = (0.05, 1.0, 0.05)
+DEMO_PATTERN_THICKNESS_RANGE = (0.005, 0.3, 0.005)
+DEMO_SPEED_RANGE = (1.0, 10.0, 0.1)

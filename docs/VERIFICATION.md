@@ -50,7 +50,7 @@ python -m unittest discover -s tests -t .
 ```
 
 本机（Windows + Python 3.14.7 + Tk 9.0 + pygame-ce 2.5.8 + Panda3D 1.10）：
-**395 项全部通过**（约 17 秒），其中包含真实 Tk 画布与 headless pygame 的界面测试。
+**400 项全部通过**（约 17 秒），其中包含真实 Tk 画布与 headless pygame 的界面测试。
 
 | 测试文件 | 覆盖内容 |
 | --- | --- |
@@ -66,7 +66,8 @@ python -m unittest discover -s tests -t .
 | `test_chart_io.py` | 谱面 JSON 往返、音频复制与查找 |
 | `test_global_settings.py` | 全局设置读写、损坏回退、旧 `editor` 段迁移 |
 | `test_demo_selftest.py` | 示例谱面结构、内置自检、自动检查 |
-| `test_dialogs.py` | BPM 第 0 拍项、默认速度组、物件编辑与缓动写入 |
+| `test_dialogs.py` | BPM 第 0 拍项、默认速度组、物件编辑与缓动写入、演示视图设置、弹窗只有确认按钮 |
+| `test_game_softview.py` | 演示模式离屏软渲染：与游玩器软件绘制逐像素一致、不画鼠标指针、跟随演示视图设置 |
 | `test_editor_smoke.py` | 真实 Tk 画布：全部放置工具、图层、空域、滚动 / 缩放、拖拽 |
 | `test_app_flow.py` | 应用级：菜单、播放 / 暂停、演示模式、设置与保存、窗口模式 |
 | `test_audio_rate.py` | 倍速档位（含 0.01 ~ 0.1 细档）与重采样、延迟补偿、分窗口调度、连续播放 |
@@ -97,6 +98,8 @@ python run_editor.py charts/demo/demo.json
 9. 「速度组」新建组 → 添加 `从 x 拍起，倍率 -1` → 组内物件反向运动；删除组后回到默认组。
 10. 空格播放 → 画面与音乐同步；再按空格暂停 → 判定线吸附到网格。
 11. `Tab` 进入演示模式 → 只能滚动 / 缩放 / 播放，不能编辑；`Tab` 返回。
+    「编辑器设置 → 演示视图设置…」改厚度 / 流速 / 侧轨高亮 → 演示画面立刻变化，
+    且不出现鼠标指针；弹窗底部只有确认按钮（`Esc` 关闭）。
 12. `python run_player.py charts/demo/demo.json` → 主界面 → 加载 → 游玩 → 结算；
     `F2` 切换渲染后端，`F11` 切换窗口 / 全屏。
 
@@ -149,6 +152,8 @@ python tools/check_audio.py
 | 音效混进歌曲输出（不参与重采样、窗口边界不截断） | `test_metronome.py::EffectMixTests` |
 | 判定线跟随听到的位置（延迟补偿按倍速缩放） | `test_audio_rate.py`、`test_app_flow.py` |
 | 判定窗口不随倍速改变 | `test_game_judge.py::test_windows_are_real_time_not_song_time` |
+| 演示视图不画鼠标指针、跟随编辑器独立的演示视图设置（固定软件渲染） | `test_game_softview.py::test_mouse_position_does_not_change_frame`、`test_demo_view_follows_editor_settings_not_player_json`、`test_app_flow.py::test_demo_view_settings_are_independent_and_applied` |
+| 弹出窗口只有一个确认按钮（没有「取消」） | `test_dialogs.py::DialogButtonTests` |
 
 ### 7.3 游玩器实测
 

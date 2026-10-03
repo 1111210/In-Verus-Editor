@@ -67,6 +67,8 @@ class EditorSettings:
     * ``audio_latency_ms``     —— 系统音频延迟：从执行播放到硬件出声的毫秒数。
     * ``metronome``            —— 节拍音：``off``（默认）/ ``bar``（小节）/ ``beat``（节拍）。
     * ``show_past_notes``      —— 判定时刻已过的物件是否继续绘制（默认关闭）。
+    * ``demo_*``               —— 演示视图（游玩器软件渲染）的独立渲染参数：
+      物件厚度 / 流速 / 侧轨高亮，与 ``player.json`` 互相独立。
     """
 
     zoom_seconds: float = config.DEFAULT_ZOOM_SECONDS
@@ -81,6 +83,13 @@ class EditorSettings:
     music_volume: float = 1.0
     metronome_volume: float = 0.6
     hit_volume: float = 0.6
+    # 演示视图（编辑器演示模式）：游玩器软件渲染的渲染参数，独立保存
+    demo_note_thickness: float = config.DEMO_NOTE_THICKNESS
+    demo_multi_thickness: float = config.DEMO_MULTI_THICKNESS
+    demo_slide_thickness: float = config.DEMO_SLIDE_THICKNESS
+    demo_click_thickness: float = config.DEMO_CLICK_THICKNESS
+    demo_speed: float = config.DEMO_SPEED
+    demo_side_lane_highlight: bool = False
 
     def normalize(self) -> None:
         self.zoom_seconds = min(
@@ -102,6 +111,23 @@ class EditorSettings:
         self.music_volume = max(0.0, min(1.0, float(self.music_volume)))
         self.metronome_volume = max(0.0, min(1.0, float(self.metronome_volume)))
         self.hit_volume = max(0.0, min(1.0, float(self.hit_volume)))
+        note_low, note_high, _ = config.DEMO_NOTE_THICKNESS_RANGE
+        pattern_low, pattern_high, _ = config.DEMO_PATTERN_THICKNESS_RANGE
+        speed_low, speed_high, _ = config.DEMO_SPEED_RANGE
+        self.demo_note_thickness = min(
+            note_high, max(note_low, float(self.demo_note_thickness))
+        )
+        self.demo_multi_thickness = min(
+            note_high, max(note_low, float(self.demo_multi_thickness))
+        )
+        self.demo_slide_thickness = min(
+            pattern_high, max(pattern_low, float(self.demo_slide_thickness))
+        )
+        self.demo_click_thickness = min(
+            pattern_high, max(pattern_low, float(self.demo_click_thickness))
+        )
+        self.demo_speed = round(min(speed_high, max(speed_low, float(self.demo_speed))), 3)
+        self.demo_side_lane_highlight = bool(self.demo_side_lane_highlight)
 
     @property
     def horizontal_grid_enabled(self) -> bool:
@@ -120,6 +146,12 @@ class EditorSettings:
             "music_volume": self.music_volume,
             "metronome_volume": self.metronome_volume,
             "hit_volume": self.hit_volume,
+            "demo_note_thickness": self.demo_note_thickness,
+            "demo_multi_thickness": self.demo_multi_thickness,
+            "demo_slide_thickness": self.demo_slide_thickness,
+            "demo_click_thickness": self.demo_click_thickness,
+            "demo_speed": self.demo_speed,
+            "demo_side_lane_highlight": self.demo_side_lane_highlight,
         }
 
     @classmethod
@@ -139,6 +171,20 @@ class EditorSettings:
             music_volume=float(data.get("music_volume", 1.0)),
             metronome_volume=float(data.get("metronome_volume", 0.6)),
             hit_volume=float(data.get("hit_volume", 0.6)),
+            demo_note_thickness=float(
+                data.get("demo_note_thickness", config.DEMO_NOTE_THICKNESS)
+            ),
+            demo_multi_thickness=float(
+                data.get("demo_multi_thickness", config.DEMO_MULTI_THICKNESS)
+            ),
+            demo_slide_thickness=float(
+                data.get("demo_slide_thickness", config.DEMO_SLIDE_THICKNESS)
+            ),
+            demo_click_thickness=float(
+                data.get("demo_click_thickness", config.DEMO_CLICK_THICKNESS)
+            ),
+            demo_speed=float(data.get("demo_speed", config.DEMO_SPEED)),
+            demo_side_lane_highlight=bool(data.get("demo_side_lane_highlight", False)),
         )
         obj.normalize()
         return obj

@@ -10,7 +10,7 @@ import math
 import os
 import sys
 import tkinter as tk
-from tkinter import filedialog, messagebox, simpledialog, ttk
+from tkinter import filedialog, messagebox, ttk
 from typing import Any, Callable, Dict, List, Optional, Sequence, Tuple
 
 from .. import config
@@ -45,7 +45,11 @@ def parse_int(text: str, default: int = 0) -> int:
 
 
 class BaseDialog(tk.Toplevel):
-    """统一风格的模态对话框基类。"""
+    """统一风格的模态对话框基类。
+
+    底部只有一个确认按钮（各对话框的 ``ok_text``）；取消走 Esc / 关闭窗口，
+    不再单列「取消」按钮。
+    """
 
     title_text = "对话框"
     ok_text = "确定"
@@ -62,9 +66,10 @@ class BaseDialog(tk.Toplevel):
         self._build()
         buttons = ttk.Frame(self, padding=(12, 0, 12, 12))
         buttons.pack(fill="x")
-        ttk.Button(buttons, text="取消", command=self._cancel).pack(side="right")
+        self.buttons = buttons
+        self._extra_buttons(buttons)
         ttk.Button(buttons, text=self.ok_text, style="Accent.TButton", command=self._ok).pack(
-            side="right", padx=(0, 8)
+            side="right"
         )
         self.bind("<Escape>", lambda _e: self._cancel())
         self.protocol("WM_DELETE_WINDOW", self._cancel)
@@ -83,6 +88,9 @@ class BaseDialog(tk.Toplevel):
     def _build(self) -> None:  # pragma: no cover - 子类实现
         raise NotImplementedError
 
+    def _extra_buttons(self, buttons: ttk.Frame) -> None:
+        """子类可以在确认按钮旁边加按钮（默认没有）。"""
+
     def _ok(self) -> None:
         self.result = True
         self.destroy()
@@ -97,6 +105,92 @@ def run_dialog(dialog_cls, parent: tk.Misc, theme: Theme, *args, **kwargs):
     dialog.grab_set()
     parent.wait_window(dialog)
     return dialog.result
+
+
+class SaveChangesDialog(BaseDialog):
+    """关闭 / 新建 / 打开前的“未保存修改”询问：**保存** 或 **不保存**。
+
+    没有「取消」按钮：放弃这次操作走 `Esc` / 关闭窗口（`_cancel`）。
+    """
+
+    title_text = "未保存的修改"
+    ok_text = "保存"
+
+    def _build(self) -> None:
+        ttk.Label(
+            self.body, text="当前谱面有未保存的修改，是否保存？", wraplength=420
+        ).pack(anchor="w")
+
+    def _extra_buttons(self, buttons: ttk.Frame) -> None:
+        ttk.Button(buttons, text="不保存", command=self._discard).pack(
+            side="right", padx=(0, 8)
+        )
+
+    def _discard(self) -> None:
+        self.result = False
+        self.destroy()
+
+    def _ok(self) -> None:
+        self.result = True
+        self.destroy()
+
+
+class TextInputDialog(BaseDialog):
+    """单行输入框（只有确认按钮）：替代 tkinter.simpledialog 的弹窗。
+
+    ``kind="int"`` 时按整数返回（可给 ``minimum`` / ``maximum`` 夹取）；
+    输入不合法时停在窗口里提示，不关闭。
+    """
+
+    def __init__(
+        self,
+        parent: tk.Misc,
+        theme: Theme,
+        title: str,
+        prompt: str,
+        initial: str = "",
+        kind: str = "text",
+        minimum: Optional[int] = None,
+        maximum: Optional[int] = None,
+    ) -> None:
+        self.title_text = title
+        self.prompt = prompt
+        self.initial = initial
+        self.kind = kind
+        self.minimum = minimum
+        self.maximum = maximum
+        super().__init__(parent, theme)
+
+    def _build(self) -> None:
+        ttk.Label(self.body, text=self.prompt, wraplength=420).pack(anchor="w")
+        self.entry = ttk.Entry(self.body, width=24)
+        self.entry.pack(anchor="w", pady=(6, 0))
+        self.entry.insert(0, self.initial)
+        self.entry.selection_range(0, "end")
+        self.entry.bind("<Return>", lambda _e: self._ok())
+        self.hint = ttk.Label(self.body, text="", style="Warn.TLabel")
+        self.hint.pack(anchor="w", pady=(4, 0))
+        self.entry.focus_set()
+
+    def _ok(self) -> None:
+        text = self.entry.get().strip()
+        if self.kind == "int":
+            try:
+                value: Any = int(float(text))
+            except (TypeError, ValueError):
+                self.hint.configure(text="请输入整数")
+                return
+            if self.minimum is not None:
+                value = max(self.minimum, value)
+            if self.maximum is not None:
+                value = min(self.maximum, value)
+        else:
+            if not text:
+                self.hint.configure(text="请输入内容")
+                return
+            value = text
+        self.result = value
+        self.destroy()
 
 
 def labeled_entry(parent: tk.Misc, row: int, label: str, value: str, width: int = 18,
@@ -581,6 +675,153 @@ class SettingsDialog(BaseDialog):
         self.destroy()
 
 
+# ---------------------------------------------------------------- 演示视图
+class DemoViewDialog(BaseDialog):
+    """编辑器设置菜单「演示视图设置…」。
+
+    只包含**与画面有关**的游玩器渲染参数（物件厚度 / 流速 / 侧轨高亮），
+    与游玩器自己的 ``player.json`` 互相独立；编辑器演示模式固定用软件渲染，
+    所以这里不提供渲染后端选择。
+    """
+
+    title_text = "演示视图设置"
+
+    def __init__(self, parent: tk.Misc, theme: Theme, settings: EditorSettings) -> None:
+        self.settings = EditorSettings(
+            demo_note_thickness=settings.demo_note_thickness,
+            demo_multi_thickness=settings.demo_multi_thickness,
+            demo_slide_thickness=settings.demo_slide_thickness,
+            demo_click_thickness=settings.demo_click_thickness,
+            demo_speed=settings.demo_speed,
+            demo_side_lane_highlight=settings.demo_side_lane_highlight,
+        )
+        self._vars: Dict[str, tk.DoubleVar] = {}
+        self._labels: Dict[str, ttk.Label] = {}
+        super().__init__(parent, theme)
+
+    def _build(self) -> None:
+        body = self.body
+        backend = ttk.LabelFrame(body, text="渲染后端", padding=8)
+        backend.pack(fill="x")
+        ttk.Label(
+            backend,
+            text="软件渲染（固定）：演示模式复用游玩器的软件绘制，画面与游玩器一致；"
+                 "Panda3D / OpenGL 只在游玩器里可选。帧率由编辑器主循环自适应，"
+                 "不跟随游玩器的「期望帧率」。",
+            style="Dim.TLabel",
+            wraplength=460,
+        ).pack(anchor="w")
+
+        thickness = ttk.LabelFrame(body, text="物件厚度（世界单位：鼠标合法区宽 = 1）", padding=8)
+        thickness.pack(fill="x", pady=(8, 0))
+        thickness.columnconfigure(1, weight=1)
+        note_low, note_high, note_step = config.DEMO_NOTE_THICKNESS_RANGE
+        pattern_low, pattern_high, pattern_step = config.DEMO_PATTERN_THICKNESS_RANGE
+        rows = (
+            ("demo_note_thickness", "单键", note_low, note_high, note_step, 2),
+            ("demo_multi_thickness", "多轨单键", note_low, note_high, note_step, 2),
+            ("demo_slide_thickness", "滑键图案", pattern_low, pattern_high, pattern_step, 3),
+            ("demo_click_thickness", "鼠标点击图案", pattern_low, pattern_high, pattern_step, 3),
+        )
+        for row, (key, text, low, high, step, digits) in enumerate(rows):
+            self._add_slider(thickness, row, key, text, low, high, step, digits)
+
+        speed_box = ttk.LabelFrame(body, text="流速", padding=8)
+        speed_box.pack(fill="x", pady=(8, 0))
+        speed_box.columnconfigure(1, weight=1)
+        low, high, step = config.DEMO_SPEED_RANGE
+        self._add_slider(speed_box, 0, "demo_speed", "流速", low, high, step, 1)
+        self.speed_hint = ttk.Label(speed_box, text="", style="Dim.TLabel")
+        self.speed_hint.grid(row=1, column=0, columnspan=3, sticky="w", pady=(4, 0))
+
+        self.var_side = tk.BooleanVar(value=bool(self.settings.demo_side_lane_highlight))
+        ttk.Checkbutton(
+            body, text="侧轨高亮（第 1 / 第 6 轨背景铺暗紫）", variable=self.var_side
+        ).pack(anchor="w", pady=(8, 0))
+        ttk.Label(
+            body,
+            text="演示模式里不画鼠标指针；这些设置与游玩器的 player.json 互相独立。",
+            style="Dim.TLabel",
+            wraplength=460,
+        ).pack(anchor="w", pady=(8, 0))
+        self._update_speed_hint()
+
+    def _add_slider(
+        self,
+        box: ttk.LabelFrame,
+        row: int,
+        key: str,
+        text: str,
+        low: float,
+        high: float,
+        step: float,
+        digits: int,
+    ) -> None:
+        ttk.Label(box, text=text).grid(row=row, column=0, sticky="w", padx=(0, 6), pady=3)
+        var = tk.DoubleVar(value=float(getattr(self.settings, key)))
+        ttk.Scale(
+            box,
+            from_=low,
+            to=high,
+            orient="horizontal",
+            variable=var,
+            command=lambda _v, k=key: self._on_slider(k),
+        ).grid(row=row, column=1, sticky="we", pady=3)
+        label = ttk.Label(box, text=self._format(key, float(var.get())), width=7, anchor="e")
+        label.grid(row=row, column=2, sticky="e", pady=3)
+        self._vars[key] = var
+        self._labels[key] = label
+
+    @staticmethod
+    def _snap(value: float, step: float) -> float:
+        return round(round(value / step) * step, 6)
+
+    def _format(self, key: str, value: float) -> str:
+        digits = 1 if key == "demo_speed" else (3 if "slide" in key or "click" in key else 2)
+        return f"{value:.{digits}f}"
+
+    def _on_slider(self, key: str) -> None:
+        step = (
+            config.DEMO_SPEED_RANGE[2]
+            if key == "demo_speed"
+            else (
+                config.DEMO_PATTERN_THICKNESS_RANGE[2]
+                if "slide" in key or "click" in key
+                else config.DEMO_NOTE_THICKNESS_RANGE[2]
+            )
+        )
+        value = self._snap(float(self._vars[key].get()), step)
+        self._labels[key].configure(text=self._format(key, value))
+        if key == "demo_speed":
+            self._update_speed_hint(value)
+
+    def _update_speed_hint(self, value: Optional[float] = None) -> None:
+        speed = float(self._vars["demo_speed"].get()) if value is None else float(value)
+        self.speed_hint.configure(text=f"可视时长 = 1500 / 流速 ≈ {1500.0 / max(0.1, speed):.0f} 毫秒")
+
+    def _ok(self) -> None:
+        def value(key: str, step: float) -> float:
+            return self._snap(float(self._vars[key].get()), step)
+
+        self.result = {
+            "demo_note_thickness": value(
+                "demo_note_thickness", config.DEMO_NOTE_THICKNESS_RANGE[2]
+            ),
+            "demo_multi_thickness": value(
+                "demo_multi_thickness", config.DEMO_NOTE_THICKNESS_RANGE[2]
+            ),
+            "demo_slide_thickness": value(
+                "demo_slide_thickness", config.DEMO_PATTERN_THICKNESS_RANGE[2]
+            ),
+            "demo_click_thickness": value(
+                "demo_click_thickness", config.DEMO_PATTERN_THICKNESS_RANGE[2]
+            ),
+            "demo_speed": value("demo_speed", config.DEMO_SPEED_RANGE[2]),
+            "demo_side_lane_highlight": bool(self.var_side.get()),
+        }
+        self.destroy()
+
+
 # ---------------------------------------------------------------- 速度组
 class SpeedGroupDialog(BaseDialog):
     title_text = "速度组"
@@ -720,9 +961,9 @@ class SpeedGroupDialog(BaseDialog):
         group = self._current_group()
         if group is None:
             return
-        dialog = simpledialog.askstring("重命名速度组", "组名称：", initialvalue=group.name, parent=self)
-        if dialog:
-            self.document.apply("重命名速度组", lambda: setattr(group, "name", dialog))
+        name = run_dialog(TextInputDialog, self, self.theme, "重命名速度组", "组名称：", group.name)
+        if name:
+            self.document.apply("重命名速度组", lambda: setattr(group, "name", name))
             self.changed = True
             self._refresh_groups(group.id)
 

@@ -111,7 +111,9 @@ y_note  = judgment_y − D(t) × 每秒像素
   超出显示范围的部分由渲染层与命中测试裁剪到鼠标平面内（只影响显示，不改数据）。
 * `LAYOUT_OVERLAY`（没有 pygame 时的演示退路）：`pane_mouse` 直接取中间四条轨道，
   鼠标平面叠加在 6K 上。有 pygame 时演示模式改用 ``game/softview.py``：
-  离屏复用游玩器软件渲染，再把整帧贴到画布上。
+  离屏复用游玩器软件渲染，再把整帧贴到画布上。离屏视图的渲染参数由编辑器自己的
+  「演示视图设置」给出（`softview.view_settings_for`），与游玩器的 `player.json`
+  互相独立、后端固定软件渲染；演示帧不画鼠标指针与 HUD。
 
 `ViewState.set_layout_mode()` 切换时会 `recompute()`；`lane_at()` 在 6K 区域之外返回 `None`，
 因此放置类工具天然不会把 6K 物件放到鼠标区域里。
@@ -216,6 +218,12 @@ Tk 画布没有 alpha 通道，半透明用 `stipple`（点阵）模拟：
 
 `Esc` 或切换工具会调用 `cancel_pending()` 放弃未完成操作。
 粘贴模式（`Ctrl+V` 后）是独立状态，任意点击确定目标时间。
+
+弹出对话框（`ui/dialogs.py::BaseDialog` 及其子类）底部**只有一个确认按钮**
+（各对话框自己的 `ok_text`；帮助 / 速度组是「关闭」），取消走 `Esc` / 关闭窗口；
+单行输入用 `TextInputDialog`（替代 `tkinter.simpledialog`），同样只有一个确认按钮。
+退出前的「未保存修改」询问用 `SaveChangesDialog`，只有「保存 / 不保存」，
+`Esc` / 关窗表示放弃这次操作。
 
 ## 5. 撤销 / 重做
 
