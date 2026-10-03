@@ -84,6 +84,51 @@ def note_ahead(chart: Chart, note: Note, now_ms: float, span_ms: float) -> bool:
     return note_scroll_ms(chart, note, now_ms) <= span_ms
 
 
+def note_z_span(
+    chart: Chart, note: Note, now_ms: float, span_ms: float
+) -> Optional[Tuple[float, float]]:
+    """物件**还要绘制的那一段**的世界 z 范围 ``(近端, 远端)``。
+
+    判定区间里**时间已经过去的部分不画**：长按 / 空域从「当前时刻」画到它们的
+    结束时刻（``Note.tail_beat``），所以正在判定的长按只剩还没走完的那一截，
+    不会在判定线之前拖出一条已经判过的尾巴；整个物件都已经过去时返回 ``None``。
+    单键 / 滑键 / 鼠标点击只占判定时刻那一点。
+    """
+    timing = chart.timing
+    head = float(note.head_beat)
+    tail = float(note.tail_beat)
+    start = max(head, timing.song_ms_to_beat(now_ms))
+    if start > tail + 1e-9:
+        return None                      # 这段已经判完，没有要画的部分
+    group = chart.group_of_note(note)
+    start_z = z_from_distance(scroll_ms(chart, group, now_ms, start), span_ms)
+    tail_z = z_from_distance(scroll_ms(chart, group, now_ms, tail), span_ms)
+    return (min(start_z, tail_z), max(start_z, tail_z))
+
+
+def note_in_view(
+    chart: Chart,
+    note: Note,
+    now_ms: float,
+    span_ms: float,
+    z_near: float,
+) -> bool:
+    """物件此刻是否应当绘制：**时间与位置两个条件都要满足**。
+
+    * 时间：判定还没结束（``note_visible``：单键 / 滑键 / 点击到判定时刻，
+      长按 / 空域到结束时刻）——编辑器演示模式与游玩器用的是同一条规则；
+    * 位置：物件**还没过去的那部分**的 z 范围与可视范围 ``[z_near, START_Z]`` 相交
+      （``z_near`` 由 ``PlayerScene.visible_z_near`` 按窗口尺寸估算）。
+    """
+    if not note_visible(chart.timing, note, now_ms):
+        return False
+    span_z = note_z_span(chart, note, now_ms, span_ms)
+    if span_z is None:
+        return False
+    low, high = span_z
+    return high >= z_near and low <= START_Z
+
+
 def z_from_distance(distance_ms: float, span_ms: float, start_z: Optional[float] = None) -> float:
     """滚动距离（毫秒）→ 世界 z：``0`` = 判定线、``span_ms`` = 轨道尽头。
 
@@ -111,6 +156,8 @@ def region_samples(
     """空域在当前画面上的可见段：``[[(beat, distance_ms), ...], ...]``。
 
     * 采样在**拍**上等分，并强制包含速度段边界（流速跳变处是折点，不能糊掉）；
+    * **时间已经过去的部分不采样**（``beat < 当前拍``）：空域正在判定时只画
+      还没走完的那一段，不在判定线之前拖一条已经判过的尾巴；
     * 只保留滚动距离落在 ``[near_ms, span_ms]`` 的部分：``near_ms`` 由相机对
       该平面的可视下界（``PlayerScene.visible_z_near``）换算而来，默认 0 = 判定线；
       超出轨道尽头的点不再采样，否则它们会全挤在远端相互叠色（看起来像空域堆在
@@ -119,10 +166,12 @@ def region_samples(
     * 流速可正可负，同一空域可能被推成多段，所以返回**若干段**。
     """
     group = chart.group_of_note(note)
+    timing = chart.timing
     start, end = float(note.beat_start), float(note.beat_end)
     span_beats = end - start
     if abs(span_beats) < 1e-12:
         return []
+    now_beat = timing.song_ms_to_beat(now_ms)
     beats = {start, end}
     steps = max(1, int(samples))
     for index in range(1, steps):
@@ -130,7 +179,12 @@ def region_samples(
     for segment in group.segments:
         if min(start, end) < segment.start_beat < max(start, end):
             beats.add(float(segment.start_beat))
+    if min(start, end) < now_beat < max(start, end):
+        beats.add(float(now_beat))       # 时间下界也作为采样点：截断位置精确
     points = [(beat, scroll_ms(chart, group, now_ms, beat)) for beat in sorted(beats)]
+    points = [item for item in points if item[0] >= now_beat - 1e-9]
+    if len(points) < 2:
+        return []
     low, high = float(near_ms), float(span_ms)
     runs: List[List[Tuple[float, float]]] = []
     current: List[Tuple[float, float]] = []
@@ -163,6 +217,29 @@ def region_samples(
     if len(current) >= 2:
         runs.append(current)
     return runs
+
+
+def region_crosses_line(
+    chart: Chart,
+    note: MouseRegion,
+    now_ms: float,
+    span_ms: float,
+    near_ms: float = 0.0,
+) -> bool:
+    """空域此刻是否正压在判定线上（可见段跨过距离 0）。
+
+    用来决定要不要在判定线上画空域高亮：时间没到 / 已经结束的空域不该留一条亮线。
+    """
+    return runs_cross_line(region_samples(chart, note, now_ms, span_ms, near_ms=near_ms))
+
+
+def runs_cross_line(runs: List[List[Tuple[float, float]]]) -> bool:
+    """``region_samples`` 的可见段里是否有跨过距离 0 的（= 空域压在判定线上）。"""
+    for run in runs:
+        distances = [distance for _beat, distance in run]
+        if min(distances) <= 0.0 <= max(distances):
+            return True
+    return False
 
 
 def visible_notes(chart: Chart, now_ms: float, span_ms: float) -> List[Note]:

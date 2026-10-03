@@ -848,6 +848,39 @@ class PlayerAppSmokeTests(unittest.TestCase):
             game_frame.note_scroll_ms(app.chart, app.chart.find("D"), now), span
         )
 
+    def test_hold_and_region_hide_the_elapsed_part(self) -> None:
+        """长按 / 空域：判定没结束也只画「当前时刻之后」的部分（已判过的不画）。"""
+        from rhythm_editor.game import frame as game_frame
+        from rhythm_editor.model.notes import BoundaryCurve, LaneNote, MouseRegion
+        from rhythm_editor.model.timing import BpmSegment, TimingMap
+
+        app = self.app
+        app._enter_loading()
+        app._start_play()
+        app.settings.speed, app.settings.rate = 1.0, 1.0
+        app.chart.timing = TimingMap([BpmSegment(0.0, 120.0, 4)])
+        hold = LaneNote("H", 1, 1, 6.0, 8.0)
+        region = MouseRegion("R", 6.0, 8.0, BoundaryCurve(0.2, 0.2), BoundaryCurve(0.8, 0.8))
+        app.chart.lane_notes = [hold]
+        app.chart.mouse_notes = [region]
+        app.chart.invalidate_order()
+        span = app._visible_span_ms()
+        during = app.chart.timing.beat_to_song_ms(7.0)          # 判定过半
+        hold_span = game_frame.note_z_span(app.chart, hold, during, span)
+        self.assertIsNotNone(hold_span)
+        self.assertAlmostEqual(hold_span[0], 0.0, places=6, msg="长按从判定线画起")
+        self.assertGreater(hold_span[1], 0.0, "长按剩下的那截还在前面")
+        beats = [b for run in game_frame.region_samples(app.chart, region, during, span)
+                 for b, _d in run]
+        self.assertTrue(beats)
+        self.assertGreaterEqual(min(beats), 7.0 - 1e-6, "空域不采样已经过去的部分")
+        # 判定线高亮只在空域真的压在线上时画
+        before = app.chart.timing.beat_to_song_ms(5.0)
+        self.assertFalse(game_frame.region_crosses_line(app.chart, region, before, span))
+        self.assertTrue(game_frame.region_crosses_line(app.chart, region, during, span))
+        after = app.chart.timing.beat_to_song_ms(9.0)
+        self.assertFalse(game_frame.region_crosses_line(app.chart, region, after, span))
+
     def test_region_samples_follow_speed_group(self) -> None:
         """空域采样也按速度组：只返回滚动距离在 [0, 可视跨度] 内的段。"""
         from rhythm_editor.game import frame as game_frame
@@ -1524,11 +1557,10 @@ class PlayerAppSmokeTests(unittest.TestCase):
         points, _color, _alpha = area[0]
         ys = [point[1] for point in points]
         line_y = app._proj(0.0, MOUSE_PLANE_HEIGHT, 0.0)[1]
-        near_y = app._proj(0.0, MOUSE_PLANE_HEIGHT, app._plane_z_near(MOUSE_PLANE_HEIGHT))[1]
         far_y = app._proj(0.0, MOUSE_PLANE_HEIGHT, START_Z)[1]
-        self.assertGreater(max(ys), line_y, "空域应当延伸到判定线之前（画面下缘）")
         self.assertAlmostEqual(
-            max(ys), near_y, delta=6.0, msg="最近的边落在相机对鼠标平面的可视下界"
+            max(ys), line_y, delta=2.0,
+            msg="正在判定的空域从判定线画起（时间已经过去的部分不画）",
         )
         self.assertLessEqual(min(ys), far_y + 8.0,
                              msg="最远的边就在轨道尽头，不会堆到平面外")

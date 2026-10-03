@@ -2644,24 +2644,36 @@ class PlayerApp:
         for note in frame.visible_notes(self.chart, now_ms, self._visible_span_ms()):
             layer = f"note{layer_rank(note)}"
             group = self._note_group(note)     # 位置 / 长按尾端都按所属速度组的 ∫v
+            span = self._visible_span_ms()
+            z_near_k6 = self._plane_z_near(0.0)
+            z_near_mouse = self._plane_z_near(MOUSE_PLANE_HEIGHT)
             if isinstance(note, LaneNote):
-                head = self._note_z(self._head_ms(note), now_ms, group=group)
-                if head < self._plane_z_near(0.0) or head > START_Z:
+                # 时间（判定未结束）+ 位置（z 范围与可视范围相交）
+                if not frame.note_in_view(self.chart, note, now_ms, span, z_near_k6):
                     continue
+                head = min(
+                    START_Z,
+                    max(z_near_k6, self._note_z(self._head_ms(note), now_ms, group=group)),
+                )
                 shape = frame.lane_shape(note)
                 lane = shape.texture_index
                 center_x = (shape.x0 + shape.x1) / 2.0
                 if note.is_hold:
-                    tail = self._note_z(
-                        timing.beat_to_song_ms(note.tail_beat), now_ms, group=group
-                    )
-                    body_center = (head + tail) / 2.0
+                    # 时间已经过去的部分不画：只画「当前时刻 ~ 长按结尾」这一截
+                    body_span = frame.note_z_span(self.chart, note, now_ms, span)
+                    assert body_span is not None
+                    body_near = min(START_Z, max(z_near_k6, body_span[0]))
+                    body_far = min(START_Z, max(z_near_k6, body_span[1]))
+                    body_center = (body_near + body_far) / 2.0
                     scene.quad(f"hold_body_{lane}", center_x, body_center, shape.x1 - shape.x0,
-                               max(0.2 * UNIT_SCALE, abs(tail - head)), 0.0, (1, 1, 1, 1.0),
-                               layer=layer)
-                    head_size = frame.hold_head_height(self.settings.note_thickness)
-                    scene.quad(f"hold_head_{lane}", center_x, head + head_size / 2.0,
-                               shape.x1 - shape.x0, head_size, 0.0, layer=layer)
+                               max(0.2 * UNIT_SCALE, abs(body_far - body_near)), 0.0,
+                               (1, 1, 1, 1.0), layer=layer)
+                    # 开头盖片只在开头时间还没到时画（过了就不在判定线之前补一截）
+                    now_beat = timing.song_ms_to_beat(now_ms)
+                    if now_beat <= float(note.head_beat) + 1e-9:
+                        head_size = frame.hold_head_height(self.settings.note_thickness)
+                        scene.quad(f"hold_head_{lane}", center_x, head + head_size / 2.0,
+                                   shape.x1 - shape.x0, head_size, 0.0, layer=layer)
                 else:
                     thickness = (self.settings.multi_thickness if note.is_multi
                                  else self.settings.note_thickness)
@@ -2670,9 +2682,12 @@ class PlayerApp:
             elif isinstance(note, MouseRegion):
                 self._draw_region3d(note, now_ms)
             elif isinstance(note, MouseSlide):
-                z = self._note_z(self._head_ms(note), now_ms, group=group)
-                if z < self._plane_z_near(MOUSE_PLANE_HEIGHT) or z > START_Z:
+                if not frame.note_in_view(self.chart, note, now_ms, span, z_near_mouse):
                     continue
+                z = min(
+                    START_Z,
+                    max(z_near_mouse, self._note_z(self._head_ms(note), now_ms, group=group)),
+                )
                 shape = frame.slide_shape(note)
                 name = "right" if shape.direction > 0 else "left"
                 # 滑键贴图是双倍高（上半楔形 / 下半透明）：图片中心 = 鼠标运动平面，
@@ -2690,9 +2705,12 @@ class PlayerApp:
                     vertical=True, layer=layer,
                 )
             elif isinstance(note, MouseClick):
-                z = self._note_z(self._head_ms(note), now_ms, group=group)
-                if z < self._plane_z_near(MOUSE_PLANE_HEIGHT) or z > START_Z:
+                if not frame.note_in_view(self.chart, note, now_ms, span, z_near_mouse):
                     continue
+                z = min(
+                    START_Z,
+                    max(z_near_mouse, self._note_z(self._head_ms(note), now_ms, group=group)),
+                )
                 shape = frame.click_shape(note)
                 center_y, height = frame.click_center(self.settings.click_thickness)
                 scene.quad("click_range", (shape.x0 + shape.x1) / 2.0, z,
@@ -2719,12 +2737,15 @@ class PlayerApp:
         """
         assert self.chart is not None and self.scene3d is not None
         scene = self.scene3d
+        if not frame.note_visible(self.chart.timing, note, now_ms):
+            return                      # 判定已结束：整个空域（含判定线高亮）都不画
         span = self._visible_span_ms()
         y = MOUSE_PLANE_HEIGHT
         fill = self.texture_avg.get("region_fill") or (60, 110, 200, 104)
         edge = self.texture_avg.get("region_edge") or (90, 220, 255, 255)
         near_ms = self._plane_near_distance_ms(MOUSE_PLANE_HEIGHT, span)   # 判定线之前也画
-        for run in frame.region_samples(self.chart, note, now_ms, span, near_ms=near_ms):
+        runs = frame.region_samples(self.chart, note, now_ms, span, near_ms=near_ms)
+        for run in runs:
             left: List[Tuple[float, float]] = []
             right: List[Tuple[float, float]] = []
             for beat, distance in run:
@@ -2746,18 +2767,20 @@ class PlayerApp:
         assert self.chart is not None
         group = self._note_group(note)         # 位置按所属速度组的 ∫v 反推
         z_near = self._plane_z_near(0.0)       # 相机对 6K 平面的可视下界（反向物件用）
-        head_z = self._note_z(self._head_ms(note), now_ms, group=group)
-        if head_z < z_near or head_z > START_Z:
+        span = self._visible_span_ms()
+        # 时间（判定未结束）+ 位置（z 范围与可视范围相交）两个条件都要满足
+        if not frame.note_in_view(self.chart, note, now_ms, span, z_near):
             return
-        head_z = max(z_near, head_z)
+        head_z = self._note_z(self._head_ms(note), now_ms, group=group)
+        head_z = min(START_Z, max(z_near, head_z))
         shape = frame.lane_shape(note)
         tex_index, x0, x1 = shape.texture_index, shape.x0, shape.x1
         if note.is_hold:
-            tail_z = self._note_z(
-                self.chart.timing.beat_to_song_ms(note.tail_beat), now_ms, group=group
-            )
-            tail_z = max(z_near, tail_z)
-            z_near_body, z_far_body = min(head_z, tail_z), max(head_z, tail_z)
+            # 时间已经过去的部分不画：只画「当前时刻 ~ 长按结尾」这一截
+            body_span = frame.note_z_span(self.chart, note, now_ms, span)
+            assert body_span is not None
+            z_near_body = min(START_Z, max(z_near, body_span[0]))
+            z_far_body = min(START_Z, max(z_near, body_span[1]))
             body = f"hold_body_{tex_index}"
             body_color = self.texture_avg.get(body)
             if body_color is not None:
@@ -2781,19 +2804,21 @@ class PlayerApp:
                 mid_near = self._proj((x0 + x1) / 2, 0.0, z_near_body)
                 mid_far = self._proj((x0 + x1) / 2, 0.0, z_far_body)
                 self._line_scaled(mid_near, mid_far, WHITE, 2.4, min(near[2], far[2]))
-            # 开头盖在主体上面（有意让一部分主体被开头覆盖）
-            head_top = head_z + frame.hold_head_height(self.settings.note_thickness)
-            if not self._blit_lane_tex(f"hold_head_{tex_index}", x0, x1,
-                                       head_z, min(START_Z, head_top)):
-                self._quad(
-                    [
-                        self._proj(x0, 0.0, head_z),
-                        self._proj(x1, 0.0, head_z),
-                        self._proj(x1, 0.0, min(START_Z, head_top)),
-                        self._proj(x0, 0.0, min(START_Z, head_top)),
-                    ],
-                    (70, 140, 240),
-                )
+            # 开头盖在主体上面（有意让一部分主体被开头覆盖）；开头时间已过就不画
+            now_beat = self.chart.timing.song_ms_to_beat(now_ms)
+            if now_beat <= float(note.head_beat) + 1e-9:
+                head_top = head_z + frame.hold_head_height(self.settings.note_thickness)
+                if not self._blit_lane_tex(f"hold_head_{tex_index}", x0, x1,
+                                           head_z, min(START_Z, head_top)):
+                    self._quad(
+                        [
+                            self._proj(x0, 0.0, head_z),
+                            self._proj(x1, 0.0, head_z),
+                            self._proj(x1, 0.0, min(START_Z, head_top)),
+                            self._proj(x0, 0.0, min(START_Z, head_top)),
+                        ],
+                        (70, 140, 240),
+                    )
         else:
             # 单键 / 多轨单键分别用各自的厚度
             thickness = (
@@ -2860,6 +2885,8 @@ class PlayerApp:
         ``z = START_Z`` 上相互重叠，叠出的 alpha 更实，看起来像空域堆在平面远端。
         """
         assert self.chart is not None
+        if not frame.note_visible(self.chart.timing, note, now_ms):
+            return                      # 判定已结束：整个空域（含判定线高亮）都不画
         span = self._visible_span_ms()
         # 底图：整片**同一种颜色**的半透明淡蓝（不再画横向条纹，避免一条条接缝）
         area_color = self.texture_avg.get("region_area")
@@ -2874,7 +2901,8 @@ class PlayerApp:
             if surface is not None:
                 edge_color = textures.average_color(surface)
         near_ms = self._plane_near_distance_ms(MOUSE_PLANE_HEIGHT, span)   # 判定线之前也画
-        for run in frame.region_samples(self.chart, note, now_ms, span, near_ms=near_ms):
+        runs = frame.region_samples(self.chart, note, now_ms, span, near_ms=near_ms)
+        for run in runs:
             left_points: List[Tuple[float, float, float]] = []
             right_points: List[Tuple[float, float, float]] = []
             for beat, distance in run:
@@ -2912,7 +2940,10 @@ class PlayerApp:
                         self._alpha_quad(quad, edge_color[:3], int(round(edge_color[3] * fade)))
                     else:
                         self._line_scaled(a, b, MOUSE_TINT, int(max(1, round(4 * fade))), scale)
-        # 空域判定线：单像素图铺在判定线处
+        # 空域判定线：只在这段空域确实压在判定线上（可见段跨过距离 0）时画 ——
+        # 时间没到 / 已经结束的空域不该在判定线上留一条亮线
+        if not frame.runs_cross_line(runs):
+            return
         line_color = self.texture_avg.get("region_line")
         if line_color is None:
             surface = self._tex("region_line")
@@ -2941,11 +2972,15 @@ class PlayerApp:
 
     def _draw_pattern(self, note: Note, now_ms: float) -> None:
         """滑键 / 鼠标点击按键：图案平行于判定平面，改用预设贴图。"""
-        z = self._note_z(self._head_ms(note), now_ms, group=self._note_group(note))
         z_near = self._plane_z_near(MOUSE_PLANE_HEIGHT)   # 反向时图案会走到判定线之前
-        if z < z_near or z > START_Z:
+        span = self._visible_span_ms()
+        # 时间（判定未结束）+ 位置（z 在可视范围内）两个条件都要满足
+        if not frame.note_in_view(self.chart, note, now_ms, span, z_near):
             return
-        z = max(z_near, z)
+        z = min(
+            START_Z,
+            max(z_near, self._note_z(self._head_ms(note), now_ms, group=self._note_group(note))),
+        )
         if self.textures or self._tex("click_diamond") is not None:
             if self._draw_pattern_textured(note, z):
                 return
