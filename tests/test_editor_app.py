@@ -236,6 +236,40 @@ class EditorAppTests(unittest.TestCase):
         self.app.undo()
         self.assertTrue(self.app.document.chart.settings.show_past_notes, "撤销不应回退视图设置")
 
+    def test_idle_tick_skips_redraw_until_something_changes(self) -> None:
+        """空闲帧不重绘；视图 / 选择 / 编辑器设置一变就立刻重绘。"""
+        calls = {"n": 0}
+        original = self.app.renderer.draw
+
+        def counting(*args, **kwargs):
+            calls["n"] += 1
+            return original(*args, **kwargs)
+
+        self.app.renderer.draw = counting
+        self.app._tick()
+        first = calls["n"]
+        self.app._tick()
+        self.app._tick()
+        self.assertEqual(calls["n"], first, "没有变化时不应重新绘制")
+
+        self.app.view.scroll_beats(1.0)
+        self.app._tick()
+        self.assertGreater(calls["n"], first, "滚动后应重绘")
+
+        before = calls["n"]
+        self.app.document.select_only([self.app.document.chart.all_notes()[0].id])
+        self.app._tick()
+        self.assertGreater(calls["n"], before, "选择变化后应重绘")
+
+        before = calls["n"]
+        self.app.document.chart.settings.grid_division = 16
+        self.app._tick()
+        self.assertGreater(calls["n"], before, "网格设置变化后应重绘")
+
+        before = calls["n"]
+        self.app._tick()
+        self.assertEqual(calls["n"], before, "再次空闲仍不应重绘")
+
     def test_settings_and_save(self) -> None:
         self.app.set_grid_division("3")
         self.assertEqual(self.app.document.chart.settings.grid_division, 3)

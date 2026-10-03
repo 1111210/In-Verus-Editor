@@ -29,6 +29,7 @@ from ..model.chart import Chart
 from ..model.notes import (
     BoundaryCurve,
     LAYER_CLICK,
+    LAYER_MAX,
     LAYER_MULTI_HOLD,
     LAYER_MULTI_TAP,
     LAYER_REGION,
@@ -39,6 +40,7 @@ from ..model.notes import (
     MouseClick,
     MouseRegion,
     MouseSlide,
+    NOTE_REGION,
     Note,
     layer_rank,
 )
@@ -530,7 +532,7 @@ class Renderer:
         y_min = view.layout.play_top - margin
         y_max = view.layout.height + margin
         notes = chart.sorted_notes()
-        region_count = sum(1 for n in notes if isinstance(n, MouseRegion))
+        region_count = chart.note_counts()[NOTE_REGION]
         region_samples = REGION_SAMPLES if region_count <= 40 else 12
         cache = state.hit_cache
         if cache is None:
@@ -540,6 +542,13 @@ class Renderer:
         self._hit_entries.clear()
         cache.signature = hit_signature(view)
         show_past = bool(chart.settings.show_past_notes) and not state.demo
+        current_beat = view.current_beat
+        # 一遍扫过候选物件，按图层分桶（旧实现是 7 个图层各扫一遍全表）
+        buckets: List[List[Note]] = [[] for _ in range(LAYER_MAX + 1)]
+        for note in view.candidate_notes(notes):
+            if not show_past and not note_in_time(note, current_beat, False):
+                continue
+            buckets[layer_rank(note)].append(note)
         # 图层顺序（自下而上）：多轨长按 → 单轨长按 → 多轨单键 → 单轨单键 → 空域 → 滑键
         # 这样即使谱面故意写成非法重叠，小按键也压在长按之上、空域与滑键再压在最上面，交叠处依然可读。
         layers = (
@@ -554,17 +563,13 @@ class Renderer:
         )
         for rank, draw in layers:
             self.scene.set_layer(4 + rank)
-            visible = [
-                note
-                for note in notes
-                if layer_rank(note) == rank
-                and note_in_time(note, view.current_beat, show_past)
-            ]
+            visible = buckets[rank]
             if rank in (LAYER_MULTI_HOLD, LAYER_MULTI_TAP):
                 # 多轨物件：跨的轨道越多越先画（越靠下层），同跨度保持时间顺序
                 visible.sort(key=lambda n: n.lane_end - n.lane_start, reverse=True)
             for note in visible:
                 draw(note, note.id in state.selection)
+
 
     def _draw_lane_note(
         self,

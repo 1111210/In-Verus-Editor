@@ -16,6 +16,7 @@
 
 from __future__ import annotations
 
+import bisect
 from dataclasses import dataclass
 from typing import Any, Dict, Iterable, List, Sequence
 
@@ -54,6 +55,8 @@ class SpeedGroup:
         self.name = str(name)
         self.segments: List[SpeedSegment] = []
         self.note_ids: List[str] = list(note_ids or [])
+        # note_ids 的成员索引（派生数据，不参与序列化）：避免每次都线性查找
+        self._note_set: set = {str(n) for n in self.note_ids}
         self._identity = True
         self._min_multiplier = config.DEFAULT_SPEED_MULTIPLIER
         self.set_segments(segments or [SpeedSegment(0.0, config.DEFAULT_SPEED_MULTIPLIER)])
@@ -68,6 +71,26 @@ class SpeedGroup:
         )
         self._identity = all(abs(s.multiplier - 1.0) < 1e-9 for s in self.segments)
         self._min_multiplier = min(s.multiplier for s in self.segments)
+        self._rebuild_caches()
+
+    def _rebuild_caches(self) -> None:
+        """段起点 + 累计积分（``∫_0^{段起点} v``）：查询从 O(段数) 降到 O(log 段数)。"""
+        starts = [float(seg.start_beat) for seg in self.segments]
+        cumulative = [0.0]
+        for index, seg in enumerate(self.segments):
+            if index + 1 < len(self.segments):
+                span = starts[index + 1] - starts[index]
+                cumulative.append(cumulative[-1] + span * seg.multiplier)
+        self._starts: List[float] = starts
+        self._cumulative: List[float] = cumulative
+
+    def _index_at(self, beat: float) -> int:
+        index = bisect.bisect_right(self._starts, float(beat) + 1e-12) - 1
+        if index < 0:
+            return 0
+        if index >= len(self.segments):
+            return len(self.segments) - 1
+        return index
 
     @property
     def is_default(self) -> bool:
@@ -105,12 +128,8 @@ class SpeedGroup:
             v = self.multiplier_at(from_beat)
             return v * timing.seconds_per_beat(from_beat) * (to_beat - from_beat)
         cuts = {from_beat, to_beat}
-        for segment in self.segments:
-            if from_beat < segment.start_beat < to_beat:
-                cuts.add(float(segment.start_beat))
-        for segment in timing.segments:
-            if from_beat < segment.start_beat < to_beat:
-                cuts.add(float(segment.start_beat))
+        cuts.update(self.segment_starts_between(from_beat, to_beat))
+        cuts.update(timing.segment_starts_between(from_beat, to_beat))
         points = sorted(cuts)
         total = 0.0
         for start, end in zip(points, points[1:]):
@@ -120,7 +139,7 @@ class SpeedGroup:
 
     # ------------------------------------------------------------------ 查询
     def segment_at(self, beat: float) -> SpeedSegment:
-        return seglib.segment_at(self.segments, beat)
+        return self.segments[self._index_at(beat)]
 
     def multiplier_at(self, beat: float) -> float:
         return self.segment_at(beat).multiplier
@@ -131,19 +150,24 @@ class SpeedGroup:
     def cumulative(self, beat: float) -> float:
         """∫_{0}^{beat} v(u) du。"""
         beat = float(beat)
-        segs = self.segments
         if beat < 0.0:
-            return beat * segs[0].multiplier
-        total = 0.0
-        for i, seg in enumerate(segs):
-            if beat <= seg.start_beat:
+            return beat * self.segments[0].multiplier
+        index = self._index_at(beat)
+        seg = self.segments[index]
+        return self._cumulative[index] + (beat - seg.start_beat) * seg.multiplier
+
+    def segment_starts_between(self, start_beat: float, end_beat: float) -> List[float]:
+        """``(start_beat, end_beat)`` 内（不含端点）的段起点，按拍升序。"""
+        if end_beat <= start_beat:
+            return []
+        first = bisect.bisect_right(self._starts, float(start_beat))
+        out: List[float] = []
+        for index in range(first, len(self._starts)):
+            value = self._starts[index]
+            if value >= end_beat:
                 break
-            end = self.segment_end(i)
-            span = min(beat, end) - seg.start_beat
-            total += span * seg.multiplier
-            if beat <= end:
-                break
-        return total
+            out.append(value)
+        return out
 
     def distance(self, from_beat: float, to_beat: float) -> float:
         """∫_{from}^{to} v(u) du，正数表示向判定线上方（未来侧）移动。"""
@@ -159,12 +183,22 @@ class SpeedGroup:
     # ------------------------------------------------------------------ 组内物件
     def add_notes(self, note_ids: Iterable[str]) -> None:
         for nid in note_ids:
-            if nid not in self.note_ids:
-                self.note_ids.append(str(nid))
+            text = str(nid)
+            if text not in self._note_set:
+                self._note_set.add(text)
+                self.note_ids.append(text)
 
     def remove_notes(self, note_ids: Iterable[str]) -> None:
         drop = {str(n) for n in note_ids}
+        if not (self._note_set & drop):
+            return
         self.note_ids = [n for n in self.note_ids if n not in drop]
+        self._note_set = {str(n) for n in self.note_ids}
+
+    def set_note_ids(self, note_ids: Iterable[str]) -> None:
+        """整体替换成员列表（读档修复用），同时刷新成员索引。"""
+        self.note_ids = list(note_ids)
+        self._note_set = {str(n) for n in self.note_ids}
 
     # ------------------------------------------------------------------ 序列化
     def to_dict(self) -> Dict[str, Any]:

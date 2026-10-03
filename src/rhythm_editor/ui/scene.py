@@ -98,12 +98,14 @@ class Scene:
         self._used.add(key)
         tags = tuple(options.get("tags") or ()) + (self._layer_tag(),)
         options["tags"] = tags
-        spec = (tuple(round(float(c), 2) for c in coords), tuple(sorted(options.items())))
+        new_coords = tuple(round(float(c), 2) for c in coords)
+        new_options = tuple(options.items())
+        spec = (new_coords, new_options)
         entry = self._items.get(key)
         if entry is None or entry[1] != kind:
             if entry is not None:
                 self.canvas.delete(entry[0])
-            item_id = self._create(kind, coords, options)
+            item_id = self._create(kind, new_coords, options)
             self._z_dirty = True
             self.stats["created"] += 1
             self.frame_stats["created"] += 1
@@ -112,18 +114,21 @@ class Scene:
         item_id, _, old_spec = entry
         if old_spec == spec:
             return
-        self.canvas.coords(item_id, *[round(float(c), 2) for c in coords])
-        self.stats["moved"] += 1
-        self.frame_stats["moved"] += 1
-        try:
-            self.canvas.itemconfigure(item_id, **self._safe(options))
-            self.stats["configured"] += 1
-            self.frame_stats["configured"] += 1
-        except tk.TclError as exc:  # pragma: no cover - 依赖平台
+        # 坐标与样式分开比较：滚动 / 播放时只有坐标在变，可省掉 itemconfigure 的 Tcl 往返
+        if old_spec[0] != new_coords:
+            self.canvas.coords(item_id, *new_coords)
+            self.stats["moved"] += 1
+            self.frame_stats["moved"] += 1
+        if old_spec[1] != new_options:
             try:
-                self.canvas.itemconfigure(item_id, **self._drop_optional(options, exc))
-            except tk.TclError:
-                pass
+                self.canvas.itemconfigure(item_id, **self._safe(options))
+                self.stats["configured"] += 1
+                self.frame_stats["configured"] += 1
+            except tk.TclError as exc:  # pragma: no cover - 依赖平台
+                try:
+                    self.canvas.itemconfigure(item_id, **self._drop_optional(options, exc))
+                except tk.TclError:
+                    pass
         self._items[key] = (item_id, kind, spec)
 
     def _create(self, kind: str, coords: Sequence[float], options: Dict[str, Any]) -> int:

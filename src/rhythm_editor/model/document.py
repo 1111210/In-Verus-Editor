@@ -54,6 +54,8 @@ class Document:
         self.path = path
         self.dirty = False
         self.selection: Set[str] = set()
+        # 选择集的版本号（渲染脏帧判断用）
+        self.selection_revision = 0
         self.clipboard: List[Dict[str, Any]] = []
         self._undo: List[UndoRecord] = []
         self._redo: List[UndoRecord] = []
@@ -76,6 +78,7 @@ class Document:
         self.dirty = False
         self.revision += 1
         self.selection.clear()
+        self.selection_revision += 1
         self._undo.clear()
         self._redo.clear()
 
@@ -107,6 +110,7 @@ class Document:
         record = self._undo.pop()
         record.undo()
         self.selection = {sid for sid in record.selection_before if self.chart.find(sid)}
+        self.selection_revision += 1
         self._redo.append(record)
         self.dirty = True
         self.revision += 1
@@ -118,6 +122,7 @@ class Document:
         record = self._redo.pop()
         record.redo()
         self.selection = {sid for sid in record.selection_after if self.chart.find(sid)}
+        self.selection_revision += 1
         self._undo.append(record)
         self.dirty = True
         self.revision += 1
@@ -141,7 +146,9 @@ class Document:
         metadata, timing, groups = state
         self.chart.metadata = Metadata.from_dict(copy.deepcopy(metadata))
         self.chart.timing = TimingMap.from_dict(copy.deepcopy(timing))
-        self.chart.speed_groups = [SpeedGroup.from_dict(copy.deepcopy(g)) for g in groups]
+        self.chart.replace_speed_groups(
+            [SpeedGroup.from_dict(copy.deepcopy(g)) for g in groups]
+        )
         if not any(g.is_default for g in self.chart.speed_groups):
             self.chart.speed_groups.insert(0, SpeedGroup.default())
         self.chart.speed_groups.sort(key=lambda g: g.id)
@@ -210,16 +217,20 @@ class Document:
     # ------------------------------------------------------------------ 选择
     def select_only(self, note_ids: Iterable[str]) -> None:
         self.selection = {str(i) for i in note_ids}
+        self.selection_revision += 1
 
     def select_all(self) -> None:
         self.selection = {n.id for n in self.chart.all_notes()}
+        self.selection_revision += 1
 
     def clear_selection(self) -> None:
         self.selection.clear()
+        self.selection_revision += 1
 
     def xor_selection(self, note_ids: Iterable[str]) -> None:
         """Ctrl 选择：把新选择并入，两个集合的交集被移出（对称差）。"""
         self.selection ^= {str(i) for i in note_ids}
+        self.selection_revision += 1
 
     def selected_notes(self) -> List[Note]:
         return self.chart.find_many(self.selection)
@@ -248,6 +259,7 @@ class Document:
         selection_before = set(self.selection)
         removed = self.chart.remove(ids)
         self.selection -= set(ids)
+        self.selection_revision += 1
         data = [note.to_dict() for note in removed]
         self.commit(
             self._notes_record(label, data, [], selection_before, self.selection)

@@ -208,6 +208,19 @@ class Chart:
         self._id_counters: Dict[str, int] = {"L": 0, "M": 0}
         # 按判定时刻排好序的物件列表缓存：只在增删 / 编辑后重建，避免每帧排序
         self._sorted_cache: Optional[List[Note]] = None
+        self._sorted_heads: Optional[List[float]] = None
+        self._max_note_span: Optional[float] = None
+        self._note_counts: Optional[Dict[str, int]] = None
+        self._beat_bounds: Optional[tuple[float, float]] = None
+        self._beat_bounds_for: Optional[TimingMap] = None
+        self._beat_bounds_key: Optional[tuple] = None
+        self._order_revision = 0
+        # 谱面内容版本号（物件增删 / 编辑 / 时间变动都会 +1；渲染与命中缓存用）
+        self.revision = 0
+        # 下列都是**派生索引**（不参与序列化）：按需建立，增删物件时同步维护
+        self._id_index: Optional[Dict[str, Note]] = None
+        self._used_ids: Optional[set] = None
+        self._group_index: Optional[Dict[int, SpeedGroup]] = None
 
     # ------------------------------------------------------------------ 物件
     def all_notes(self) -> List[Note]:
@@ -228,33 +241,68 @@ class Chart:
         """
         if self._sorted_cache is None:
             self._sorted_cache = sorted(self.all_notes(), key=sort_key)
+            self._sorted_heads = [float(n.head_beat) for n in self._sorted_cache]
         return self._sorted_cache
+
+    def sorted_head_beats(self) -> List[float]:
+        """与 :meth:`sorted_notes` 平行的开头拍列表（用于二分可视窗口）。"""
+        if self._sorted_heads is None:
+            self.sorted_notes()
+        assert self._sorted_heads is not None
+        return self._sorted_heads
+
+    def max_note_span(self) -> float:
+        """全谱最长的 ``tail_beat − head_beat``（可视窗口回扫用，带缓存）。"""
+        if self._max_note_span is None:
+            self._max_note_span = max(
+                (float(n.tail_beat) - float(n.head_beat) for n in self.all_notes()),
+                default=0.0,
+            )
+        return self._max_note_span
 
     def invalidate_order(self) -> None:
         """标记排序缓存失效（增删物件、修改物件时间后调用）。"""
         self._sorted_cache = None
+        self._sorted_heads = None
+        self._max_note_span = None
+        self._note_counts = None
+        self._beat_bounds = None
+        self._order_revision += 1
+        self.revision += 1
 
     def notes_by_id(self) -> Dict[str, Note]:
-        return {n.id: n for n in self.all_notes()}
+        if self._id_index is None:
+            self._id_index = {n.id: n for n in self.all_notes()}
+        return dict(self._id_index)
 
     def find(self, note_id: str) -> Optional[Note]:
-        for note in self.all_notes():
-            if note.id == note_id:
-                return note
-        return None
+        if self._id_index is None:
+            self._id_index = {n.id: n for n in self.all_notes()}
+        return self._id_index.get(note_id)
 
     def find_many(self, note_ids: Iterable[str]) -> List[Note]:
-        wanted = set(note_ids)
-        return [n for n in self.sorted_notes() if n.id in wanted]
+        if self._id_index is None:
+            self._id_index = {n.id: n for n in self.all_notes()}
+        index = self._id_index
+        out: List[Note] = []
+        for note_id in note_ids:
+            note = index.get(note_id)
+            if note is not None:
+                out.append(note)
+        out.sort(key=sort_key)      # 与旧的“按 sorted_notes 顺序返回”一致
+        return out
 
     def new_note_id(self, prefix: str) -> str:
-        used = {n.id for n in self.all_notes()}
+        if self._used_ids is None:
+            self._used_ids = {n.id for n in self.all_notes()}
+        used = self._used_ids
         index = self._id_counters.get(prefix, 0)
         while True:
             index += 1
             candidate = f"{prefix}{index}"
             if candidate not in used:
                 self._id_counters[prefix] = index
+                used.add(candidate)
                 return candidate
 
     def register_note_id(self, note_id: str) -> None:
@@ -280,6 +328,10 @@ class Chart:
         else:  # pragma: no cover - 防御性
             raise TypeError(f"unsupported note: {note!r}")
         self.register_note_id(note.id)
+        if self._id_index is not None:
+            self._id_index[note.id] = note
+        if self._used_ids is not None:
+            self._used_ids.add(note.id)
         group_obj = self.group_by_id(note.group)
         group_obj.add_notes([note.id])
         self.invalidate_order()
@@ -302,6 +354,11 @@ class Chart:
                 keep_mouse.append(note)
         self.lane_notes = keep_lane
         self.mouse_notes = keep_mouse
+        if self._id_index is not None:
+            for note in removed:
+                self._id_index.pop(note.id, None)
+        if self._used_ids is not None:
+            self._used_ids.difference_update(note.id for note in removed)
         for group in self.speed_groups:
             group.remove_notes(drop)
         if removed:
@@ -310,10 +367,9 @@ class Chart:
 
     # ------------------------------------------------------------------ 速度组
     def group_by_id(self, gid: int) -> SpeedGroup:
-        for group in self.speed_groups:
-            if group.id == int(gid):
-                return group
-        return self.speed_groups[0]
+        if self._group_index is None:
+            self._group_index = {group.id: group for group in self.speed_groups}
+        return self._group_index.get(int(gid), self.speed_groups[0])
 
     def next_group_id(self) -> int:
         return max((g.id for g in self.speed_groups), default=config.DEFAULT_GROUP_ID) + 1
@@ -337,7 +393,14 @@ class Chart:
     def add_group(self, name: str, segments: Sequence[SpeedSegment] | None = None) -> SpeedGroup:
         group = SpeedGroup(self.next_group_id(), name, segments or [SpeedSegment(0.0, 1.0)], [])
         self.speed_groups.append(group)
+        if self._group_index is not None:
+            self._group_index[group.id] = group
         return group
+
+    def replace_speed_groups(self, groups: Iterable[SpeedGroup]) -> None:
+        """整体替换速度组列表（读档 / 撤销恢复用）并重建组索引。"""
+        self.speed_groups = sorted(groups, key=lambda g: g.id)
+        self._group_index = None
 
     def delete_group(self, gid: int) -> bool:
         """删除速度组并把组内物件放回默认组（默认组不可删除）。"""
@@ -348,25 +411,38 @@ class Chart:
             return False
         self.assign_group(list(group.note_ids), config.DEFAULT_GROUP_ID)
         self.speed_groups = [g for g in self.speed_groups if g.id != group.id]
+        if self._group_index is not None:
+            self._group_index.pop(group.id, None)
         return True
 
     # ------------------------------------------------------------------ 统计
     def beat_bounds(self) -> tuple[float, float]:
-        beats = [0.0, 1.0]
-        for note in self.all_notes():
-            beats.append(note.head_beat)
-            beats.append(note.tail_beat)
-        for seg in self.timing.segments:
-            beats.append(seg.start_beat)
-        return min(beats), max(beats)
+        key = (self.timing.revision, self._order_revision)
+        if (
+            self._beat_bounds is None
+            or self._beat_bounds_for is not self.timing
+            or self._beat_bounds_key != key
+        ):
+            beats = [0.0, 1.0]
+            for note in self.all_notes():
+                beats.append(note.head_beat)
+                beats.append(note.tail_beat)
+            for seg in self.timing.segments:
+                beats.append(seg.start_beat)
+            self._beat_bounds = (min(beats), max(beats))
+            self._beat_bounds_for = self.timing
+            self._beat_bounds_key = key
+        return self._beat_bounds
 
     def note_counts(self) -> Dict[str, int]:
-        return {
-            NOTE_LANE: len(self.lane_notes),
-            NOTE_REGION: sum(1 for n in self.mouse_notes if isinstance(n, MouseRegion)),
-            NOTE_SLIDE: sum(1 for n in self.mouse_notes if isinstance(n, MouseSlide)),
-            NOTE_CLICK: sum(1 for n in self.mouse_notes if isinstance(n, MouseClick)),
-        }
+        if self._note_counts is None:
+            self._note_counts = {
+                NOTE_LANE: len(self.lane_notes),
+                NOTE_REGION: sum(1 for n in self.mouse_notes if isinstance(n, MouseRegion)),
+                NOTE_SLIDE: sum(1 for n in self.mouse_notes if isinstance(n, MouseSlide)),
+                NOTE_CLICK: sum(1 for n in self.mouse_notes if isinstance(n, MouseClick)),
+            }
+        return dict(self._note_counts)
 
     # ------------------------------------------------------------------ 序列化
     def to_dict(self) -> Dict[str, Any]:
@@ -392,7 +468,9 @@ class Chart:
             settings=EditorSettings(),
         )
         groups_data = data.get("speed_groups") or [SpeedGroup.default().to_dict()]
-        chart.speed_groups = [SpeedGroup.from_dict(g) for g in groups_data]  # type: ignore[arg-type]
+        chart.replace_speed_groups(
+            [SpeedGroup.from_dict(g) for g in groups_data]  # type: ignore[arg-type]
+        )
         if not any(g.id == config.DEFAULT_GROUP_ID for g in chart.speed_groups):
             chart.speed_groups.insert(0, SpeedGroup.default())
         chart.speed_groups.sort(key=lambda g: g.id)
@@ -409,25 +487,31 @@ class Chart:
         else:
             self.mouse_notes.append(note)
         self.register_note_id(note.id)
+        if self._id_index is not None:
+            self._id_index[note.id] = note
+        if self._used_ids is not None:
+            self._used_ids.add(note.id)
+        self.invalidate_order()
         return note
 
     def _repair_groups(self) -> None:
         """保证物件与速度组的从属关系双向一致。"""
         known = self.notes_by_id()
         assigned: Set[str] = set()
+        valid_ids = {g.id for g in self.speed_groups}
+        owner: Dict[str, int] = {}
         for group in self.speed_groups:
-            group.note_ids = [nid for nid in group.note_ids if nid in known and nid not in assigned]
+            group.set_note_ids([nid for nid in group.note_ids if nid in known and nid not in assigned])
+            for nid in group.note_ids:
+                owner.setdefault(nid, group.id)
             assigned.update(group.note_ids)
         default = self.group_by_id(config.DEFAULT_GROUP_ID)
         for note in self.all_notes():
-            if note.group not in {g.id for g in self.speed_groups}:
+            if note.group not in valid_ids:
                 note.group = config.DEFAULT_GROUP_ID
             if note.id not in assigned:
                 default.add_notes([note.id])
                 note.group = config.DEFAULT_GROUP_ID
                 assigned.add(note.id)
             else:
-                for group in self.speed_groups:
-                    if note.id in group.note_ids:
-                        note.group = group.id
-                        break
+                note.group = owner.get(note.id, note.group)

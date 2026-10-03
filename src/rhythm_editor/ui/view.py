@@ -12,12 +12,19 @@
 
 from __future__ import annotations
 
+import bisect
 from dataclasses import dataclass
 from typing import List, Optional, Tuple
 
 from .. import config
 from ..model.chart import Chart
+from ..model.notes import Note
 from ..model.speed import SpeedGroup
+
+# 渲染 / 命中候选窗口的像素余量（与渲染器的剔除边界保持一致）：
+# RENDER_MARGIN_PX 是画布上下各留的绘制余量，CANDIDATE_PAD_PX 覆盖图形自身厚度。
+RENDER_MARGIN_PX = 80.0
+CANDIDATE_PAD_PX = 32.0
 
 
 def _column_rects(bounds: Tuple[float, float], count: int, gap: float = 2.0) -> List[Tuple[float, float]]:
@@ -218,14 +225,9 @@ class ViewState:
 
     def min_px_per_beat(self, beat_low: float, beat_high: float) -> float:
         """可视范围内**最小**的每拍像素长度（最密的格子），用于决定画不画细分线。"""
-        timing = self.chart.timing
-        fastest = self.seconds_per_beat()
-        if beat_high > beat_low:
-            for segment in timing.segments:
-                if segment.start_beat <= beat_high and (
-                    segment.start_beat >= beat_low or segment is timing.segments[0]
-                ):
-                    fastest = min(fastest, 60.0 / max(1e-3, segment.bpm))
+        fastest = self.chart.timing.min_seconds_per_beat(
+            beat_low, beat_high, self.current_beat
+        )
         return fastest * self.px_per_second()
 
     def visible_beats(self) -> float:
@@ -277,6 +279,30 @@ class ViewState:
             self.y_to_beat(self.layout.play_bottom),
             self.y_to_beat(self.layout.play_top),
         )
+
+    def candidate_notes(self, notes: List[Note]) -> List[Note]:
+        """按可视拍窗口粗筛候选物件（``notes`` 需已按开头拍排序）。
+
+        只在所有速度组都是默认流速时生效：此时位置对拍单调，窗口外的物件不可能
+        落进屏幕；流速非 1 / 反向的组会把任意远处的物件推回屏幕，只能返回原列表
+        让调用方逐个按真实位置判断。
+        """
+        for group in self.chart.speed_groups:
+            if not group.is_identity:
+                return notes
+        heads = self.chart.sorted_head_beats()
+        if len(heads) != len(notes):       # 传进来的不是本谱面的排序列表：退回全量
+            return notes
+        beat_hi = self.y_to_beat(self.layout.play_top - RENDER_MARGIN_PX - CANDIDATE_PAD_PX)
+        beat_lo = self.y_to_beat(self.layout.height + RENDER_MARGIN_PX + CANDIDATE_PAD_PX)
+        if beat_hi < beat_lo:
+            beat_lo, beat_hi = beat_hi, beat_lo
+        span = self.chart.max_note_span()
+        first = bisect.bisect_left(heads, beat_lo - span)
+        last = bisect.bisect_right(heads, beat_hi)
+        if first == 0 and last == len(notes):
+            return notes
+        return notes[first:last]
 
     def scroll_beats(self, delta: float, snap: bool = True) -> None:
         self.current_beat += float(delta)

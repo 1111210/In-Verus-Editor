@@ -119,6 +119,9 @@ class EditorApp:
         self._last_message = ""
         self._last_info = ""
         self._last_title = ""
+        # 脏帧判断：画面指纹 + 上次重建选择集的版本号
+        self._last_render_key: Optional[tuple] = None
+        self._selection_revision_seen = -1
         self._pending_frames = 0
         self._closed = False
         self._tick_id: Optional[str] = None
@@ -277,15 +280,66 @@ class EditorApp:
             self._schedule_next_tick()
             return
         state = self.render_state
-        state.selection = set(self.document.selection)
         state.demo = self.demo_mode
         state.playing = self.audio.is_playing
         state.divider_active = self._divider_drag or self._divider_cursor != ""
         state.pending = self.controller.state.pending
-        self.renderer.draw(self.document.chart, self.view, state)
+        # 选择集只在版本号变化时重建（大选择集不必每帧复制一遍）
+        selection_revision = self.document.selection_revision
+        if selection_revision != self._selection_revision_seen:
+            state.selection = set(self.document.selection)
+            self._selection_revision_seen = selection_revision
+        # 画面指纹不变时跳过整帧重绘：空闲状态几乎零开销
+        render_key = self._render_key()
+        if render_key != self._last_render_key:
+            self._last_render_key = render_key
+            self.renderer.draw(self.document.chart, self.view, state)
         self._sync_ui()
         self._maybe_save_settings()
         self._schedule_next_tick()
+
+    def _render_key(self) -> tuple:
+        """本帧画面是否变化的指纹（只比较廉价的键，不复制选择集 / 剪贴板）。"""
+        state = self.render_state
+        layout = self.view.layout
+        settings = self.document.chart.settings
+        pending = state.pending
+        return (
+            self.document.revision,
+            self.document.selection_revision,
+            self.document.chart.revision,
+            self.document.chart.timing.revision,
+            settings.zoom_seconds,
+            settings.grid_division,
+            settings.horizontal_divisions,
+            bool(settings.side_lane_highlight),
+            bool(settings.show_past_notes),
+            round(float(self.view.current_beat), 6),
+            int(layout.width),
+            int(layout.height),
+            layout.mode,
+            round(float(layout.divider_x), 3),
+            bool(state.demo),
+            bool(state.playing),
+            bool(state.divider_active),
+            state.message,
+            state.rubber_band,
+            state.hover,
+            pending.tool,
+            pending.step,
+            pending.lane_start,
+            pending.lane_end,
+            pending.beat_start,
+            pending.beat_end,
+            pending.x_start,
+            pending.x_end,
+            pending.left.to_dict() if pending.left is not None else None,
+            pending.right.to_dict() if pending.right is not None else None,
+            pending.hint,
+            id(pending.clipboard),
+            len(pending.clipboard),
+            pending.clipboard_beat,
+        )
 
     def _maybe_save_settings(self) -> None:
         """设置一变就把全局配置写回磁盘（视图 / 音效 / 编辑器设置都是全局的）。

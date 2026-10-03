@@ -6,6 +6,7 @@ import os
 import sys
 import tempfile
 import unittest
+import filecmp
 
 sys.path.insert(0, os.path.join(os.path.dirname(os.path.dirname(os.path.abspath(__file__))), "src"))
 
@@ -214,6 +215,29 @@ class ChartIoTests(unittest.TestCase):
         self.assertEqual(os.path.abspath(chart_audio_path(chart_path, self.chart)), os.path.abspath(copied))
         self.chart.metadata.audio_file = "audio/none.mp3"
         self.assertIsNone(chart_audio_path(chart_path, self.chart))
+
+
+class FormatFreezeTests(unittest.TestCase):
+    """谱面格式冻结：性能优化只改内存结构，写出的 JSON 必须与磁盘文件逐字节一致。"""
+
+    def _assert_roundtrip_is_byte_identical(self, relative: str) -> None:
+        root = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
+        path = os.path.join(root, relative)
+        if not os.path.isfile(path):
+            self.skipTest(f"仓库内没有 {relative}")
+        chart, _raw = load_chart(path)
+        with tempfile.TemporaryDirectory() as tmp:
+            written = save_chart(chart, os.path.join(tmp, "out.json"))
+            self.assertTrue(
+                filecmp.cmp(path, written, shallow=False),
+                f"{relative} 重新保存后必须与磁盘文件逐字节一致",
+            )
+
+    def test_demo_chart_roundtrip_is_byte_identical(self) -> None:
+        self._assert_roundtrip_is_byte_identical(os.path.join("charts", "demo", "demo.json"))
+
+    def test_large_local_chart_roundtrip_if_present(self) -> None:
+        self._assert_roundtrip_is_byte_identical(os.path.join("charts", "test", "chart.json"))
 
 
 if __name__ == "__main__":

@@ -12,6 +12,7 @@
 
 from __future__ import annotations
 
+import bisect
 import math
 from dataclasses import dataclass
 from typing import Dict, Iterable, List, Sequence, Tuple
@@ -54,6 +55,8 @@ class TimingMap:
         offset_ms: float = 0.0,
     ) -> None:
         self.offset_ms = float(offset_ms)
+        # 段列表的版本号（派生缓存失效用，不参与序列化）
+        self.revision = 0
         self.segments: List[BpmSegment] = []
         self.set_segments(segments or [BpmSegment()])
 
@@ -65,6 +68,44 @@ class TimingMap:
             default=BpmSegment,
             to_zero=_to_zero,
         )
+        self.revision += 1
+        self._rebuild_caches()
+
+    def _rebuild_caches(self) -> None:
+        """预计算段起点、累计秒数与累计小节数。
+
+        只是内存里的派生数据，不参与 :meth:`to_dict` / :meth:`from_dict`：
+        拍 ↔ 秒、小节查询因此从 O(段数) 降到 O(log 段数)。
+        """
+        starts = [float(seg.start_beat) for seg in self.segments]
+        prefix = [0.0]
+        for index, seg in enumerate(self.segments):
+            if index + 1 < len(self.segments):
+                span = starts[index + 1] - starts[index]
+                prefix.append(prefix[-1] + span * 60.0 / seg.bpm)
+        bars = []
+        total = 0
+        for index, seg in enumerate(self.segments):
+            bars.append(total)
+            if index + 1 < len(self.segments):
+                step = float(seg.beats_per_bar)
+                if step > 0:
+                    span = starts[index + 1] - starts[index]
+                    total += max(1, math.ceil(span / step - 1e-9))
+                else:
+                    total += 1
+        self._starts: List[float] = starts
+        self._prefix_seconds: List[float] = prefix
+        self._bars_before: List[int] = bars
+
+    def _index_at(self, beat: float) -> int:
+        """``beat`` 落在第几段（早于第一段时返回 0）。"""
+        index = bisect.bisect_right(self._starts, float(beat) + 1e-12) - 1
+        if index < 0:
+            return 0
+        if index >= len(self.segments):
+            return len(self.segments) - 1
+        return index
 
     def copy(self) -> "TimingMap":
         return TimingMap([BpmSegment(s.start_beat, s.bpm, s.beats_per_bar) for s in self.segments],
@@ -82,7 +123,7 @@ class TimingMap:
         return 60.0 / self.bpm_at(beat)
 
     def segment_at(self, beat: float) -> BpmSegment:
-        return seglib.segment_at(self.segments, beat)
+        return self.segments[self._index_at(beat)]
 
     def segment_end(self, index: int) -> float:
         return seglib.segment_end(self.segments, index)
@@ -90,40 +131,26 @@ class TimingMap:
     # ------------------------------------------------------------------ 换算
     def beat_to_seconds(self, beat: float) -> float:
         beat = float(beat)
-        segs = self.segments
-        if beat < segs[0].start_beat:
-            return (beat - segs[0].start_beat) * 60.0 / segs[0].bpm
-        total = 0.0
-        for i, seg in enumerate(segs):
-            if beat <= seg.start_beat:
-                break
-            end = self.segment_end(i)
-            span = min(beat, end) - seg.start_beat
-            total += span * 60.0 / seg.bpm
-            if beat <= end:
-                break
-        return total
+        index = self._index_at(beat)
+        seg = self.segments[index]
+        start = self._starts[index]
+        if beat < start:
+            # 早于第一段：按第一段的每拍秒数外推（与旧实现对负数拍的处理一致）
+            return (beat - start) * 60.0 / seg.bpm
+        return self._prefix_seconds[index] + (beat - start) * 60.0 / seg.bpm
 
     def seconds_to_beat(self, seconds: float) -> float:
         seconds = float(seconds)
-        segs = self.segments
-        first_sec = 0.0
-        if seconds < first_sec:
-            return segs[0].start_beat + (seconds - first_sec) * segs[0].bpm / 60.0
-        elapsed = 0.0
-        beat = segs[0].start_beat
-        for i, seg in enumerate(segs):
-            span_seconds = (60.0 / seg.bpm)
-            end = self.segment_end(i)
-            length_beats = (end - seg.start_beat) if end != INF else INF
-            if length_beats == INF:
-                return seg.start_beat + (seconds - elapsed) / span_seconds
-            seg_seconds = length_beats * span_seconds
-            if seconds < elapsed + seg_seconds:
-                return seg.start_beat + (seconds - elapsed) / span_seconds
-            elapsed += seg_seconds
-            beat = end
-        return segs[-1].start_beat + (seconds - elapsed) * 0.0
+        if seconds < 0.0:
+            seg = self.segments[0]
+            return seg.start_beat + seconds * seg.bpm / 60.0
+        index = bisect.bisect_right(self._prefix_seconds, seconds + 1e-12) - 1
+        if index < 0:
+            index = 0
+        elif index >= len(self.segments):
+            index = len(self.segments) - 1
+        seg = self.segments[index]
+        return seg.start_beat + (seconds - self._prefix_seconds[index]) * seg.bpm / 60.0
 
     # ------------------------------------------- 歌曲位置（毫秒，含偏移）
     def beat_to_song_ms(self, beat: float) -> float:
@@ -150,7 +177,12 @@ class TimingMap:
         lines: List[float] = []
         if end_beat < start_beat:
             return lines
-        for i, seg in enumerate(self.segments):
+        # 只从覆盖 start_beat 的那一段开始扫；更早的段与 [start, end] 无交集
+        first = self._index_at(start_beat)
+        for i in range(first, len(self.segments)):
+            seg = self.segments[i]
+            if seg.start_beat > end_beat + 1e-9:
+                break
             seg_end = self.segment_end(i)
             lo = max(start_beat, seg.start_beat)
             hi = min(end_beat, seg_end)
@@ -194,17 +226,12 @@ class TimingMap:
         * 一条都没有时返回第 0 拍。
         """
         beat = float(beat)
-        found = float(self.segments[0].start_beat)
-        for seg in self.segments:
-            if seg.start_beat > beat + 1e-9:
-                break
-            found = seg.start_beat
-            step = float(seg.beats_per_bar)
-            if step <= 0:
-                continue
-            n = math.floor((beat - seg.start_beat) / step + 1e-9)
-            found = seg.start_beat + max(0, n) * step
-        return found
+        seg = self.segments[self._index_at(beat)]
+        step = float(seg.beats_per_bar)
+        if step <= 0:
+            return float(seg.start_beat)
+        n = math.floor((beat - seg.start_beat) / step + 1e-9)
+        return seg.start_beat + max(0, n) * step
 
     def is_bar_start(self, beat: float, tol: float = 1e-6) -> bool:
         """``beat`` 是否正好落在小节线上（BPM 变更处一定有）。"""
@@ -218,26 +245,43 @@ class TimingMap:
         * 关闭小节线（``beats_per_bar == 0``）的段落没有小节编号，
           返回 ``(之前累计的小节数, 0.0)``。
         """
-        bars = 0
-        for i, seg in enumerate(self.segments):
-            seg_end = self.segment_end(i)
-            if beat >= seg_end:
-                step = float(seg.beats_per_bar)
-                if step > 0:
-                    # 不完整的小节也算一节：ceil（BPM 变更处新开一小节）
-                    span = float(seg_end) - seg.start_beat
-                    bars += max(1, math.ceil(span / step - 1e-9))
-                else:
-                    # 关闭小节线的段落：只有变更处那一条线，整段算作一节
-                    bars += 1
-                continue
-            local = max(0.0, beat - seg.start_beat)
-            step = float(seg.beats_per_bar)
-            if step <= 0:
-                # 该段关闭小节线：这一节从变更处开始，一直延伸下去
-                return bars, local
-            return bars + int(local // step), local % step
-        return bars, 0.0
+        beat = float(beat)
+        index = self._index_at(beat)
+        seg = self.segments[index]
+        bars = self._bars_before[index]
+        local = max(0.0, beat - seg.start_beat)
+        step = float(seg.beats_per_bar)
+        if step <= 0:
+            # 该段关闭小节线：这一节从变更处开始，一直延伸下去
+            return bars, local
+        return bars + int(local // step), local % step
+
+    def min_seconds_per_beat(self, start_beat: float, end_beat: float, fallback_beat: float) -> float:
+        """``[start, end]`` 内（含第 0 段）最短的每拍秒数，用于网格抽稀。"""
+        fastest = self.seconds_per_beat(fallback_beat)
+        if end_beat <= start_beat:
+            return fastest
+        fastest = min(fastest, 60.0 / self.segments[0].bpm)
+        first = bisect.bisect_left(self._starts, float(start_beat))
+        for index in range(first, len(self.segments)):
+            seg = self.segments[index]
+            if seg.start_beat > end_beat:
+                break
+            fastest = min(fastest, 60.0 / seg.bpm)
+        return fastest
+
+    def segment_starts_between(self, start_beat: float, end_beat: float) -> List[float]:
+        """``(start_beat, end_beat)`` 内（不含端点）的段起点，按拍升序。"""
+        if end_beat <= start_beat:
+            return []
+        first = bisect.bisect_right(self._starts, float(start_beat))
+        out: List[float] = []
+        for index in range(first, len(self._starts)):
+            value = self._starts[index]
+            if value >= end_beat:
+                break
+            out.append(value)
+        return out
 
     # ------------------------------------------------------------------ 序列化
     def to_dict(self) -> Dict[str, object]:

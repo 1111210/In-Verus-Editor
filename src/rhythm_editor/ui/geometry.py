@@ -159,6 +159,7 @@ def hit_signature(view: ViewState) -> tuple:
         round(float(layout.judgment_y), 6),
         len(view.chart.lane_notes),
         len(view.chart.mouse_notes),
+        int(getattr(view.chart, "revision", 0)),
     )
 
 
@@ -175,7 +176,9 @@ class HitCache:
     entries: List[Tuple[Note, Bounds, Optional[List[Point]]]] = field(default_factory=list)
 
     def valid_for(self, view: ViewState) -> bool:
-        return bool(self.entries) and self.signature == hit_signature(view)
+        # 只看签名：视图里一个物件都没有时 entries 为空，但缓存依然是有效的
+        # （随机点在空白处点击不应退化成对整张谱面的全量扫描）。
+        return self.signature != () and self.signature == hit_signature(view)
 
     def query_point(self, x: float, y: float) -> List[Note]:
         hits: List[Note] = []
@@ -377,7 +380,7 @@ def notes_at(
     show_past = bool(getattr(view.chart.settings, "show_past_notes", False))
     hits = [
         n
-        for n in chart.all_notes()
+        for n in view.candidate_notes(chart.sorted_notes())
         if note_in_time(n, view.current_beat, show_past) and note_hit(n, chart, view, x, y)
     ]
     hits.sort(key=lambda n: (layer_rank(n), n.head_beat), reverse=True)
@@ -401,7 +404,7 @@ def notes_in_box(
     top, bottom = min(y0, y1), max(y0, y1)
     show_past = bool(getattr(view.chart.settings, "show_past_notes", False))
     found: List[Note] = []
-    for note in chart.all_notes():
+    for note in view.candidate_notes(chart.sorted_notes()):
         if not note_in_time(note, view.current_beat, show_past):
             continue
         bounds = note_bounds(note, chart, view)
