@@ -1149,6 +1149,11 @@ class EditorApp:
             self.body.pack_forget()
             self.body.pack(side="top", fill="both", expand=True)
             self.render_state.message = ""
+        # 演示视图 / 编辑画布共用同一个画布控件：切换后把键盘焦点交给它
+        try:
+            self.canvas.focus_set()
+        except tk.TclError:                     # pragma: no cover - 窗口正在销毁
+            pass
         self.status("进入演示模式（游玩器软件渲染）" if enabled else "退出演示模式")
 
     def toggle_demo(self) -> None:

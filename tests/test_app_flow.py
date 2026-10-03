@@ -643,6 +643,47 @@ class AppFlowTest(unittest.TestCase):
         self.assertGreater(self.app.scene.item_count, 10)
         self.assertEqual(self.app.toolbar.winfo_manager(), "pack")
 
+    def _spy_canvas_focus(self):
+        """记录画布是否被要求获取键盘焦点（隐藏窗口里 focus_get 不可靠）。"""
+        calls = []
+        original = self.app.canvas.focus_set
+
+        def spy():
+            calls.append(True)
+            original()
+
+        self.app.canvas.focus_set = spy  # type: ignore[assignment]
+        self.addCleanup(lambda: setattr(self.app.canvas, "focus_set", original))
+        return calls
+
+    def test_menu_and_toolbar_commands_return_focus_to_canvas(self) -> None:
+        """选择菜单项 / 点工具栏按钮后，键盘焦点回到画布（空格、方向键仍可用）。"""
+        calls = self._spy_canvas_focus()
+        view_menu = self.app.toolbar._menus["视图"]
+        index = next(
+            i
+            for i in range(view_menu.index("end") + 1)
+            if view_menu.type(i) == "checkbutton"
+            and view_menu.entrycget(i, "label") == "显示更早的物件"
+        )
+        view_menu.invoke(index)                  # 等价于用户点了这个菜单项
+        self.assertTrue(calls, "菜单项执行后应把焦点移回画布")
+        before = len(calls)
+        self.app.toolbar.btn_play.invoke()       # 工具栏按钮同样还原焦点
+        self.assertGreater(len(calls), before, "工具栏按钮执行后应把焦点移回画布")
+        if self.app.audio.is_playing:
+            self.app.pause()
+
+    def test_demo_mode_focuses_canvas(self) -> None:
+        """进入 / 退出演示视图后焦点都在画布上（演示时画布就是演示画面）。"""
+        self._softview()
+        calls = self._spy_canvas_focus()
+        self.app.set_demo_mode(True)
+        self.assertTrue(calls, "进入演示模式后应聚焦画布")
+        before = len(calls)
+        self.app.set_demo_mode(False)
+        self.assertGreater(len(calls), before, "退出演示模式后应聚焦画布")
+
     # -------------------------------------------------------------- 设置 / 保存
     def test_grid_settings_have_no_upper_limit(self) -> None:
         """时间网格与横向辅助网格不再有上限，只保留最小值。"""

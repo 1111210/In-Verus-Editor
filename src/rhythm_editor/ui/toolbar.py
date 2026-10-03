@@ -253,13 +253,15 @@ class Toolbar(ttk.Frame):
         self._right.pack(side="right", fill="y")
         # 播放按钮固定在工具栏最右端
         self.btn_play = ttk.Button(
-            self._right, text="▶ 播放", style="Accent.TButton", command=app.toggle_play
+            self._right, text="▶ 播放", style="Accent.TButton",
+            command=self._with_focus(app.toggle_play),
         )
         self.btn_play.pack(side="right", padx=(8, 0))
         # 播放倍速：［−］［当前倍速］［＋］；0.1x 一档，0.1x 以下细到 0.01x
         # （范围 0.01 ~ 1.0x，慢放音调变低）
         ttk.Button(
-            self._right, text="+", width=3, command=app.increase_playback_rate
+            self._right, text="+", width=3,
+            command=self._with_focus(app.increase_playback_rate),
         ).pack(side="right", padx=(4, 0))
         self.lbl_rate = ttk.Label(
             self._right,
@@ -269,7 +271,8 @@ class Toolbar(ttk.Frame):
         )
         self.lbl_rate.pack(side="right", padx=4)
         ttk.Button(
-            self._right, text="−", width=3, command=app.decrease_playback_rate
+            self._right, text="−", width=3,
+            command=self._with_focus(app.decrease_playback_rate),
         ).pack(side="right")
 
         # 左侧分组放在可横向滚动的视口里：窗口宽度不足时自动出现横向滚动条
@@ -301,7 +304,7 @@ class Toolbar(ttk.Frame):
                     self._strip,
                     text=group.label,
                     style="Tool.TButton",
-                    command=group.direct_command,
+                    command=self._with_focus(group.direct_command),
                 )
                 self._direct_buttons.append((button, group.enabled))
             else:
@@ -414,8 +417,30 @@ class Toolbar(ttk.Frame):
             self.close_open_menu()
             if command is not None:
                 command()
+            self.focus_canvas()
 
         return runner
+
+    def _with_focus(self, command: Optional[Callable[[], None]]):
+        """工具栏按钮：执行完把键盘焦点交还画布，空格 / 方向键不会被按钮吃掉。"""
+        if command is None:
+            return None
+
+        def runner() -> None:
+            command()
+            self.focus_canvas()
+
+        return runner
+
+    def focus_canvas(self) -> None:
+        """把键盘焦点移回画布（演示模式下画布就是演示视图）。"""
+        canvas = getattr(self.app, "canvas", None)
+        if canvas is None:                      # pragma: no cover - 初始化早期
+            return
+        try:
+            canvas.focus_set()
+        except tk.TclError:                     # pragma: no cover - 窗口正在销毁
+            pass
 
     # ------------------------------------------------------------------ 同步
     def mark_menu_open(self, _event=None) -> None:
@@ -462,6 +487,8 @@ class Toolbar(ttk.Frame):
             # （那次“再次点击”被菜单自己吞掉了），这里把状态复位即可。
             self._open_group = None
             self.mark_menu_closed()
+            # 菜单收起（选中某项或点了外面）后把焦点还给画布
+            self.focus_canvas()
         # 注意：**不要**释放 grab。tk_popup 自带的 grab 会让“再次点击同一个按钮”
         # 由菜单自己接收并收起；一旦释放，这次点击会落到按钮上，反而把菜单重新打开。
 
