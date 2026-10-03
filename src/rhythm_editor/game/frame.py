@@ -84,6 +84,28 @@ def note_ahead(chart: Chart, note: Note, now_ms: float, span_ms: float) -> bool:
     return note_scroll_ms(chart, note, now_ms) <= span_ms
 
 
+def _note_z_span_at(
+    chart: Chart, note: Note, now_beat: float, span_ms: float
+) -> Optional[Tuple[float, float]]:
+    """``note_z_span`` 的按拍版本（避免每条物件都换算一次当前时刻）。"""
+    timing = chart.timing
+    head = float(note.head_beat)
+    tail = float(note.tail_beat)
+    start = max(head, float(now_beat))
+    if start > tail + 1e-9:
+        return None                      # 这段已经判完，没有要画的部分
+    group = chart.group_of_note(note)
+    start_z = z_from_distance(
+        group.scroll_seconds(timing, now_beat, start) * 1000.0, span_ms
+    )
+    if abs(tail - start) < 1e-9:          # 单键 / 滑键 / 点击：只有判定时刻那一点
+        return (start_z, start_z)
+    tail_z = z_from_distance(
+        group.scroll_seconds(timing, now_beat, tail) * 1000.0, span_ms
+    )
+    return (min(start_z, tail_z), max(start_z, tail_z))
+
+
 def note_z_span(
     chart: Chart, note: Note, now_ms: float, span_ms: float
 ) -> Optional[Tuple[float, float]]:
@@ -94,16 +116,7 @@ def note_z_span(
     不会在判定线之前拖出一条已经判过的尾巴；整个物件都已经过去时返回 ``None``。
     单键 / 滑键 / 鼠标点击只占判定时刻那一点。
     """
-    timing = chart.timing
-    head = float(note.head_beat)
-    tail = float(note.tail_beat)
-    start = max(head, timing.song_ms_to_beat(now_ms))
-    if start > tail + 1e-9:
-        return None                      # 这段已经判完，没有要画的部分
-    group = chart.group_of_note(note)
-    start_z = z_from_distance(scroll_ms(chart, group, now_ms, start), span_ms)
-    tail_z = z_from_distance(scroll_ms(chart, group, now_ms, tail), span_ms)
-    return (min(start_z, tail_z), max(start_z, tail_z))
+    return _note_z_span_at(chart, note, chart.timing.song_ms_to_beat(now_ms), span_ms)
 
 
 def note_in_view(
@@ -248,9 +261,10 @@ def visible_notes(chart: Chart, now_ms: float, span_ms: float) -> List[Note]:
     距离与剔除都用所属速度组的滚动毫秒（``∫v``），因此流速不同的物件
     不会因为“判定时刻更晚”就被错误地排到更近 / 更远的位置。
 
-    ``all_notes()`` 里绝大多数物件都远在可视范围之外：先用“最小流速倍率 ×
-    歌曲时间差”这个**严格下界**快速剔除（``∫spb dτ`` 恰好等于歌曲时间差），
-    只有可能可见的物件才算精确积分。
+    可见性按**物件还没判过的那一段**判断（``_note_z_span_at``）：反向流速时
+    物件开头可能还在很远处，而它的后半段已经跑到判定线**靠近摄像机的一侧** ——
+    只按开头剔除会把整段一起丢掉。``all_notes()`` 里绝大多数物件都远在可视
+    范围之外，所以流速全非负时先用“起点距离”这个严格下界快速剔除。
     """
     timing = chart.timing
     now_beat = timing.song_ms_to_beat(now_ms)
@@ -258,26 +272,28 @@ def visible_notes(chart: Chart, now_ms: float, span_ms: float) -> List[Note]:
     entries = []
     for note in chart.all_notes():
         head = head_ms(timing, note)
-        if now_ms > head + 1e-6:                      # 判定时刻已过
-            lasting = (isinstance(note, LaneNote) and note.is_hold) or isinstance(
-                note, MouseRegion
-            )                                          # 长按 / 空域画到末尾为止
-            if not lasting or now_ms > end_ms(timing, note) + 1e-6:
-                continue
+        start_beat = max(float(note.head_beat), now_beat)
+        if start_beat > float(note.tail_beat) + 1e-9:
+            continue                                  # 判定已经全部结束
         group = group_cache.get(note.group)
         if group is None:
             group = chart.group_of_note(note)
             group_cache[note.group] = group
-        delta_ms = head - now_ms
-        if group.min_multiplier >= 0.0 and group.min_multiplier * delta_ms > span_ms:
-            continue                                   # 再快也在可视范围之外
-        distance = (
-            delta_ms if group.is_identity
-            else group.scroll_seconds(timing, now_beat, note.head_beat) * 1000.0
-        )
-        if distance > span_ms:
+        if group.min_multiplier >= 0.0 and group.min_multiplier * (head - now_ms) > span_ms:
+            continue                                   # 再快也整段都在可视跨度之外
+        span_z = _note_z_span_at(chart, note, now_beat, span_ms)
+        if span_z is None:
             continue
-        entries.append((layer_rank(note), -distance, note.head_beat, note.id, note))
+        low_z, high_z = span_z
+        if low_z > START_Z:
+            continue                                   # 整段都在运动起点之外
+        entries.append((
+            layer_rank(note),
+            -distance_from_z(high_z, span_ms),         # 层内由远到近
+            note.head_beat,
+            note.id,
+            note,
+        ))
     entries.sort(key=lambda item: item[:4])
     return [item[4] for item in entries]
 

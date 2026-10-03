@@ -848,6 +848,52 @@ class PlayerAppSmokeTests(unittest.TestCase):
             game_frame.note_scroll_ms(app.chart, app.chart.find("D"), now), span
         )
 
+    def test_region_head_beyond_span_still_draws_camera_side_part(self) -> None:
+        """反向空域：开头还在可视跨度之外，但后半段已经跑到判定线靠近摄像机的一侧。
+
+        回归：以前只按物件**开头**的滚动距离剔除，整段区域被丢掉，
+        摄像机一侧的那一段（确实应该可见）也一起消失了。
+        """
+        from rhythm_editor.game import frame as game_frame
+        from rhythm_editor.game.scene import MOUSE_PLANE_HEIGHT
+        from rhythm_editor.model.notes import BoundaryCurve, MouseRegion
+        from rhythm_editor.model.speed import SpeedSegment
+        from rhythm_editor.model.timing import BpmSegment, TimingMap
+
+        app = self.app
+        app._enter_loading()
+        app._start_play()
+        app.settings.speed, app.settings.rate = 1.0, 1.0
+        app.chart.timing = TimingMap([BpmSegment(0.0, 120.0, 4)])       # 每拍 500ms
+        group = app.chart.add_group("rev", [
+            SpeedSegment(0.0, 1.0),            # 先正常下落
+            SpeedSegment(6.0, -1.5),           # 区域开头处反向
+            SpeedSegment(10.0, 1.0),
+        ])
+        region = MouseRegion(
+            "R", 6.0, 10.0, BoundaryCurve(0.2, 0.2), BoundaryCurve(0.8, 0.8),
+            group=group.id,
+        )
+        app.chart.lane_notes = []
+        app.chart.mouse_notes = [region]
+        app.chart.invalidate_order()
+        now = app.chart.timing.beat_to_song_ms(2.0)      # 区域开头前 4 拍
+        span = app._visible_span_ms()
+        self.assertGreater(
+            game_frame.note_scroll_ms(app.chart, region, now), span,
+            "开头应当还在可视跨度之外",
+        )
+        visible = [n.id for n in game_frame.visible_notes(app.chart, now, span)]
+        self.assertIn("R", visible, "整段区域不能因为开头太远就被剔除")
+        runs = game_frame.region_samples(
+            app.chart, region, now, span,
+            near_ms=app._plane_near_distance_ms(MOUSE_PLANE_HEIGHT, span),
+        )
+        self.assertTrue(runs, "摄像机一侧的那一段应当被画出来")
+        distances = [distance for run in runs for _beat, distance in run]
+        self.assertLess(min(distances), 0.0, "包含判定线靠近摄像机一侧的部分")
+        self.assertLessEqual(max(distances), span + 1e-6)
+
     def test_hold_and_region_hide_the_elapsed_part(self) -> None:
         """长按 / 空域：判定没结束也只画「当前时刻之后」的部分（已判过的不画）。"""
         from rhythm_editor.game import frame as game_frame
