@@ -54,6 +54,8 @@ class SpeedGroup:
         self.segments: List[SpeedSegment] = []
         self.note_ids: List[str] = list(note_ids or [])
         self._identity = True
+        self._min_multiplier = config.DEFAULT_SPEED_MULTIPLIER
+        self._max_multiplier = config.DEFAULT_SPEED_MULTIPLIER
         self.set_segments(segments or [SpeedSegment(0.0, config.DEFAULT_SPEED_MULTIPLIER)])
 
     # ------------------------------------------------------------------ 规整
@@ -74,6 +76,8 @@ class SpeedGroup:
         unique[0] = SpeedSegment(0.0, unique[0].multiplier)
         self.segments = unique
         self._identity = all(abs(s.multiplier - 1.0) < 1e-9 for s in unique)
+        self._min_multiplier = min(s.multiplier for s in unique)
+        self._max_multiplier = max(s.multiplier for s in unique)
 
     @property
     def is_default(self) -> bool:
@@ -83,6 +87,16 @@ class SpeedGroup:
     def is_identity(self) -> bool:
         """流速恒为 1（位置与时间网格完全一致），渲染时可以走快速路径。"""
         return self._identity
+
+    @property
+    def min_multiplier(self) -> float:
+        """整条流速列表里的**最小**倍率（可能为负 = 反向）。"""
+        return self._min_multiplier
+
+    @property
+    def max_multiplier(self) -> float:
+        """整条流速列表里的**最大**倍率。"""
+        return self._max_multiplier
 
     def scroll_seconds(self, timing, from_beat: float, to_beat: float) -> float:
         """``∫ v(τ) · spb(τ) dτ``（秒）：物件在屏幕上走过的“滚动秒数”。

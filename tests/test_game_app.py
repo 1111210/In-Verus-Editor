@@ -745,6 +745,81 @@ class PlayerAppSmokeTests(unittest.TestCase):
         app._start_play()
         app._draw_play()                    # 各厚度都要能画出来
 
+    def test_speed_groups_move_notes_in_player(self) -> None:
+        """速度组在游玩器里生效：位置、剔除、排序都按所属速度组的 ∫v。
+
+        回归：以前只有编辑器用速度组，游玩器（以及复用它的演示视图）把位置
+        算成“歌曲时间差”，所有物件都按 1x 运动。
+        """
+        from rhythm_editor.game import frame as game_frame
+        from rhythm_editor.model.notes import LaneNote
+        from rhythm_editor.model.speed import SpeedSegment
+        from rhythm_editor.model.timing import BpmSegment, TimingMap
+
+        app = self.app
+        app._enter_loading()
+        app._start_play()
+        app.settings.speed, app.settings.rate = 1.0, 1.0      # 可视跨度 1500ms
+        app.chart.timing = TimingMap([BpmSegment(0.0, 120.0, 4)])   # 每拍 500ms
+        timing = app.chart.timing
+        fast = app.chart.add_group("fast", [SpeedSegment(0.0, 2.0)])
+        slow = app.chart.add_group("slow", [SpeedSegment(0.0, 0.5)])
+        app.chart.mouse_notes = []
+        app.chart.lane_notes = [
+            LaneNote("A", 0, 0, 3.0),                        # 默认组 1x：距判定线 500ms
+            LaneNote("B", 1, 1, 3.0, group=fast.id),         # 2x：同样判定时刻，距离翻倍
+            LaneNote("C", 2, 2, 3.0, group=slow.id),         # 0.5x：距离减半
+            LaneNote("D", 3, 3, 20.0, group=fast.id),        # 远在可视跨度之外
+        ]
+        app.chart.invalidate_order()
+        now = timing.beat_to_song_ms(2.0)
+        span = app._visible_span_ms()
+        head = timing.beat_to_song_ms(3.0)
+        z_default = app._note_z(head, now)
+        z_fast = app._note_z(head, now, group=fast)
+        z_slow = app._note_z(head, now, group=slow)
+        self.assertAlmostEqual(z_fast, 2.0 * z_default, delta=0.01, msg="2x 组距离翻倍")
+        self.assertAlmostEqual(z_slow, 0.5 * z_default, delta=0.01, msg="0.5x 组距离减半")
+        visible = [n.id for n in game_frame.visible_notes(app.chart, now, span)]
+        self.assertEqual(visible, ["B", "A", "C"], "层内由远到近；超出跨度的物件不画")
+        self.assertGreater(
+            game_frame.note_scroll_ms(app.chart, app.chart.find("D"), now), span
+        )
+
+    def test_region_samples_follow_speed_group(self) -> None:
+        """空域采样也按速度组：只返回滚动距离在 [0, 可视跨度] 内的段。"""
+        from rhythm_editor.game import frame as game_frame
+        from rhythm_editor.model.chart import Chart
+        from rhythm_editor.model.notes import MouseRegion
+        from rhythm_editor.model.speed import SpeedSegment
+        from rhythm_editor.model.timing import BpmSegment, TimingMap
+
+        chart = Chart()
+        chart.timing = TimingMap([BpmSegment(0.0, 120.0, 4)])       # 每拍 500ms
+        fast = chart.add_group("fast", [SpeedSegment(0.0, 2.0)])
+        region = MouseRegion("R1", 3.0, 5.0, group=fast.id)
+        chart.add(region)
+        now = chart.timing.beat_to_song_ms(2.0)
+        span = 1500.0                                              # 可视跨度
+        runs = game_frame.region_samples(chart, region, now, span)
+        self.assertTrue(runs, "空域应当有可见段")
+        distances = [distance for run in runs for _beat, distance in run]
+        beats = [beat for run in runs for beat, _distance in run]
+        for distance in distances:
+            self.assertGreaterEqual(distance, -1e-6, "不超过判定线")
+            self.assertLessEqual(distance, span + 1e-6, "不超过轨道尽头")
+        # 2x 组：起点（3 拍 = 500ms）距离就是 1000ms，只画到距离 1500ms（3.5 拍）
+        self.assertAlmostEqual(min(distances), 1000.0, delta=1.0)
+        self.assertAlmostEqual(max(distances), span, delta=1.0)
+        self.assertAlmostEqual(max(beats), 3.5, delta=0.05)
+        # 默认组：同一段空域整段可见（3..5 拍，距离 500..1500ms）
+        plain = MouseRegion("R2", 3.0, 5.0)
+        chart.add(plain)
+        plain_runs = game_frame.region_samples(chart, plain, now, span)
+        plain_beats = [beat for run in plain_runs for beat, _distance in run]
+        self.assertAlmostEqual(min(plain_beats), 3.0, delta=1e-6)
+        self.assertAlmostEqual(max(plain_beats), 5.0, delta=1e-6)
+
     def test_software_mouse_patterns_centered_on_plane(self) -> None:
         """软件路径：点击图案上下各一半；滑键贴图双倍高，但图片中心都在平面上。"""
         from rhythm_editor.game import frame as game_frame

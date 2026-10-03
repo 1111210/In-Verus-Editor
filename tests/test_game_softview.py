@@ -113,6 +113,49 @@ class SoftwareViewTests(unittest.TestCase):
         self.assertAlmostEqual(view.settings.note_thickness, 0.9)
         self.assertAlmostEqual(view.settings.speed, 2.0)
 
+    def test_demo_view_applies_speed_groups(self) -> None:
+        """演示视图（复用游玩器软渲染）跟随速度组：同判定时刻，流速不同位置不同。
+
+        回归：以前位置只按歌曲时间差算，速度组在演示视图里完全不生效。
+        """
+        import numpy as np
+
+        from rhythm_editor.game import softview
+        from rhythm_editor.model.chart import Chart, EditorSettings
+        from rhythm_editor.model.notes import LaneNote
+        from rhythm_editor.model.speed import SpeedSegment
+        from rhythm_editor.model.timing import BpmSegment, TimingMap
+
+        def render(multiplier):
+            chart = Chart()
+            chart.timing = TimingMap([BpmSegment(0.0, 120.0, 4)])   # 每拍 500ms
+            if multiplier is not None:
+                gid = 0
+                if abs(multiplier - 1.0) > 1e-9:
+                    gid = chart.add_group("g", [SpeedSegment(0.0, multiplier)]).id
+                chart.add(LaneNote("A", 0, 0, 4.0, group=gid))
+            now = chart.timing.beat_to_song_ms(3.0)
+            view = softview.create_software_view(
+                640, 480, view_settings=softview.view_settings_for(EditorSettings())
+            )
+            frame = softview.draw_frame(view, chart, now, rate=1.0)
+            return np.transpose(pygame.surfarray.array3d(frame), (1, 0, 2)).astype(int)
+
+        blank = render(None)
+
+        def note_rows(multiplier) -> "np.ndarray":
+            diff = np.abs(render(multiplier) - blank).sum(axis=2)
+            return np.flatnonzero(diff.any(axis=1))
+
+        rows_slow = note_rows(0.5)
+        rows_normal = note_rows(1.0)
+        rows_fast = note_rows(2.0)
+        for name, rows in (("0.5x", rows_slow), ("1x", rows_normal), ("2x", rows_fast)):
+            self.assertTrue(rows.size, f"{name} 组的物件应当被画出来")
+        # 透视下越远越靠屏幕上方：2x 更远、0.5x 更近
+        self.assertLess(int(rows_fast.min()), int(rows_normal.min()), "2x 组应当更远")
+        self.assertGreater(int(rows_slow.min()), int(rows_normal.min()), "0.5x 组应当更近")
+
     def test_mouse_pattern_images_are_centered_on_the_mouse_plane(self) -> None:
         """滑键 / 鼠标点击图案的**图片中心**都在鼠标运动平面上。
 

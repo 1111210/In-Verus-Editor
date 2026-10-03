@@ -11,7 +11,7 @@
 from __future__ import annotations
 
 from dataclasses import dataclass
-from typing import List, Tuple
+from typing import List, Optional, Tuple
 
 from ..model.chart import Chart
 from ..model.notes import LaneNote, MouseClick, MouseRegion, MouseSlide, Note, layer_rank
@@ -23,6 +23,7 @@ from .scene import (
     MOUSE_LEFT,
     MOUSE_LEGAL_WIDTH,
     MOUSE_PLANE_HEIGHT,
+    PlayerScene,
     UNIT_SCALE,
 )
 
@@ -58,22 +59,136 @@ def note_visible(timing: TimingMap, note: Note, now_ms: float) -> bool:
     return now_ms <= end_ms(timing, note) + 1e-6
 
 
-def note_ahead(timing: TimingMap, note: Note, now_ms: float, span_ms: float) -> bool:
-    """物件是否已进入可视范围（比可视跨度更远的物件不画）。"""
-    return head_ms(timing, note) - now_ms <= span_ms
+def scroll_ms(chart: Chart, group, now_ms: float, to_beat: float) -> float:
+    """``now_ms`` 时刻到 ``to_beat`` 拍，该速度组滚过的**毫秒**（可为负 = 反向）。
+
+    与编辑器 ``ViewState.note_y`` 共用同一套语义：
+    ``∫ v(τ)·spb(τ) dτ``（见 ``model/speed.py::SpeedGroup.scroll_seconds``）——
+    判定时刻一定落在判定线上，其它时刻由所属速度组反推。
+    """
+    timing = chart.timing
+    now_beat = timing.song_ms_to_beat(now_ms)
+    return group.scroll_seconds(timing, now_beat, float(to_beat)) * 1000.0
+
+
+def note_scroll_ms(chart: Chart, note: Note, now_ms: float) -> float:
+    """物件**开头**距判定线的滚动毫秒（用它所属速度组积分）。"""
+    return scroll_ms(chart, chart.group_of_note(note), now_ms, note.head_beat)
+
+
+def note_ahead(chart: Chart, note: Note, now_ms: float, span_ms: float) -> bool:
+    """物件是否已进入可视范围。
+
+    按**滚动距离**判断，而不是拍差：流速可正可负，拍差排序 ≠ 位置排序。
+    """
+    return note_scroll_ms(chart, note, now_ms) <= span_ms
+
+
+def z_from_distance(distance_ms: float, span_ms: float, start_z: Optional[float] = None) -> float:
+    """滚动距离（毫秒）→ 世界 z：``0`` = 判定线、``span_ms`` = 轨道尽头。"""
+    return PlayerScene.note_z(1.0 - float(distance_ms) / max(1.0, float(span_ms)), start_z)
+
+
+def region_samples(
+    chart: Chart,
+    note: MouseRegion,
+    now_ms: float,
+    span_ms: float,
+    samples: int = 32,
+) -> List[List[Tuple[float, float]]]:
+    """空域在当前画面上的可见段：``[[(beat, distance_ms), ...], ...]``。
+
+    * 采样在**拍**上等分，并强制包含速度段边界（流速跳变处是折点，不能糊掉）；
+    * 只保留滚动距离落在 ``[0, span_ms]`` 的部分：超出轨道尽头的点不再采样，
+      否则它们会全挤在远端相互叠色（看起来像空域堆在平面尽头）；
+    * 距离在相邻采样之间是线性的（段边界已在采样点上），交点用线性插值精确定位；
+    * 流速可正可负，同一空域可能被推成多段，所以返回**若干段**。
+    """
+    group = chart.group_of_note(note)
+    start, end = float(note.beat_start), float(note.beat_end)
+    span_beats = end - start
+    if abs(span_beats) < 1e-12:
+        return []
+    beats = {start, end}
+    steps = max(1, int(samples))
+    for index in range(1, steps):
+        beats.add(start + span_beats * index / steps)
+    for segment in group.segments:
+        if min(start, end) < segment.start_beat < max(start, end):
+            beats.add(float(segment.start_beat))
+    points = [(beat, scroll_ms(chart, group, now_ms, beat)) for beat in sorted(beats)]
+    low, high = 0.0, float(span_ms)
+    runs: List[List[Tuple[float, float]]] = []
+    current: List[Tuple[float, float]] = []
+    for (beat_a, dist_a), (beat_b, dist_b) in zip(points, points[1:]):
+        piece: List[Tuple[float, float]]
+        if abs(dist_b - dist_a) < 1e-12:
+            piece = [(beat_a, dist_a), (beat_b, dist_b)] if low <= dist_a <= high else []
+        else:
+            t0 = (low - dist_a) / (dist_b - dist_a)
+            t1 = (high - dist_a) / (dist_b - dist_a)
+            begin, finish = max(0.0, min(t0, t1)), min(1.0, max(t0, t1))
+            if finish - begin < 1e-9:
+                piece = []
+            else:
+                piece = [
+                    (beat_a + (beat_b - beat_a) * begin, dist_a + (dist_b - dist_a) * begin),
+                    (beat_a + (beat_b - beat_a) * finish, dist_a + (dist_b - dist_a) * finish),
+                ]
+        if not piece:
+            if len(current) >= 2:
+                runs.append(current)
+            current = []
+            continue
+        if current and abs(current[-1][0] - piece[0][0]) < 1e-9:
+            current.extend(piece[1:])
+        else:
+            if len(current) >= 2:
+                runs.append(current)
+            current = list(piece)
+    if len(current) >= 2:
+        runs.append(current)
+    return runs
 
 
 def visible_notes(chart: Chart, now_ms: float, span_ms: float) -> List[Note]:
-    """当前应绘制的物件，按图层（自下而上）与判定时刻排序。"""
+    """当前应绘制的物件：按图层（自下而上）排序，层内**由远到近**。
+
+    距离与剔除都用所属速度组的滚动毫秒（``∫v``），因此流速不同的物件
+    不会因为“判定时刻更晚”就被错误地排到更近 / 更远的位置。
+
+    ``all_notes()`` 里绝大多数物件都远在可视范围之外：先用“最小流速倍率 ×
+    歌曲时间差”这个**严格下界**快速剔除（``∫spb dτ`` 恰好等于歌曲时间差），
+    只有可能可见的物件才算精确积分。
+    """
     timing = chart.timing
-    notes = [
-        note
-        for note in chart.all_notes()
-        if note_ahead(timing, note, now_ms, span_ms)
-        and note_visible(timing, note, now_ms)
-    ]
-    notes.sort(key=lambda note: (layer_rank(note), note.head_beat))
-    return notes
+    now_beat = timing.song_ms_to_beat(now_ms)
+    group_cache: dict = {}
+    entries = []
+    for note in chart.all_notes():
+        head = head_ms(timing, note)
+        if now_ms > head + 1e-6:                      # 判定时刻已过
+            lasting = (isinstance(note, LaneNote) and note.is_hold) or isinstance(
+                note, MouseRegion
+            )                                          # 长按 / 空域画到末尾为止
+            if not lasting or now_ms > end_ms(timing, note) + 1e-6:
+                continue
+        group = group_cache.get(note.group)
+        if group is None:
+            group = chart.group_of_note(note)
+            group_cache[note.group] = group
+        delta_ms = head - now_ms
+        if group.min_multiplier >= 0.0 and group.min_multiplier * delta_ms > span_ms:
+            continue                                   # 再快也在可视范围之外
+        distance = (
+            delta_ms if group.is_identity
+            else group.scroll_seconds(timing, now_beat, note.head_beat) * 1000.0
+        )
+        if distance > span_ms:
+            continue
+        entries.append((layer_rank(note), -distance, note.head_beat, note.id, note))
+    entries.sort(key=lambda item: item[:4])
+    return [item[4] for item in entries]
 
 
 # ---------------------------------------------------------------- 世界坐标

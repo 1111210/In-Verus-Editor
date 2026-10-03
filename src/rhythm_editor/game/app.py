@@ -25,6 +25,7 @@ from ..audio import AudioPlayer
 from ..io.chart_io import chart_audio_path, load_chart
 from ..model.chart import Chart
 from ..model.notes import LaneNote, MouseClick, MouseRegion, MouseSlide, Note, layer_rank
+from ..model.speed import SpeedGroup
 from ..metronome import Metronome
 from . import settings as psettings
 from . import glview
@@ -2299,9 +2300,27 @@ class PlayerApp:
 
 
     def _note_z(self, judge_ms: float, now_ms: float,
-                start_z: Optional[float] = None) -> float:
+                start_z: Optional[float] = None,
+                group: Optional[SpeedGroup] = None) -> float:
+        """歌曲毫秒位置 → z。
+
+        ``group`` 给定时按该速度组积分（与编辑器的 ``ViewState.note_y`` 同一套
+        语义）；默认 1x 组等价于原来的时间差映射。
+        """
         span = self._visible_span_ms()
-        return PlayerScene.note_z(1.0 - (judge_ms - now_ms) / span, start_z)
+        if group is None or group.is_identity:
+            distance_ms = judge_ms - now_ms
+        else:
+            assert self.chart is not None
+            distance_ms = frame.scroll_ms(
+                self.chart, group, now_ms, self.chart.timing.song_ms_to_beat(judge_ms)
+            )
+        return frame.z_from_distance(distance_ms, span, start_z)
+
+    def _note_group(self, note: Note) -> SpeedGroup:
+        """物件所属速度组（渲染位置 / 剔除都按它的 ∫v 反推）。"""
+        assert self.chart is not None
+        return self.chart.group_of_note(note)
 
     def _draw_play(self) -> None:
         assert self.chart is not None and self.judge is not None
@@ -2564,7 +2583,7 @@ class PlayerApp:
         高倍速下物件则要等到半程才出现（不是从轨道尽头出现）。
         """
         assert self.chart is not None
-        return frame.note_ahead(self.chart.timing, note, now_ms, self._visible_span_ms())
+        return frame.note_ahead(self.chart, note, now_ms, self._visible_span_ms())
 
     def _draw_notes(self, now_ms: float) -> None:
         assert self.chart is not None
@@ -2614,15 +2633,18 @@ class PlayerApp:
         # 可见物件与图层顺序由 game/frame.py 统一给出，软件渲染路径用同一份结果
         for note in frame.visible_notes(self.chart, now_ms, self._visible_span_ms()):
             layer = f"note{layer_rank(note)}"
+            group = self._note_group(note)     # 位置 / 长按尾端都按所属速度组的 ∫v
             if isinstance(note, LaneNote):
-                head = self._note_z(self._head_ms(note), now_ms)
+                head = self._note_z(self._head_ms(note), now_ms, group=group)
                 if head < -PAST_LINE_KEEP:
                     continue
                 shape = frame.lane_shape(note)
                 lane = shape.texture_index
                 center_x = (shape.x0 + shape.x1) / 2.0
                 if note.is_hold:
-                    tail = self._note_z(timing.beat_to_song_ms(note.tail_beat), now_ms)
+                    tail = self._note_z(
+                        timing.beat_to_song_ms(note.tail_beat), now_ms, group=group
+                    )
                     body_center = (max(0.0, head) + max(0.0, tail)) / 2.0
                     scene.quad(f"hold_body_{lane}", center_x, body_center, shape.x1 - shape.x0,
                                max(0.2 * UNIT_SCALE, abs(tail - head)), 0.0, (1, 1, 1, 1.0),
@@ -2638,7 +2660,7 @@ class PlayerApp:
             elif isinstance(note, MouseRegion):
                 self._draw_region3d(note, now_ms)
             elif isinstance(note, MouseSlide):
-                z = max(0.0, self._note_z(self._head_ms(note), now_ms))
+                z = max(0.0, self._note_z(self._head_ms(note), now_ms, group=group))
                 shape = frame.slide_shape(note)
                 name = "right" if shape.direction > 0 else "left"
                 # 滑键贴图是双倍高（上半楔形 / 下半透明）：图片中心 = 鼠标运动平面，
@@ -2656,7 +2678,7 @@ class PlayerApp:
                     vertical=True, layer=layer,
                 )
             elif isinstance(note, MouseClick):
-                z = max(0.0, self._note_z(self._head_ms(note), now_ms))
+                z = max(0.0, self._note_z(self._head_ms(note), now_ms, group=group))
                 shape = frame.click_shape(note)
                 center_y, height = frame.click_center(self.settings.click_thickness)
                 scene.quad("click_range", (shape.x0 + shape.x1) / 2.0, z,
@@ -2675,53 +2697,48 @@ class PlayerApp:
         """Panda 路径的空域：按左右边界曲线采样，铺成**透视正确的梯形/弯边界**。
 
         只用**同一种颜色**填充（``region_fill`` 的色值），既没有贴图接缝，也不会
-        出现"开头实、结尾虚"；而且**只采样看得见的那一段**——超出轨道尽头的部分
-        如果也拿去采样，那些点会全挤在 ``z = START_Z`` 上让三角带自我重叠，
-        叠出来的 alpha 更实，看起来就是"结尾更不透明"。左右边线单独用窄带画。
+        出现"开头实、结尾虚"；位置按所属速度组的 ``∫v`` 反推，而且**只采样
+        滚动距离在可视跨度内的那些段**（``frame.region_samples``）——超出轨道
+        尽头的部分如果也拿去采样，那些点会全挤在 ``z = START_Z`` 上让三角带
+        自我重叠，叠出来的 alpha 更实，看起来就是"结尾更不透明"。左右边线
+        单独用窄带画。
         """
         assert self.chart is not None and self.scene3d is not None
         scene = self.scene3d
-        timing = self.chart.timing
-        head_ms = timing.beat_to_song_ms(note.beat_start)
-        tail_ms = timing.beat_to_song_ms(note.beat_end)
-        near_ms = max(head_ms, now_ms)                       # 判定线这一端
-        far_ms = min(tail_ms, now_ms + self._visible_span_ms())   # 轨道尽头这一端
-        if far_ms - near_ms <= 1e-6:
-            return
-        samples = 36
-        left: List[Tuple[float, float]] = []
-        right: List[Tuple[float, float]] = []
-        for index in range(samples + 1):
-            song_ms = near_ms + (far_ms - near_ms) * index / samples
-            beat = timing.song_ms_to_beat(song_ms)
-            z = min(START_Z, max(0.0, self._note_z(song_ms, now_ms)))
-            left_x, right_x = frame.region_bounds(note, beat)
-            left.append((left_x, z))
-            right.append((right_x, z))
-        if len(left) < 2:
-            return
+        span = self._visible_span_ms()
         y = MOUSE_PLANE_HEIGHT
         fill = self.texture_avg.get("region_fill") or (60, 110, 200, 104)
-        scene.region_shape(left, right, y, "", (
-            fill[0] / 255.0, fill[1] / 255.0, fill[2] / 255.0,
-            min(1.0, fill[3] / 255.0),
-        ))
         edge = self.texture_avg.get("region_edge") or (90, 220, 255, 255)
-        for points in (left, right):
-            scene.ribbon(points, y, REGION_EDGE_HALF_WORLD,
-                         (edge[0] / 255.0, edge[1] / 255.0, edge[2] / 255.0, 0.85),
-                         layer="region_top")
+        for run in frame.region_samples(self.chart, note, now_ms, span):
+            left: List[Tuple[float, float]] = []
+            right: List[Tuple[float, float]] = []
+            for beat, distance in run:
+                z = frame.z_from_distance(distance, span)
+                left_x, right_x = frame.region_bounds(note, beat)
+                left.append((left_x, z))
+                right.append((right_x, z))
+            scene.region_shape(left, right, y, "", (
+                fill[0] / 255.0, fill[1] / 255.0, fill[2] / 255.0,
+                min(1.0, fill[3] / 255.0),
+            ))
+            for points in (left, right):
+                scene.ribbon(points, y, REGION_EDGE_HALF_WORLD,
+                             (edge[0] / 255.0, edge[1] / 255.0, edge[2] / 255.0, 0.85),
+                             layer="region_top")
 
     def _draw_lane_note(self, note: LaneNote, now_ms: float) -> None:
         """6K 单键 / 长按：用预设贴图绘制（贴图**底端**在判定边，到达判定线即判定）。"""
         assert self.chart is not None
-        head_z = self._note_z(self._head_ms(note), now_ms)
+        group = self._note_group(note)         # 位置按所属速度组的 ∫v 反推
+        head_z = self._note_z(self._head_ms(note), now_ms, group=group)
         if head_z < -PAST_LINE_KEEP:
             return
         shape = frame.lane_shape(note)
         tex_index, x0, x1 = shape.texture_index, shape.x0, shape.x1
         if note.is_hold:
-            tail_z = self._note_z(self.chart.timing.beat_to_song_ms(note.tail_beat), now_ms)
+            tail_z = self._note_z(
+                self.chart.timing.beat_to_song_ms(note.tail_beat), now_ms, group=group
+            )
             body = f"hold_body_{tex_index}"
             body_color = self.texture_avg.get(body)
             if body_color is not None:
@@ -2818,69 +2835,62 @@ class PlayerApp:
     def _draw_region(self, note: MouseRegion, now_ms: float) -> None:
         """空域：画在鼠标物件运动的水平面内（**同一种颜色**的半透明底 + 左右两条边线）。
 
-        只采样**看得见的那一段**：超出轨道尽头的部分如果也采样，点会全挤在
+        位置由所属速度组的 ``∫v`` 反推；只采样**滚动距离在可视跨度内**的那几段
+        （``frame.region_samples``）：超出轨道尽头的点不采样，否则会全挤在
         ``z = START_Z`` 上相互重叠，叠出的 alpha 更实，看起来像空域堆在平面远端。
         """
         assert self.chart is not None
-        timing = self.chart.timing
-        head_ms = timing.beat_to_song_ms(note.beat_start)
-        tail_ms = timing.beat_to_song_ms(note.beat_end)
-        near_ms = max(head_ms, now_ms)                              # 判定线这一端
-        far_ms = min(tail_ms, now_ms + self._visible_span_ms())     # 轨道尽头这一端
-        if far_ms - near_ms <= 1e-6:
-            return
-        samples = 28
-        left_points: List[Tuple[float, float, float]] = []
-        right_points: List[Tuple[float, float, float]] = []
-        for index in range(samples + 1):
-            song_ms = near_ms + (far_ms - near_ms) * index / samples
-            beat = timing.song_ms_to_beat(song_ms)
-            z = min(START_Z, max(0.0, self._note_z(song_ms, now_ms)))
-            left_x, right_x = frame.region_bounds(note, beat)
-            left_points.append(self._proj(left_x, MOUSE_PLANE_HEIGHT, z))
-            right_points.append(self._proj(right_x, MOUSE_PLANE_HEIGHT, z))
-        if len(left_points) < 2:
-            return
+        span = self._visible_span_ms()
         # 底图：整片**同一种颜色**的半透明淡蓝（不再画横向条纹，避免一条条接缝）
         area_color = self.texture_avg.get("region_area")
         if area_color is None:
             surface = self._tex("region_area")
             if surface is not None:
                 area_color = textures.average_color(surface)
-        if area_color is not None:
-            self._alpha_quad(
-                left_points + list(reversed(right_points)),
-                area_color[:3],
-                min(255, area_color[3] + 40),
-            )
-        else:
-            # 半透明：空域在鼠标平面上，挡住下面的 6K 物件就没法看谱了
-            self._alpha_quad(left_points + list(reversed(right_points)), (60, 110, 200), 104)
         # 左右边界：单像素边界图（多像素时由加载阶段取平均）
         edge_color = self.texture_avg.get("region_edge")
         if edge_color is None:
             surface = self._tex("region_edge")
             if surface is not None:
                 edge_color = textures.average_color(surface)
-        # 边线的**屏幕线宽按透视缩放**：判定线处最宽、远端最细。
-        for index in range(len(left_points) - 1):
-            for points in (left_points, right_points):
-                a, b = points[index], points[index + 1]
-                scale = (a[2] + b[2]) / 2.0             # 这一段的透视缩放
-                half, fade = self._region_edge_style(scale)
-                if edge_color is not None:
-                    dx, dy = b[0] - a[0], b[1] - a[1]
-                    length = max(1.0, math.hypot(dx, dy))
-                    nx, ny = -dy / length * half, dx / length * half     # 法线方向 × 半宽
-                    quad = [
-                        (a[0] + nx, a[1] + ny),
-                        (b[0] + nx, b[1] + ny),
-                        (b[0] - nx, b[1] - ny),
-                        (a[0] - nx, a[1] - ny),
-                    ]
-                    self._alpha_quad(quad, edge_color[:3], int(round(edge_color[3] * fade)))
-                else:
-                    self._line_scaled(a, b, MOUSE_TINT, int(max(1, round(4 * fade))), scale)
+        for run in frame.region_samples(self.chart, note, now_ms, span):
+            left_points: List[Tuple[float, float, float]] = []
+            right_points: List[Tuple[float, float, float]] = []
+            for beat, distance in run:
+                z = frame.z_from_distance(distance, span)
+                left_x, right_x = frame.region_bounds(note, beat)
+                left_points.append(self._proj(left_x, MOUSE_PLANE_HEIGHT, z))
+                right_points.append(self._proj(right_x, MOUSE_PLANE_HEIGHT, z))
+            if area_color is not None:
+                self._alpha_quad(
+                    left_points + list(reversed(right_points)),
+                    area_color[:3],
+                    min(255, area_color[3] + 40),
+                )
+            else:
+                # 半透明：空域在鼠标平面上，挡住下面的 6K 物件就没法看谱了
+                self._alpha_quad(
+                    left_points + list(reversed(right_points)), (60, 110, 200), 104
+                )
+            # 边线的**屏幕线宽按透视缩放**：判定线处最宽、远端最细。
+            for index in range(len(left_points) - 1):
+                for points in (left_points, right_points):
+                    a, b = points[index], points[index + 1]
+                    scale = (a[2] + b[2]) / 2.0             # 这一段的透视缩放
+                    half, fade = self._region_edge_style(scale)
+                    if edge_color is not None:
+                        dx, dy = b[0] - a[0], b[1] - a[1]
+                        length = max(1.0, math.hypot(dx, dy))
+                        nx, ny = -dy / length * half, dx / length * half   # 法线方向 × 半宽
+                        quad = [
+                            (a[0] + nx, a[1] + ny),
+                            (b[0] + nx, b[1] + ny),
+                            (b[0] - nx, b[1] - ny),
+                            (a[0] - nx, a[1] - ny),
+                        ]
+                        self._alpha_quad(quad, edge_color[:3], int(round(edge_color[3] * fade)))
+                    else:
+                        self._line_scaled(a, b, MOUSE_TINT, int(max(1, round(4 * fade))), scale)
         # 空域判定线：单像素图铺在判定线处
         line_color = self.texture_avg.get("region_line")
         if line_color is None:
@@ -2910,7 +2920,7 @@ class PlayerApp:
 
     def _draw_pattern(self, note: Note, now_ms: float) -> None:
         """滑键 / 鼠标点击按键：图案平行于判定平面，改用预设贴图。"""
-        z = self._note_z(self._head_ms(note), now_ms)
+        z = self._note_z(self._head_ms(note), now_ms, group=self._note_group(note))
         if z < -PAST_LINE_KEEP or z > START_Z:
             return
         z = max(0.0, z)
