@@ -28,6 +28,9 @@ from .scene import (
 # 6K 按键左右各留出的轨宽比例：贴图两侧自带透明收边，这里再留一点，
 # 免得相邻轨道的按键边缘贴在一起。
 NOTE_SIDE_INSET = 0.02
+# 单键贴图两侧各有一段透明收边：实测 alpha≥128 的可见宽度 ≈ 贴图宽度的 92/96。
+# 长按的头 / 主体贴图是不透明的，要按同样比例向内收，视觉宽度才与单键一致。
+TAP_VISIBLE_FRACTION = 92.0 / 96.0
 # 长按开头的可见下限（正常情况下与单键同厚度）。
 HOLD_HEAD_MIN = 0.25 * UNIT_SCALE
 # 滑键 / 鼠标点击图案的厚度下限。
@@ -107,6 +110,11 @@ def lane_shape(note: LaneNote) -> LaneShape:
     high = max(note.lane_start, note.lane_end)
     x0 = K6_LEFT + low * LANE_WIDTH + LANE_WIDTH * NOTE_SIDE_INSET
     x1 = K6_LEFT + (high + 1) * LANE_WIDTH - LANE_WIDTH * NOTE_SIDE_INSET
+    if note.is_hold:
+        # 长按按单键的**可见宽度**收窄（左右对称，中心不变）
+        inset = (x1 - x0) * (1.0 - TAP_VISIBLE_FRACTION) / 2.0
+        x0 += inset
+        x1 -= inset
     texture_index = min(LANE_COUNT, max(1, low + 1))
     return LaneShape(x0, x1, texture_index)
 

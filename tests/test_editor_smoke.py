@@ -618,6 +618,24 @@ class EditorSmokeTest(unittest.TestCase):
             self.assertAlmostEqual(line_coords[1], self.view.beat_to_y(2.0), places=6)
         self.assertEqual(widths, {DARK.note_line_width}, "白竖线粗细应与轨道数无关")
 
+    def test_hold_width_matches_tap(self) -> None:
+        """长按（主体与开头）的渲染宽度与单键一致。"""
+        self.chart.add(LaneNote("T1", 2, 2, 2.0))           # 单轨单键
+        self.chart.add(LaneNote("H1", 2, 2, 4.0, 6.0))      # 单轨长按
+        self.chart.add(LaneNote("T2", 1, 4, 2.0))           # 多轨单键
+        self.chart.add(LaneNote("H2", 1, 4, 4.0, 6.0))      # 多轨长按
+        self.view.set_beat(0.0)
+        self.draw()
+
+        def width(key: str) -> float:
+            coords = self.scene._items[key][2][0]
+            return abs(coords[2] - coords[0])
+
+        self.assertAlmostEqual(width("note:T1"), width("note-body:H1"), places=6)
+        self.assertAlmostEqual(width("note:T1"), width("note-head-body:H1"), places=6)
+        self.assertAlmostEqual(width("note:T2"), width("note-body:H2"), places=6)
+        self.assertAlmostEqual(width("note:T2"), width("note-head-body:H2"), places=6)
+
     def test_multi_holds_stack_by_lane_span(self) -> None:
         """同为多轨长按时，跨轨道越多越先画（越靠下层）。"""
         wide = LaneNote("HW", 0, 5, 2.0, 4.0)

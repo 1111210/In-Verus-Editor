@@ -121,6 +121,24 @@ class TextureLoadTests(unittest.TestCase):
         self.assertAlmostEqual(measured["hold_head_1"], measured["hold_body_1"],
                                delta=1.0 / 32 + 1e-6, msg="开头与主体的白线粗细要一致")
 
+    def test_tap_visible_width_matches_hold_inset_constant(self) -> None:
+        """长按内收比例来自单键贴图的**实际可见宽度**（alpha≥128 的横向范围）。"""
+        from rhythm_editor.game import frame
+
+        directory = os.path.join(ROOT, "assets", "textures", "player")
+        if not os.path.isdir(directory):
+            self.skipTest("缺少贴图目录（先跑 tools/make_player_textures.py）")
+        tap = T.load_textures(directory, names=["tap_1"])["tap_1"]
+        width, height = tap.get_size()
+        row = height - 10               # 靠近判定线的一行：单键在这里最实
+        columns = [x for x in range(width) if tap.get_at((x, row))[3] >= 128]
+        self.assertTrue(columns, "单键贴图这一行不应全透明")
+        visible = (columns[-1] - columns[0] + 1) / width
+        self.assertAlmostEqual(
+            visible, frame.TAP_VISIBLE_FRACTION, delta=1.0 / width,
+            msg="长按内收比例必须与单键贴图的实际可见宽度一致",
+        )
+
 
 if __name__ == "__main__":
     unittest.main()

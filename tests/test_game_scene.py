@@ -48,6 +48,33 @@ class LayoutTests(unittest.TestCase):
         self.assertAlmostEqual(S.K6_WIDTH, 1.5)
 
 
+class FrameShapeTests(unittest.TestCase):
+    """game/frame.py 的世界坐标几何：长按宽度要与单键一致。"""
+
+    def test_hold_render_width_matches_tap(self) -> None:
+        """长按（含开头）的渲染宽度 = 单键的可见宽度（左右对称内收，中心不变）。"""
+        from rhythm_editor.game import frame
+        from rhythm_editor.model.notes import LaneNote
+
+        for start, end in ((2, 2), (1, 4), (0, 5)):
+            tap = LaneNote("T", start, end, 0.0)
+            hold = LaneNote("H", start, end, 0.0, 4.0)
+            tap_shape = frame.lane_shape(tap)
+            hold_shape = frame.lane_shape(hold)
+            tap_width = tap_shape.x1 - tap_shape.x0
+            hold_width = hold_shape.x1 - hold_shape.x0
+            self.assertLess(hold_width, tap_width, "长按应按单键的可见宽度收窄")
+            self.assertAlmostEqual(
+                hold_width / tap_width, frame.TAP_VISIBLE_FRACTION, places=6
+            )
+            self.assertAlmostEqual(
+                (hold_shape.x0 + hold_shape.x1) / 2.0,
+                (tap_shape.x0 + tap_shape.x1) / 2.0,
+                places=9,
+                msg="内收必须左右对称",
+            )
+
+
 class ProjectionTests(unittest.TestCase):
     def setUp(self) -> None:
         self.scene = S.PlayerScene()

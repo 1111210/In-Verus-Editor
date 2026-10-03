@@ -578,6 +578,7 @@ class Renderer:
         theme = self.theme
         layout = view.layout
         group = self._group(chart, note)
+        # 单键与长按（含长按开头）共用同一条横向范围：长按渲染宽度与单键一致
         x0, x1 = layout.lane_span(note.lane_start, note.lane_end)
         pad = 6 if note.is_multi else 9
         x0 += pad
