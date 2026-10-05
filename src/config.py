@@ -2,12 +2,12 @@
 
 from __future__ import annotations
 
-APP_TITLE = "In Verus 谱面编辑器"
-APP_SUBTITLE = "6K 下落式 + 鼠标平面 双平面音游编辑器"
+APP_TITLE = "In Falsus 社区谱面编辑器"
+APP_SUBTITLE = "《In Falsus》的社区谱面编辑器（6K 下落式 + 鼠标平面）"
 VERSION = "0.1.0"
 
 # 谱面文件格式
-CHART_FORMAT = "inverus.chart"
+CHART_FORMAT = "infalsus.chart"
 CHART_FORMAT_VERSION = 1
 CHART_EXTENSION = ".json"          # 默认保存为普通 JSON 文件
 

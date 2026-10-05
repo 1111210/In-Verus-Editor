@@ -32,7 +32,7 @@ def build_demo_chart() -> Chart:
     chart = Chart(
         metadata=Metadata(
             title="Demo: 双平面测试曲",
-            artist="In Verus",
+            artist="Community",
             difficulty_name="演示难度",
             difficulty_level="8",
             author="Codex",

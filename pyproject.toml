@@ -3,13 +3,13 @@ requires = ["setuptools>=68"]
 build-backend = "setuptools.build_meta"
 
 [project]
-name = "inverus-editor"
+name = "infalsus-editor"
 version = "0.1.0"
-description = "In Verus 双平面音游谱面编辑器（6K 下落式 + 鼠标平面）"
+description = "《In Falsus》社区谱面编辑器（6K 下落式 + 鼠标平面）"
 readme = "README.md"
 requires-python = ">=3.10"
 license = { text = "MIT" }
-authors = [{ name = "In Verus Project" }]
+authors = [{ name = "In Falsus Community" }]
 dependencies = []
 
 [project.optional-dependencies]
@@ -18,7 +18,7 @@ audio = ["pygame-ce>=2.4"]
 preview = ["pygame-ce>=2.4"]
 
 [project.scripts]
-inverus-editor = "app:main"
+infalsus-editor = "app:main"
 
 [tool.setuptools]
 package-dir = { "" = "src" }

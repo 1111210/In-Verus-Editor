@@ -4,10 +4,11 @@
 侧轨高亮……）属于**使用者**，与具体谱面无关，所以保存在独立的
 ``settings.json`` 里，换谱面 / 新建谱面都沿用同一份。
 
-位置（可用环境变量 ``VERUS_SETTINGS`` 覆盖，测试里会用到）::
+位置（可用环境变量 ``INFALSUS_EDITOR_SETTINGS`` 覆盖，测试里会用到）::
 
-* Windows：``%APPDATA%/InVerus/settings.json``
-* macOS / Linux：``$XDG_CONFIG_HOME/inverus/settings.json`` 或 ``~/.config/inverus/settings.json``
+* Windows：``%APPDATA%/InFalsusEditor/settings.json``
+* macOS / Linux：``$XDG_CONFIG_HOME/infalsus-editor/settings.json`` 或
+  ``~/.config/infalsus-editor/settings.json``
 """
 
 from __future__ import annotations
@@ -18,7 +19,7 @@ from typing import Any, Dict, Optional
 from model.chart import EditorSettings
 from settings_store import read_json_object, user_config_dir, write_json_object
 
-ENV_SETTINGS_PATH = "VERUS_SETTINGS"
+ENV_SETTINGS_PATH = "INFALSUS_EDITOR_SETTINGS"
 
 
 def settings_path() -> str:
@@ -44,7 +45,7 @@ def save_settings(settings: EditorSettings, path: Optional[str] = None) -> str:
     settings.normalize()
     write_json_object(
         target,
-        {"format": "inverus.settings", "version": 1, "editor": settings.to_dict()},
+        {"format": "infalsus.settings", "version": 1, "editor": settings.to_dict()},
     )
     return target
 

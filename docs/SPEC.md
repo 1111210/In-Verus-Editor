@@ -249,8 +249,8 @@
 
 ### 2.8 编辑器设置（全局）
 
-> **视图 / 音效 / 编辑器设置都是全局的**（存在 `%APPDATA%/InVerus/settings.json`，
-> 其他系统 `~/.config/inverus/settings.json`，可用 `VERUS_SETTINGS` 覆盖），
+> **视图 / 音效 / 编辑器设置都是全局的**（存在 `%APPDATA%/InFalsusEditor/settings.json`，
+> 其他系统 `~/.config/infalsus-editor/settings.json`，可用 `INFALSUS_EDITOR_SETTINGS` 覆盖），
 > **不写进谱面文件**；老谱面的 `editor` 段会在首次打开时迁移一次。
 
 1. **缩放**：屏幕上同时显示多长时间内出现的物件（秒），滑杆 + 精确输入。

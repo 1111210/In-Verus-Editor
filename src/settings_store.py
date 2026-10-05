@@ -12,14 +12,14 @@ from typing import Any, Dict
 
 
 def user_config_dir() -> str:
-    """用户配置目录：Windows 为 ``%APPDATA%/InVerus``，其它系统为 ``~/.config/inverus``。"""
+    """用户配置目录：Windows 为 ``%APPDATA%/InFalsusEditor``，其它系统为 ``~/.config/infalsus-editor``。"""
     if os.name == "nt":
         base = os.environ.get("APPDATA") or os.path.join(
             os.path.expanduser("~"), "AppData", "Roaming"
         )
-        return os.path.join(base, "InVerus")
+        return os.path.join(base, "InFalsusEditor")
     base = os.environ.get("XDG_CONFIG_HOME") or os.path.join(os.path.expanduser("~"), ".config")
-    return os.path.join(base, "inverus")
+    return os.path.join(base, "infalsus-editor")
 
 
 def read_json_object(path: str) -> Dict[str, Any]:

@@ -115,7 +115,7 @@ class SoftwareView:
         try:
             self.textures = textures.load_textures(self.texture_dir)
         except Exception as exc:                      # pragma: no cover - 缺文件
-            print(f"[In Verus 演示视图] 贴图加载失败（{exc}），使用占位图", flush=True)
+            print(f"[社区编辑器] 贴图加载失败（{exc}），使用占位图", flush=True)
             self.textures = {}
         self._tex_cache.clear()
         self._quad_cache.clear()

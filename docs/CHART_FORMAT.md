@@ -9,7 +9,7 @@
 
 ```json
 {
-  "format": "inverus.chart",
+  "format": "infalsus.chart",
   "version": 1,
   "metadata": { "...": "见 1.1" },
   "timing": { "...": "见 1.2" },
@@ -59,8 +59,8 @@
 `metronome` / `hit_enabled` / `side_lane_highlight` / `music_volume` /
 `metronome_volume` / `hit_volume` 这些**只影响编辑器**的偏好不属于谱面，保存在用户
 配置目录的 `settings.json` 里（Windows 为
-`%APPDATA%/InVerus/settings.json`，其他系统为 `~/.config/inverus/settings.json`；
-可用环境变量 `VERUS_SETTINGS` 指定别的路径）。
+`%APPDATA%/InFalsusEditor/settings.json`，其他系统为 `~/.config/infalsus-editor/settings.json`；
+可用环境变量 `INFALSUS_EDITOR_SETTINGS` 指定别的路径）。
 
 * 换谱面 / 新建谱面都沿用同一份全局设置；
 * 读取带 `editor` 段的旧谱面时，如果全局设置文件尚未建立，会把它并入全局设置一次

@@ -138,7 +138,7 @@ def audio_silent_reason() -> str:
 
 _STARTUP_LOG_MAX_BYTES = 256 * 1024
 _STARTUP_LOG_KEEP_LINES = 200
-ENV_STARTUP_LOG = "VERUS_STARTUP_LOG"
+ENV_STARTUP_LOG = "INFALSUS_EDITOR_LOG"
 
 
 def write_startup_log(path: Optional[str] = None) -> str:
@@ -146,7 +146,7 @@ def write_startup_log(path: Optional[str] = None) -> str:
 
     内容：时间、解释器、pygame / numpy 状态、失败原因、最终后端。启动时写一次，
     用户报“没有声音”时直接看这个文件即可；超过 256 KB 时只保留最近 200 行。
-    可用环境变量 ``VERUS_STARTUP_LOG`` 改到别的路径（测试里会用到）。
+    可用环境变量 ``INFALSUS_EDITOR_LOG`` 改到别的路径（测试里会用到）。
     """
     import datetime
 
