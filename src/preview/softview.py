@@ -395,7 +395,7 @@ class SoftwareView:
         """歌曲毫秒位置 → z。
 
         ``group`` 给定时按该速度组积分（与编辑器的 ``ViewState.note_y`` 同一套
-        语义）；默认 1x 组等价于原来的时间差映射。
+        语义）；默认 1x 组等价于按时间差映射。
         """
         span = self._visible_span_ms()
         if group is None or group.is_identity:
@@ -754,7 +754,7 @@ class SoftwareView:
         if not frame.note_visible(self.chart.timing, note, now_ms):
             return                      # 判定已结束：整个空域（含判定线高亮）都不画
         span = self._visible_span_ms()
-        # 底图：整片**同一种颜色**的半透明淡蓝（不再画横向条纹，避免一条条接缝）
+        # 底图：整片**同一种颜色**的半透明淡蓝（避免横向条纹的接缝）
         area_color = self.texture_avg.get("region_area")
         if area_color is None:
             surface = self._tex("region_area")
@@ -853,7 +853,7 @@ class SoftwareView:
         self._draw_pattern_legacy(note, z)
 
     def _draw_pattern_textured(self, note: Note, z: float) -> bool:
-        """贴图版滑键 / 点击按键（缺贴图时返回 False，走旧的程序绘制）。"""
+        """贴图版滑键 / 点击按键（缺贴图时返回 False，改走程序化绘制兜底）。"""
         if isinstance(note, MouseSlide):
             shape = frame.slide_shape(note)
             direction = shape.direction
@@ -885,7 +885,7 @@ class SoftwareView:
                     self._proj(inner_right, low, z),
                     self._proj(inner_left, low, z),
                 ]
-                # 左 / 右箭头是各自方向的贴图（与主体一样镜像成对），不再二次翻转
+                # 左 / 右箭头是各自方向的贴图（与主体一样镜像成对），无需再翻转
                 self._blit_tex_quad(f"slide_arrow_{name}", arrow_quad)
             return True
         assert isinstance(note, MouseClick)

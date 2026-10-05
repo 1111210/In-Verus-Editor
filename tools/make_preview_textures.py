@@ -43,7 +43,6 @@ BRIGHT_BLUE = np.array([70, 160, 255], dtype=np.float32)
 # 长按共用的一种蓝：**开头与主体必须是同一个蓝**，否则接缝处颜色会突变
 # （开头是"白 -> 蓝"的渐变，它的顶端正好接在主体的底边上）。
 HOLD_BLUE = np.array([150, 200, 255], dtype=np.float32)
-PALE_BLUE = HOLD_BLUE                 # 旧名字，含义相同
 # 长按中间那条纯白竖线占键宽的比例：**开头与主体必须一致**，否则接缝处会一粗一细
 # （渲染侧同名的常量在 ``preview/textures.py``，软渲染手绘白线时用它）。
 HOLD_LINE_FRACTION = 1.0 / 8.0
@@ -152,7 +151,7 @@ def slide_body(direction: int, width: int = 256, height: int = 128) -> np.ndarra
     **上半 = 楔形**：水平直角边贴着贴图中线（= 判定线）、最不透明；宽的一侧朝向
     滑动方向（直角顶点在那一侧），斜面朝相反方向落下；左滑镜像。
     **下半 = 完全透明**。渲染时按“图片中心对齐鼠标运动平面”摆放，于是可见的
-    楔形依旧整条落在平面上方（底边贴平面），与旧版视觉一致。
+    楔形整条落在平面上方（底边贴平面）。
     """
     xs = np.linspace(0.0, 1.0, width, dtype=np.float32)[None, :]
     top = np.linspace(1.0, 0.0, height, dtype=np.float32)[:, None]      # 1 = 图顶，0 = 判定线
@@ -243,7 +242,7 @@ def slide_arrow(size: int = 48) -> np.ndarray:
 
     与 :func:`slide_body` 同一套约定：两倍高，可见箭头画在**上半**、下半完全透明，
     渲染时按“图片中心对齐鼠标运动平面”摆放；左 / 右是各自方向的镜像贴图
-    （渲染时不再二次翻转）。
+    （渲染时无需二次翻转）。
     """
     return np.zeros((size * 2, size, 4), dtype=np.uint8)
 

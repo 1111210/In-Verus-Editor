@@ -48,7 +48,7 @@ class BaseDialog(tk.Toplevel):
     """统一风格的模态对话框基类。
 
     底部只有一个确认按钮（各对话框的 ``ok_text``）；取消走 Esc / 关闭窗口，
-    不再单列「取消」按钮。
+    底部只有一个确认按钮。
     """
 
     title_text = "对话框"
@@ -564,7 +564,7 @@ class SettingsDialog(BaseDialog):
 
         ttk.Label(
             body,
-            text="网格设置已移到「视图」菜单：时间网格细分 / 横向辅助网格 → 自定义…",
+            text="网格设置在「视图」菜单里：时间网格细分 / 横向辅助网格 → 自定义…",
             style="Dim.TLabel",
             wraplength=420,
         ).pack(anchor="w", pady=(8, 0))

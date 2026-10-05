@@ -543,7 +543,7 @@ class Renderer:
         cache.signature = hit_signature(view)
         show_past = bool(chart.settings.show_past_notes) and not state.demo
         current_beat = view.current_beat
-        # 一遍扫过候选物件，按图层分桶（旧实现是 7 个图层各扫一遍全表）
+        # 一遍扫过候选物件，按图层分桶（避免逐图层各扫一遍全表）
         buckets: List[List[Note]] = [[] for _ in range(LAYER_MAX + 1)]
         for note in view.candidate_notes(notes):
             if not show_past and not note_in_time(note, current_beat, False):

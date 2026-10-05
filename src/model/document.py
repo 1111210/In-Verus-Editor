@@ -351,7 +351,7 @@ class Document:
         return len(self._undo)
 
     def undo_records_size(self) -> int:
-        """撤销栈里累计记录的物件条目数（内存诊断用，取代旧的“快照大小”）。"""
+        """撤销栈里累计记录的物件条目数（内存诊断用）。"""
         return sum(record.size for record in self._undo)
 
 

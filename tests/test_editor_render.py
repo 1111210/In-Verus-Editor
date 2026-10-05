@@ -270,7 +270,7 @@ class EditorRenderTests(unittest.TestCase):
         }
         self.controller.set_tool(config.TOOL_MOUSE_REGION)
         x = self.view.norm_to_x
-        # 1) 开始时间 2) 结束时间（与原来的行为一致）
+        # 1) 开始时间 2) 结束时间
         self.click(self.view.norm_to_x(0.5), self.y_of_beat(4.0))
         self.assertTrue(self.state.pending.hint)
         self.click(self.view.norm_to_x(0.5), self.y_of_beat(6.0))
@@ -355,7 +355,7 @@ class EditorRenderTests(unittest.TestCase):
         self.assertAlmostEqual(self.view.beat_to_y(self.view.current_beat), self.view.layout.judgment_y, places=6)
 
     def test_far_note_pushed_back_to_judgment_line_is_drawn_and_hittable(self) -> None:
-        """回归测试：正负流速叠加把“很远的”物件推回判定线时，必须照常渲染并可点选。
+        """正负流速叠加把“很远的”物件推回判定线时，必须照常渲染并可点选。
 
         不能用拍差做剔除：这里的物件判定时刻与判定线相差 200 拍，
         但 ∫v 恰好为 0，所以它实实在在就在判定线上。
@@ -394,7 +394,7 @@ class EditorRenderTests(unittest.TestCase):
 
 
 class HitCacheTests(unittest.TestCase):
-    """命中测试复用渲染缓存：缓存里只有屏幕内的物件，且不再全量算几何。"""
+    """命中测试复用渲染缓存：缓存里只有屏幕内的物件，几何只算可见部分。"""
 
     @classmethod
     def setUpClass(cls) -> None:

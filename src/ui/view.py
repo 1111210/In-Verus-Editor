@@ -327,8 +327,7 @@ class ViewState:
     def scroll_fractions(self) -> Tuple[float, float]:
         """当前可视时间窗口在滚动条上的位置（0..1），用于设置滑块。
 
-        **方向是反的**：滚动条顶端 = 曲末、底端 = 曲首（往下拖是往回走），
-        这样“往下拖 = 时间往前走”的旧手感被反过来。
+        **方向是反的**：滚动条顶端 = 曲末、底端 = 曲首（往下拖是往回走）。
         """
         timing = self.chart.timing
         low, high = self.scroll_doc_range()

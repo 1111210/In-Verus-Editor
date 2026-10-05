@@ -1,4 +1,4 @@
-"""示例谱面与自检：既作为 demo 数据，也作为无界面回归测试。
+"""示例谱面与自检：既作为 demo 数据，也作为无界面自检脚本。
 
 * ``build_demo_chart()``  —— 用 Python 代码构造一张包含全部物件类型的示例谱面。
 * ``write_demo_chart()``  —— 把示例谱面写到 ``charts/demo/demo.json``。

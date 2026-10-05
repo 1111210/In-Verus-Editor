@@ -78,7 +78,7 @@ class EditorAppTests(unittest.TestCase):
     def test_toolbar_groups_without_menubar(self) -> None:
         toolbar = self.app.toolbar
         labels = set(toolbar._group_buttons)
-        # 文件与编辑合并；新增「音效」；帮助收进「编辑器设置」
+        # 文件与编辑合并成一个分组；音效独立成组；帮助收在「编辑器设置」里
         self.assertTrue(
             {"文件 / 编辑", "谱面设置", "放置物件", "视图", "音效", "编辑器设置"} <= labels
         )
@@ -91,9 +91,9 @@ class EditorAppTests(unittest.TestCase):
             order,
             ["文件 / 编辑", "谱面设置", "放置物件", "编辑物件", "视图", "速度组", "音效", "编辑器设置"],
         )
-        self.assertFalse(hasattr(toolbar, "menubar"), "不再保留系统菜单栏")
+        self.assertFalse(hasattr(toolbar, "menubar"), "没有系统菜单栏")
         self.assertEqual(str(self.app.root.cget("menu")), "")
-        # 顶栏只保留分组 + 播放；演示模式、缩放文字都移到二级菜单 / 去掉了
+        # 顶栏只保留分组 + 播放；演示模式与缩放文字都在二级菜单里
         self.assertTrue(hasattr(self.app.toolbar, "btn_play"))
         self.assertFalse(hasattr(toolbar, "btn_demo"))
         self.assertFalse(hasattr(toolbar, "lbl_zoom"))
@@ -110,7 +110,7 @@ class EditorAppTests(unittest.TestCase):
         toolbar.toggle_menu("文件 / 编辑")            # 再次点击同一个按钮
         self.assertIsNone(toolbar._open_group)
         self.assertFalse(toolbar.is_menu_posted())
-        # 点另一个分组：切换而不是叠加
+        # 点另一个分组：切换到新分组
         toolbar.toggle_menu("文件 / 编辑")
         toolbar.toggle_menu("视图")
         self.assertEqual(toolbar._open_group, "视图")
@@ -294,7 +294,7 @@ class EditorAppTests(unittest.TestCase):
     def test_demo_mode_hides_toolbar_and_blocks_editing(self) -> None:
         self.app.set_demo_mode(True)
         self.assertTrue(self.app.demo_mode)
-        # 窗口是隐藏的，用 winfo_manager 判断是否仍被 pack（而不是用 ismapped）
+        # 窗口是隐藏的，用 winfo_manager 判断是否仍被 pack
         self.assertEqual(self.app.toolbar.winfo_manager(), "")
         count = len(self.app.document.chart.all_notes())
         # 演示模式下点击画布不会放置物件
@@ -356,7 +356,7 @@ class EditorAppTests(unittest.TestCase):
             app.set_demo_mode(False)
 
     def test_demo_mode_uses_software_render(self) -> None:
-        """演示模式贴的是演示视图软件渲染的帧（preview/softview），不再画编辑器叠加视图。"""
+        """演示模式贴的是演示视图软件渲染的帧（preview/softview）。"""
         softview = self._softview()
         calls = []
         original = softview.draw_frame

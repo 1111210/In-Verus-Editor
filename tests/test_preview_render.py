@@ -201,10 +201,7 @@ class SoftwareViewTests(unittest.TestCase):
         self.assertFalse(np.abs(far - blank_far).sum(axis=2).any(), "超出可视下界后应当剔除")
 
     def test_demo_view_applies_speed_groups(self) -> None:
-        """演示视图跟随速度组：同判定时刻，流速不同位置不同。
-
-        回归：以前位置只按歌曲时间差算，速度组在演示视图里完全不生效。
-        """
+        """演示视图跟随速度组：同判定时刻，流速不同位置不同。"""
         import numpy as np
 
         def render(multiplier):

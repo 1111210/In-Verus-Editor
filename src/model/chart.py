@@ -289,7 +289,7 @@ class Chart:
             note = index.get(note_id)
             if note is not None:
                 out.append(note)
-        out.sort(key=sort_key)      # 与旧的“按 sorted_notes 顺序返回”一致
+        out.sort(key=sort_key)      # 与 sorted_notes() 的顺序一致
         return out
 
     def new_note_id(self, prefix: str) -> str:
@@ -306,7 +306,7 @@ class Chart:
                 return candidate
 
     def register_note_id(self, note_id: str) -> None:
-        """读档后同步 id 计数器，避免新建物件与旧 id 冲突。"""
+        """读档后同步 id 计数器，避免新建物件与已有 id 冲突。"""
         prefix = note_id[:1]
         if not prefix:
             return
@@ -464,7 +464,7 @@ class Chart:
         chart = cls(
             metadata=Metadata.from_dict(data.get("metadata")),  # type: ignore[arg-type]
             timing=TimingMap.from_dict(data.get("timing")),  # type: ignore[arg-type]
-            # editor 段是旧格式：读取时用于迁移到全局设置，不再写出
+            # editor 段：读取时迁移到全局设置，保存时不写进谱面
             settings=EditorSettings(),
         )
         groups_data = data.get("speed_groups") or [SpeedGroup.default().to_dict()]

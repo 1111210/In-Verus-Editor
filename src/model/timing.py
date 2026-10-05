@@ -135,7 +135,7 @@ class TimingMap:
         seg = self.segments[index]
         start = self._starts[index]
         if beat < start:
-            # 早于第一段：按第一段的每拍秒数外推（与旧实现对负数拍的处理一致）
+            # 早于第一段：按第一段的每拍秒数外推（负数拍同样适用）
             return (beat - start) * 60.0 / seg.bpm
         return self._prefix_seconds[index] + (beat - start) * 60.0 / seg.bpm
 
