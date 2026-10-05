@@ -17,5 +17,5 @@ python run_editor.py charts/demo/demo.json --demo  # 直接进入演示模式
 * 4 个速度组：默认组、加速特效、反向特效、往返特效（正负流速叠加，
   可把远处的物件推回判定线附近）。
 
-生成逻辑见 `src/rhythm_editor/demo.py::build_demo_chart()`；
+生成逻辑见 `src/demo.py::build_demo_chart()`；
 谱面结构见 [`docs/CHART_FORMAT.md`](../../docs/CHART_FORMAT.md)。

@@ -53,7 +53,7 @@
 * BPM 决定**时间轴格子的大小**（纵向按秒线性：高 BPM 段落每拍更短），
   也决定“拍 ↔ 秒 / 歌曲位置”的换算；流速（速度组）则是在此之上的倍率。
 
-## 1.3 editor（旧字段，读取时兼容）
+## 1.3 editor（历史字段，读取时兼容）
 
 `zoom_seconds` / `grid_division` / `horizontal_divisions` / `audio_latency_ms` /
 `metronome` / `hit_enabled` / `side_lane_highlight` / `music_volume` /
@@ -172,7 +172,7 @@
 
 ## 2. 手工编辑提示
 
-* 文件是纯 JSON，可以用脚本批量生成（见 `src/rhythm_editor/demo.py` 的 `build_demo_chart`）。
+* 文件是纯 JSON，可以用脚本批量生成（见 `src/demo.py` 的 `build_demo_chart`）。
 * 只需保证 `format` / `version` 存在；缺失字段会用默认值补齐。
 * 读档时会自动：排序去重 BPM 与流速段、把第一项钉到第 0 拍、
   修复速度组归属、裁剪非法轨道编号。
