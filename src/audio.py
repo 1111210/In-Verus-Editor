@@ -150,7 +150,10 @@ def write_startup_log(path: Optional[str] = None) -> str:
     """
     import datetime
 
-    root = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))  # src/audio.py → 仓库根目录
+    if getattr(sys, "frozen", False):      # 打包后：自检日志写在 exe 旁边
+        root = os.path.dirname(os.path.abspath(sys.executable))
+    else:
+        root = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))  # src/audio.py → 仓库根目录
     target = path or os.environ.get(ENV_STARTUP_LOG) or os.path.join(root, "_diag", "audio_startup.log")
     lines = [
         f"----- {datetime.datetime.now().isoformat(timespec='seconds')} -----",
