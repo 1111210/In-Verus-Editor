@@ -14,13 +14,13 @@ from _common import ROOT, add_paths, use_utf8_console
 add_paths()
 use_utf8_console()
 
-from rhythm_editor import config  # noqa: E402
-from rhythm_editor import global_settings  # noqa: E402
-from rhythm_editor.audio import audio_backend_available, audio_backend_name  # noqa: E402
-from rhythm_editor.demo import build_demo_chart, selftest, write_demo_chart  # noqa: E402
-from rhythm_editor.io.chart_io import load_chart  # noqa: E402
-from rhythm_editor.model.document import Document  # noqa: E402
-from rhythm_editor.model.notes import LaneNote, MouseClick, MouseRegion, MouseSlide  # noqa: E402
+import config  # noqa: E402
+import global_settings  # noqa: E402
+from audio import audio_backend_available, audio_backend_name  # noqa: E402
+from demo import build_demo_chart, selftest, write_demo_chart  # noqa: E402
+from chart_io import load_chart  # noqa: E402
+from model.document import Document  # noqa: E402
+from model.notes import LaneNote, MouseClick, MouseRegion, MouseSlide  # noqa: E402
 
 
 def report() -> int:
@@ -139,53 +139,6 @@ def report() -> int:
     ok, failures = selftest(verbose=False)
     item("内置自检（时间轴 / 速度组 / 编辑命令 / 存档往返）", ok,
          "全部通过" if ok else f"失败 {len(failures)} 项：{failures[:3]}")
-
-    # ---- 游玩器（3D） ------------------------------------------------
-    from rhythm_editor.game import judge as game_judge  # noqa: E402
-    from rhythm_editor.game import scene as game_scene  # noqa: E402
-    from rhythm_editor.game import settings as game_settings  # noqa: E402
-
-    player_files = [
-        os.path.join(ROOT, "run_player.py"),
-        os.path.join(ROOT, "src", "rhythm_editor", "game", "app.py"),
-    ]
-    item(
-        "游玩器（主界面 / 设置 / 加载 / 3D 游玩 / 结算）",
-        all(os.path.isfile(path) for path in player_files),
-        "、".join(os.path.basename(path) for path in player_files),
-    )
-    item(
-        "游玩器判定窗口（±25/50/100ms，提前 100~150ms 为 Break、更早空敲）",
-        game_judge.grade_for_offset(20.0) == game_judge.EXACT
-        and game_judge.grade_for_offset(40.0) == game_judge.EXACT_MIXED
-        and game_judge.grade_for_offset(80.0) == game_judge.NEAR
-        and game_judge.grade_for_offset(-120.0) == game_judge.BREAK
-        and game_judge.grade_for_offset(-200.0) is None,
-        "EXACT / Exact / Near / Break",
-    )
-    item(
-        "游玩器 3D 布局（鼠标合法区 = 6K 中间四轨 = 1 单位；鼠标平面高度；"
-        "轨道起点 START_Z）",
-        abs(game_scene.MOUSE_LEGAL_WIDTH - 1.0) < 1e-9
-        and abs(game_scene.LANE_WIDTH - 0.25) < 1e-9
-        and abs(game_scene.MOUSE_PLANE_HEIGHT - 0.4 * game_scene.UNIT_SCALE) < 1e-9
-        and abs(game_scene.PlayerScene.lane_span(1, 4)[1]
-                - game_scene.PlayerScene.lane_span(1, 4)[0]
-                - game_scene.MOUSE_LEGAL_WIDTH) < 1e-9
-        and abs(game_scene.K6_WIDTH - 6 * game_scene.LANE_WIDTH) < 1e-9
-        and game_scene.START_Z >= 12.0,
-        f"6K 总宽 {game_scene.K6_WIDTH:g} 单位（合法区宽 "
-        f"{game_scene.MOUSE_LEGAL_WIDTH:g}）· 轨道长 {game_scene.START_Z:g} 单位",
-    )
-    player_settings = game_settings.PlayerSettings()
-    player_settings.normalize()
-    item(
-        "游玩器设置（键位 / 厚度 / 延迟 / 流速 / 灵敏度 / 无界鼠标 / 玩家名 / 倍速）",
-        player_settings.keys[:2] == ["shift", "a"]
-        and 0.1 <= player_settings.mouse_sensitivity <= 10.0
-        and 200.0 <= player_settings.scroll_ms <= 20_000.0,
-        f"键位 {' '.join(player_settings.keys)} · 灵敏度 {player_settings.mouse_sensitivity:g}x",
-    )
 
     print("\n".join(lines))
     print()

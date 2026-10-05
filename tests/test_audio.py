@@ -9,15 +9,15 @@ import unittest
 
 sys.path.insert(0, os.path.join(os.path.dirname(os.path.dirname(os.path.abspath(__file__))), "src"))
 
-from rhythm_editor import config
-from rhythm_editor import audio as A
-from rhythm_editor.audio import (
+import config
+import audio as A
+from audio import (
     STRETCH_AVAILABLE,
     AudioPlayer,
     SilentBackend,
     time_stretch,
 )
-from rhythm_editor.metronome import (
+from metronome import (
     CLICK_MS,
     MODE_BAR,
     MODE_BEAT,
@@ -26,9 +26,9 @@ from rhythm_editor.metronome import (
     effect_events,
     effect_samples,
 )
-from rhythm_editor.model.chart import Chart, EditorSettings
-from rhythm_editor.model.notes import BoundaryCurve, LaneNote, MouseClick, MouseRegion, MouseSlide
-from rhythm_editor.model.timing import BpmSegment, TimingMap
+from model.chart import Chart, EditorSettings
+from model.notes import BoundaryCurve, LaneNote, MouseClick, MouseRegion, MouseSlide
+from model.timing import BpmSegment, TimingMap
 
 
 class RateTests(unittest.TestCase):

@@ -21,10 +21,6 @@ Thumbs.db
 _build/
 dist/
 build/
-# Panda3D 目录索引缓存（加载贴图时生成在运行目录）
-Panda3D-*/
-Panda3D-*.pz
-
 # Audio copied next to charts is user content; keep the repo small
 charts/**/*.mp3
 charts/**/*.ogg

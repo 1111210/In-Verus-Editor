@@ -26,7 +26,7 @@ from _common import add_paths, use_utf8_console
 add_paths()
 use_utf8_console()
 
-from rhythm_editor.audio import AudioPlayer, audio_backend_name  # noqa: E402
+from audio import AudioPlayer, audio_backend_name  # noqa: E402
 
 
 def make_wav(path: str, seconds: float = 2.0, rate: int = 44100) -> str:

@@ -10,19 +10,19 @@ import filecmp
 
 sys.path.insert(0, os.path.join(os.path.dirname(os.path.dirname(os.path.abspath(__file__))), "src"))
 
-from rhythm_editor import config
-from rhythm_editor.io.chart_io import (
+import config
+from chart_io import (
     chart_audio_path,
     copy_audio_into_chart_dir,
     ensure_chart_suffix,
     load_chart,
     save_chart,
 )
-from rhythm_editor.model.chart import Chart, EditorSettings, Metadata
-from rhythm_editor.model.document import Document
-from rhythm_editor.model.notes import BoundaryCurve, LaneNote, MouseRegion, MouseSlide
-from rhythm_editor.model.speed import SpeedSegment
-from rhythm_editor.model.timing import BpmSegment, TimingMap
+from model.chart import Chart, EditorSettings, Metadata
+from model.document import Document
+from model.notes import BoundaryCurve, LaneNote, MouseRegion, MouseSlide
+from model.speed import SpeedSegment
+from model.timing import BpmSegment, TimingMap
 
 
 def make_chart() -> Chart:

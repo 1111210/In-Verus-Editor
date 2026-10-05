@@ -30,7 +30,7 @@ def _bootstrap() -> None:
 
 def main() -> int:
     _bootstrap()
-    from rhythm_editor.app import main as app_main
+    from app import main as app_main
 
     return app_main()
 

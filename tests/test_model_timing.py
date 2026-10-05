@@ -8,8 +8,8 @@ import unittest
 
 sys.path.insert(0, os.path.join(os.path.dirname(os.path.dirname(os.path.abspath(__file__))), "src"))
 
-from rhythm_editor.model.speed import SpeedGroup, SpeedSegment
-from rhythm_editor.model.timing import BpmSegment, TimingMap
+from model.speed import SpeedGroup, SpeedSegment
+from model.timing import BpmSegment, TimingMap
 
 
 class TimingTests(unittest.TestCase):

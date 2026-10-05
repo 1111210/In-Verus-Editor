@@ -10,18 +10,18 @@ sys.path.insert(0, os.path.join(os.path.dirname(os.path.dirname(os.path.abspath(
 
 import tkinter as tk
 
-from rhythm_editor import config
-from rhythm_editor.demo import build_demo_chart
-from rhythm_editor.model.chart import Chart
-from rhythm_editor.model.document import Document
-from rhythm_editor.model.notes import BoundaryCurve, LaneNote, MouseClick, MouseRegion, MouseSlide
-from rhythm_editor.ui import geometry
-from rhythm_editor.ui.geometry import notes_at
-from rhythm_editor.ui.interactions import ToolController
-from rhythm_editor.ui.renderer import RenderState, Renderer
-from rhythm_editor.ui.scene import Scene
-from rhythm_editor.ui.theme import DARK
-from rhythm_editor.ui.view import ViewState
+import config
+from demo import build_demo_chart
+from model.chart import Chart
+from model.document import Document
+from model.notes import BoundaryCurve, LaneNote, MouseClick, MouseRegion, MouseSlide
+from ui import geometry
+from ui.geometry import notes_at
+from ui.interactions import ToolController
+from ui.renderer import RenderState, Renderer
+from ui.scene import Scene
+from ui.theme import DARK
+from ui.view import ViewState
 
 WIDTH, HEIGHT = 1280, 800
 
@@ -292,7 +292,7 @@ class EditorRenderTests(unittest.TestCase):
 
     def test_notes_hidden_after_judgment_time(self) -> None:
         """显示规则：判定线越过判定时刻后不再显示（长按 / 区域按结束时刻）。"""
-        from rhythm_editor.ui.geometry import lane_note_bounds, notes_at
+        from ui.geometry import lane_note_bounds, notes_at
 
         tap = LaneNote("L1", 1, 1, 4.0)
         hold = LaneNote("L2", 2, 2, 4.0, 6.0)
@@ -360,8 +360,8 @@ class EditorRenderTests(unittest.TestCase):
         不能用拍差做剔除：这里的物件判定时刻与判定线相差 200 拍，
         但 ∫v 恰好为 0，所以它实实在在就在判定线上。
         """
-        from rhythm_editor.model.speed import SpeedSegment
-        from rhythm_editor.ui.geometry import notes_at
+        from model.speed import SpeedSegment
+        from ui.geometry import notes_at
 
         group = self.chart.add_group(
             "roundtrip",

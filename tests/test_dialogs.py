@@ -12,12 +12,12 @@ sys.path.insert(0, os.path.join(os.path.dirname(os.path.dirname(os.path.abspath(
 import tkinter as tk
 from tkinter import ttk
 
-from rhythm_editor.model.chart import Chart, EditorSettings
-from rhythm_editor.model.document import Document
-from rhythm_editor.model.notes import BoundaryCurve, LaneNote, MouseRegion, MouseSlide
-from rhythm_editor.model.timing import BpmSegment, TimingMap
-from rhythm_editor.ui import dialogs as dialogs_module
-from rhythm_editor.ui.dialogs import (
+from model.chart import Chart, EditorSettings
+from model.document import Document
+from model.notes import BoundaryCurve, LaneNote, MouseRegion, MouseSlide
+from model.timing import BpmSegment, TimingMap
+from ui import dialogs as dialogs_module
+from ui.dialogs import (
     BpmDialog,
     DemoViewDialog,
     HelpDialog,
@@ -28,7 +28,7 @@ from rhythm_editor.ui.dialogs import (
     TextInputDialog,
     VolumeDialog,
 )
-from rhythm_editor.ui.theme import DARK
+from ui.theme import DARK
 
 
 class DialogTestCase(unittest.TestCase):

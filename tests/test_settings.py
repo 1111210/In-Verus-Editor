@@ -1,4 +1,4 @@
-"""编辑器 / 游玩器的全局设置：存用户目录、不写谱面、损坏时回退默认。"""
+"""编辑器的全局设置：存用户目录、不写谱面、损坏时回退默认。"""
 
 from __future__ import annotations
 
@@ -9,9 +9,8 @@ import unittest
 
 sys.path.insert(0, os.path.join(os.path.dirname(os.path.dirname(os.path.abspath(__file__))), "src"))
 
-from rhythm_editor import global_settings
-from rhythm_editor.game import settings as PS
-from rhythm_editor.model.chart import Chart, EditorSettings
+import global_settings
+from model.chart import Chart, EditorSettings
 
 
 class EditorSettingsTests(unittest.TestCase):
@@ -62,64 +61,25 @@ class EditorSettingsTests(unittest.TestCase):
         self.assertFalse(global_settings.adopt_legacy_settings(EditorSettings(), {"grid_division": 2}))
 
 
-class PlayerSettingsTests(unittest.TestCase):
-    def test_defaults_and_ranges(self) -> None:
-        settings = PS.PlayerSettings()
-        settings.normalize()
-        self.assertEqual(settings.keys, ["shift", "a", "s", "d", "f", "space"])
-        self.assertAlmostEqual(settings.scroll_ms, 1500.0)
-        settings = PS.PlayerSettings(mouse_sensitivity=99.0, note_thickness=5.0, speed=99.0)
-        settings.normalize()
-        self.assertAlmostEqual(settings.mouse_sensitivity, 10.0)
-        self.assertAlmostEqual(settings.note_thickness, 1.0)
-        self.assertAlmostEqual(settings.speed, 10.0)
-        self.assertAlmostEqual(settings.scroll_ms, 150.0)
-        tiny = PS.PlayerSettings(mouse_sensitivity=0.0, audio_latency_ms=-9999.0, speed=0.2)
-        tiny.normalize()
-        self.assertAlmostEqual(tiny.mouse_sensitivity, 0.1)
-        self.assertAlmostEqual(tiny.audio_latency_ms, -5000.0)
-        self.assertAlmostEqual(tiny.speed, 1.0)
+class ViewSettingsTests(unittest.TestCase):
+    """演示视图的渲染参数：流速 → 可视毫秒、厚度 / 流速夹取。"""
 
-    def test_speed_maps_to_visible_ms_and_migrates_legacy(self) -> None:
-        self.assertAlmostEqual(PS.PlayerSettings(speed=2.0).scroll_ms, 750.0)
-        self.assertAlmostEqual(PS.PlayerSettings(speed=3.0).scroll_ms, 500.0)
-        legacy = PS.PlayerSettings.from_dict({"scroll_ms": 750.0})
-        self.assertAlmostEqual(legacy.speed, 2.0)
-        self.assertAlmostEqual(PS.PlayerSettings.from_dict({}).speed, 1.0)
+    def test_speed_maps_to_visible_ms_and_values_are_clamped(self) -> None:
+        from preview.settings import BASE_SCROLL_MS, ViewSettings
 
-    def test_keys_thickness_and_recent_are_normalized(self) -> None:
-        settings = PS.PlayerSettings(keys=["SHIFT", "", "A"], recent=["a.json", "a.json", "", "b.json"])
-        settings.normalize()
-        self.assertEqual(len(settings.keys), 6)
-        self.assertEqual(settings.keys[:2], ["shift", "a"])
-        self.assertEqual(settings.recent, ["a.json", "b.json"])
-        legacy = PS.PlayerSettings.from_dict({
-            "note_thickness": 0.35, "multi_thickness": 0.35,
-            "slide_thickness": 0.03, "click_thickness": 0.03,
-        })
-        self.assertAlmostEqual(legacy.note_thickness, 0.25, places=6)
-        self.assertAlmostEqual(legacy.slide_thickness, 0.03 * PS.UNIT_SCALE, places=6)
-        follow = PS.PlayerSettings.from_dict({"note_thickness": 0.7})
-        self.assertAlmostEqual(follow.multi_thickness, 0.7 * PS.UNIT_SCALE, places=6)
-        self.assertTrue(PS.PlayerSettings().to_dict()["units2"])
-
-    def test_file_roundtrip_renderer_and_broken_file(self) -> None:
-        with tempfile.TemporaryDirectory() as tmp:
-            path = os.path.join(tmp, "player.json")
-            saved = PS.save_settings(PS.PlayerSettings(player_name="阿岚", speed=2.0, renderer="opengl"), path)
-            self.assertTrue(os.path.isfile(saved))
-            loaded = PS.load_settings(path)
-            self.assertEqual((loaded.player_name, loaded.renderer), ("阿岚", "opengl"))
-            self.assertAlmostEqual(loaded.scroll_ms, 750.0)
-            with open(path, "w", encoding="utf-8") as handle:
-                handle.write("{ 坏文件")
-            self.assertEqual(PS.load_settings(path).player_name, "Player")
-        # 老存档里的旧默认值 software 迁移到 panda3d；显式选择保留
-        self.assertEqual(PS.PlayerSettings.from_dict({"renderer": "software"}).renderer, "panda3d")
-        self.assertEqual(
-            PS.PlayerSettings.from_dict({"renderer": "software", "renderer2": True}).renderer, "software"
+        self.assertAlmostEqual(ViewSettings(speed=2.0).scroll_ms, BASE_SCROLL_MS / 2.0)
+        self.assertAlmostEqual(ViewSettings(speed=3.0).scroll_ms, 500.0)
+        settings = ViewSettings(
+            speed=99.0, note_thickness=5.0, multi_thickness=0.0,
+            slide_thickness=0.0, click_thickness=9.0, rate=0.0,
         )
-        self.assertEqual(PS.PlayerSettings.from_dict({"renderer": "vulkan"}).renderer, "panda3d")
+        settings.normalize()
+        self.assertAlmostEqual(settings.speed, 10.0)
+        self.assertAlmostEqual(settings.note_thickness, 1.0)
+        self.assertAlmostEqual(settings.multi_thickness, 0.05)
+        self.assertAlmostEqual(settings.slide_thickness, 0.005)
+        self.assertAlmostEqual(settings.click_thickness, 0.3)
+        self.assertGreater(settings.rate, 0.0)
 
 
 if __name__ == "__main__":

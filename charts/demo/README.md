@@ -6,7 +6,6 @@
 python run_editor.py --make-demo                   # 生成 charts/demo/demo.json
 python run_editor.py charts/demo/demo.json         # 打开示例谱面
 python run_editor.py charts/demo/demo.json --demo  # 直接进入演示模式
-python run_player.py charts/demo/demo.json         # 用游玩器打开
 ```
 
 内容：

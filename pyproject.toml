@@ -13,13 +13,23 @@ authors = [{ name = "In Verus Project" }]
 dependencies = []
 
 [project.optional-dependencies]
+# 真实音频播放；演示模式（软件渲染的游玩视角预览）同样使用它
 audio = ["pygame-ce>=2.4"]
+preview = ["pygame-ce>=2.4"]
 
 [project.scripts]
-inverus-editor = "rhythm_editor.app:main"
+inverus-editor = "app:main"
 
 [tool.setuptools]
 package-dir = { "" = "src" }
-
-[tool.setuptools.packages.find]
-where = ["src"]
+py-modules = [
+    "app",
+    "audio",
+    "chart_io",
+    "config",
+    "demo",
+    "global_settings",
+    "metronome",
+    "settings_store",
+]
+packages = ["model", "preview", "ui"]

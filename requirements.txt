@@ -2,6 +2,7 @@
 # ==================================================================
 # 界面：Python 标准库 tkinter（Python 3.10+ 自带；Linux 需要 python3-tk）
 # 音频：pygame-ce —— 真实音频播放与精确 seek（推荐安装）
+# 演示模式：同一份 pygame-ce 负责软件渲染的游玩视角预览
 #
 #     python -m venv .venv
 #     .\.venv\Scripts\python.exe -m pip install -r requirements.txt
@@ -14,7 +15,3 @@
 pygame-ce>=2.5.0
 # 变速不变调（时间伸缩 WSOLA）需要 numpy；不装也能用，只是倍速固定 1.0x
 numpy>=1.26
-# 游玩器（3D）后续做特效 / 追求性能时使用；当前软件渲染不需要它
-PyOpenGL>=3.1
-# 游玩器渲染层：Panda3D（1.10.16 起有 Python 3.14 的 Windows wheel）
-panda3d>=1.10.16

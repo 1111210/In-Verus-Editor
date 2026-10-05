@@ -21,9 +21,9 @@ os.environ["VERUS_SETTINGS"] = os.path.join(_SETTINGS_TMP.name, "settings.json")
 os.environ["VERUS_STARTUP_LOG"] = os.path.join(_SETTINGS_TMP.name, "audio_startup.log")
 from tkinter import ttk
 
-from rhythm_editor import config
-from rhythm_editor.app import EditorApp
-from rhythm_editor.io.chart_io import load_chart
+import config
+from app import EditorApp
+from chart_io import load_chart
 
 ROOT = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
 DEMO_CHART = os.path.join(ROOT, "charts", "demo", "demo.json")
@@ -54,7 +54,7 @@ class EditorAppTests(unittest.TestCase):
 
     def _softview(self):
         try:
-            from rhythm_editor.game import softview
+            from preview import softview
         except Exception:  # pragma: no cover - 没有 pygame
             self.skipTest("没有 pygame")
         if not softview.available():  # pragma: no cover
@@ -139,8 +139,8 @@ class EditorAppTests(unittest.TestCase):
         self.assertAlmostEqual(steps, round(steps), places=6)
 
     def test_place_edit_and_undo_through_app(self) -> None:
-        from rhythm_editor.model.notes import LaneNote
-        from rhythm_editor.ui.geometry import lane_note_bounds
+        from model.notes import LaneNote
+        from ui.geometry import lane_note_bounds
 
         note = LaneNote(self.app.document.chart.new_note_id("L"), 2, 2, 40.0)
         self.app.document.add_note(note)
@@ -191,7 +191,7 @@ class EditorAppTests(unittest.TestCase):
         self.assertTrue(any("自动检查" in label for label in labels), labels)
 
         # 造一个冲突：同一轨道同一时刻两个按键
-        from rhythm_editor.model.notes import LaneNote
+        from model.notes import LaneNote
 
         chart = self.app.document.chart
         chart.add(LaneNote("L900", 0, 0, 40.0))
@@ -206,7 +206,7 @@ class EditorAppTests(unittest.TestCase):
             captured["content"] = content
             return None
 
-        import rhythm_editor.app as app_module
+        import app as app_module
 
         original = app_module.run_dialog
         app_module.run_dialog = fake_run_dialog  # type: ignore[assignment]
@@ -308,7 +308,7 @@ class EditorAppTests(unittest.TestCase):
 
     def test_demo_view_settings_are_independent_and_applied(self) -> None:
         """「编辑器设置 → 演示视图设置…」独立保存，改完立刻套到离屏演示视图。"""
-        import rhythm_editor.app as app_module
+        import app as app_module
 
         self._softview()
         app = self.app
@@ -327,7 +327,6 @@ class EditorAppTests(unittest.TestCase):
             view = app._demo_view
             if view is None:  # pragma: no cover - 初始化失败
                 self.skipTest("演示视图不可用")
-            self.assertEqual(view.settings.renderer, "software", "演示视图只支持软件渲染")
             self.assertAlmostEqual(
                 view.settings.note_thickness, app.editor_settings.demo_note_thickness
             )
@@ -353,12 +352,11 @@ class EditorAppTests(unittest.TestCase):
             self.assertAlmostEqual(view.settings.note_thickness, 0.5)
             self.assertAlmostEqual(view.settings.speed, 1.5)
             self.assertTrue(view.settings.side_lane_highlight)
-            self.assertEqual(view.settings.renderer, "software")
         finally:
             app.set_demo_mode(False)
 
-    def test_demo_mode_uses_player_software_render(self) -> None:
-        """演示模式贴的是游玩器软件渲染的帧（game/softview），不再画编辑器叠加视图。"""
+    def test_demo_mode_uses_software_render(self) -> None:
+        """演示模式贴的是演示视图软件渲染的帧（preview/softview），不再画编辑器叠加视图。"""
         softview = self._softview()
         calls = []
         original = softview.draw_frame
@@ -374,7 +372,7 @@ class EditorAppTests(unittest.TestCase):
         finally:
             softview.draw_frame = original  # type: ignore[assignment]
         try:
-            self.assertTrue(calls, "演示模式应当调用游玩器软件渲染")
+            self.assertTrue(calls, "演示模式应当调用演示视图的软件渲染")
             view, chart, _now, kwargs = calls[0]
             self.assertIs(chart, self.app.document.chart)
             self.assertIs(view, self.app._demo_view)
@@ -411,7 +409,7 @@ class LauncherTests(unittest.TestCase):
         self.assertIn(os.path.join(ROOT, "src"), sys.path)
 
     def test_startup_log_records_interpreter_and_backend(self) -> None:
-        from rhythm_editor.audio import audio_backend_name, write_startup_log
+        from audio import audio_backend_name, write_startup_log
 
         with tempfile.TemporaryDirectory() as tmp:
             target = write_startup_log(os.path.join(tmp, "_diag", "audio_startup.log"))
@@ -423,8 +421,8 @@ class LauncherTests(unittest.TestCase):
         self.assertIn(f"后端：{audio_backend_name()}", text)
 
     def test_device_failure_is_reported_as_such(self) -> None:
-        from rhythm_editor import audio as audio_module
-        from rhythm_editor.audio import AudioPlayer, audio_backend_state, audio_setup_hint
+        import audio as audio_module
+        from audio import AudioPlayer, audio_backend_state, audio_setup_hint
 
         original_error = audio_module._MIXER_ERROR
         original_factory = AudioPlayer.__dict__["_create_plain_backend"]

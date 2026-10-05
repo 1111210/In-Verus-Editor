@@ -25,15 +25,15 @@ use_utf8_console()
 
 import tkinter as tk  # noqa: E402
 
-from rhythm_editor import config  # noqa: E402
-from rhythm_editor.model.chart import Chart  # noqa: E402
-from rhythm_editor.model.document import Document  # noqa: E402
-from rhythm_editor.model.notes import BoundaryCurve, LaneNote, MouseRegion, MouseSlide  # noqa: E402
-from rhythm_editor.ui.geometry import notes_at  # noqa: E402
-from rhythm_editor.ui.renderer import RenderState, Renderer  # noqa: E402
-from rhythm_editor.ui.scene import Scene  # noqa: E402
-from rhythm_editor.ui.theme import DARK  # noqa: E402
-from rhythm_editor.ui.view import ViewState  # noqa: E402
+import config  # noqa: E402
+from model.chart import Chart  # noqa: E402
+from model.document import Document  # noqa: E402
+from model.notes import BoundaryCurve, LaneNote, MouseRegion, MouseSlide  # noqa: E402
+from ui.geometry import notes_at  # noqa: E402
+from ui.renderer import RenderState, Renderer  # noqa: E402
+from ui.scene import Scene  # noqa: E402
+from ui.theme import DARK  # noqa: E402
+from ui.view import ViewState  # noqa: E402
 
 WIDTH, HEIGHT = 1280, 800
 

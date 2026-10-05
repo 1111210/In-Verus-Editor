@@ -8,10 +8,10 @@ import unittest
 
 sys.path.insert(0, os.path.join(os.path.dirname(os.path.dirname(os.path.abspath(__file__))), "src"))
 
-from rhythm_editor import config
-from rhythm_editor.model.chart import Chart
-from rhythm_editor.model.document import Document
-from rhythm_editor.model.notes import (
+import config
+from model.chart import Chart
+from model.document import Document
+from model.notes import (
     BoundaryCurve,
     LaneNote,
     MouseClick,
@@ -20,7 +20,7 @@ from rhythm_editor.model.notes import (
     ease_value,
     note_from_dict,
 )
-from rhythm_editor.model.validate import (
+from model.validate import (
     ISSUE_CLICK,
     ISSUE_CLICK_SAME_BEAT,
     ISSUE_LANE,

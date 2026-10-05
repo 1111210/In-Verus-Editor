@@ -1,9 +1,8 @@
 # In Verus —— 双平面音游 **谱面编辑器**
 
 > 玩法为两个叠加平面：**6 轨下落式** + **鼠标平面（类接水果玩法）**。
-> 仓库包含两部分：**编辑器**（tkinter，`run_editor.py`）与
-> **游玩器**（3D 视角，pygame，`run_player.py` —— 判定 / 计分 / 结算）。
-> 游玩器怎么玩见 [docs/PLAYER.md](docs/PLAYER.md)。
+> 仓库是一个纯编辑器（tkinter，`run_editor.py`）：放置 / 编辑 / 播放 / 自动检查，
+> 并可用「演示模式」把**软件渲染的游玩视角预览**叠加到画布上（只读、可随时暂停）。
 
 ---
 
@@ -21,23 +20,12 @@ pip install -r requirements.txt
 python run_editor.py --make-demo
 python run_editor.py charts/demo/demo.json             # 默认最大化启动
 python run_editor.py charts/demo/demo.json --windowed  # 普通窗口（F10 最大化 / F11 全屏）
+python run_editor.py charts/demo/demo.json --demo      # 直接进入演示模式（Tab 也可切换）
 
 # 或者双击 run_editor.bat（会自动优先使用 .venv）
 ```
 
-游玩器（3D 视角，判定 / 计分 / 结算）：
-
-```bash
-python run_player.py                       # 主界面：↑↓ 选谱面 · Enter 开始 · O 打开其他 JSON · S 设置
-python run_player.py charts/demo           # 每个含 json 的文件夹算一张谱面
-python run_player.py charts/demo/demo.json # 直接选中示例谱面
-python run_player.py --software            # 强制软件渲染（OpenGL 黑屏 / 花屏时用）
-```
-
-玩法与判定规则见 [`docs/GAMEPLAY.md`](docs/GAMEPLAY.md)，
-游玩器实现与操作见 [`docs/PLAYER.md`](docs/PLAYER.md)。
-
-演示模式（游玩器软件渲染的 3D 预览，只读，可随时暂停 / 继续）：
+演示模式（游玩视角的软件渲染预览，只读，可随时暂停 / 继续）：
 
 ```bash
 python run_editor.py charts/demo/demo.json --demo
@@ -71,9 +59,8 @@ python -m unittest discover -s tests -t . -v
 
 ![放置预览](docs/images/placement.png)
 
-演示模式直接显示**游玩器的软件渲染画面**（不显示分数 / 判定 / 元数据与鼠标指针，
-空格暂停 / 继续；物件厚度 / 流速 / 侧轨高亮在「编辑器设置 → 演示视图设置…」里单独调，
-与游玩器的 `player.json` 独立）：
+演示模式直接显示**软件渲染的游玩视角画面**（不显示分数 / 判定 / 元数据与鼠标指针，
+空格暂停 / 继续；物件厚度 / 流速 / 侧轨高亮在「编辑器设置 → 演示视图设置…」里单独调）：
 
 ![演示模式](docs/images/demo_mode.png)
 
@@ -99,9 +86,8 @@ python -m unittest discover -s tests -t . -v
 
 两个平面共用同一条判定线、同样的时间网格，滚动与缩放完全同步。
 
-完整的判定语义（判定窗口、长按持续、空域逐帧检查、滑键收尾、非法谱面降级策略）
-写在 [`docs/GAMEPLAY.md`](docs/GAMEPLAY.md)；游玩器的实现与操作见
-[`docs/PLAYER.md`](docs/PLAYER.md)。
+物件的具体语义（判定拍、长按持续区间、空域边界、滑键方向、非法谱面的降级策略）
+见 [`docs/SPEC.md`](docs/SPEC.md)；编辑器与演示视图共用同一套几何与速度组规则。
 
 ---
 
@@ -120,7 +106,7 @@ python -m unittest discover -s tests -t . -v
 | 8 选择 / 复制 / 粘贴 / 镜像 / 编辑 | `model/document.py`、`ui/interactions.py` | 框选、Ctrl 对称差选择、粘贴保持轨道与横向位置、镜像沿游玩区中轴线、单选可编辑（`NoteEditDialog`） |
 | 9 速度组 | `model/speed.py`、`ui/dialogs.py::SpeedGroupDialog` | 每条流速记录（起始拍 + 倍率，支持 0/负数反向）；物件与组双向记录；删除组时物件回到默认组；位置由“判定时刻在判定线上”反推 |
 | 10 播放 / 暂停 | `audio.py`、`app.py` | 任意位置起播、延迟补偿、暂停时判定线吸附网格 |
-| 11 演示模式 + 演示视图设置 | `app.py::set_demo_mode`、`game/softview.py`、`ui/dialogs.py::DemoViewDialog` | 游玩器**软件渲染**的只读预览（不画分数 / 判定 / 元数据 / 鼠标指针），支持任意暂停 / 继续；物件厚度 / 流速 / 侧轨高亮在「编辑器设置 → 演示视图设置…」里独立于 `player.json` |
+| 11 演示模式 + 演示视图设置 | `app.py::set_demo_mode`、`preview/softview.py`、`ui/dialogs.py::DemoViewDialog` | 软件渲染的**游玩视角**只读预览（不画分数 / 判定 / 元数据 / 鼠标指针），支持任意暂停 / 继续；物件厚度 / 流速 / 侧轨高亮在「编辑器设置 → 演示视图设置…」里单独调 |
 | 12 节拍音 | `metronome.py::effect_events/effect_samples`、`audio.py::StretchedSoundBackend` | 「视图 → 节拍音」：关闭（默认）/ 小节音 / 节拍音；时刻预先算好并混进歌曲输出（慢放不改变这声的长度，极高 BPM / 掉帧不漏响） |
 | 13 打击音效 + 音量 | `metronome.py::effect_events/hit_samples`、`ui/dialogs.py::VolumeDialog` | 「音效」菜单：打击音效开关、节拍音模式、音量…（音乐 / 节拍音 / 打击音，写入谱面 `editor` 段；时刻表按编辑 / 设置增量维护） |
 | 14 侧轨高亮 / 放大 / 滚动条反向 | `ui/renderer.py`、`config.py`、`ui/view.py` | 视图菜单「侧轨高亮」（第 1 / 6 轨暗紫）；最大放大到 0.2 秒；右侧滚动条方向反向（1 = 曲首） |
@@ -130,7 +116,7 @@ python -m unittest discover -s tests -t . -v
 > 共用同一套几何 —— 详见 [`docs/DESIGN.md`](docs/DESIGN.md) 的“非单调速度”一节与
 > [`docs/VERIFICATION.md`](docs/VERIFICATION.md) 的专项验证。
 
-完整逐条规格见 [`docs/SPEC.md`](docs/SPEC.md)，玩法与判定规则见 [`docs/GAMEPLAY.md`](docs/GAMEPLAY.md)，
+完整逐条规格见 [`docs/SPEC.md`](docs/SPEC.md)，
 数据结构见 [`docs/CHART_FORMAT.md`](docs/CHART_FORMAT.md)，
 操作说明见 [`docs/USER_GUIDE.md`](docs/USER_GUIDE.md)，架构设计见 [`docs/DESIGN.md`](docs/DESIGN.md)。
 
@@ -151,13 +137,13 @@ src/rhythm_editor/
     config.py            常量与默认值
     demo.py              示例谱面构造 + 无界面自检
     global_settings.py   全局编辑器设置（用户配置目录）
-    settings_store.py    设置文件的路径解析与容错读写（编辑器 / 游玩器共用）
+    settings_store.py    设置文件的路径解析与容错读写
     metronome.py         节拍音 + 打击音效
     io/chart_io.py       谱面 JSON 读写、音频复制
     model/               时间轴、物件、速度组、分段序列公共操作、谱面、文档（撤销）
     ui/                  主题、视图变换、画布差分场景、渲染器、工具栏、对话框、交互状态机
-    game/                游玩器：判定、3D 布局、共用几何（frame.py）、
-                         Panda3D / OpenGL / 软件渲染、贴图、设置、pygame 外壳
+    preview/             演示视图：3D 布局与投影、物件几何、贴图、软件渲染
+assets/textures/preview/ 演示视图的贴图（tools/make_preview_textures.py 生成）
 tests/                   unittest 测试（含真实 Tk 画布与 headless pygame 测试）
 tools/                   素材生成、截图、验收、性能基准与音频检查脚本
 ```
@@ -170,6 +156,8 @@ tools/                   素材生成、截图、验收、性能基准与音频�
 * 界面使用标准库 `tkinter`；**不需要**任何第三方包即可完整编辑
 * 音频：`pygame-ce`（`requirements.txt` 里已列出，`pip install -r requirements.txt` 即可；
   本仓库的 `.venv` 里已安装 2.5.8）
+* 演示模式：同样依赖 `pygame-ce`（软件渲染离屏画面）；没装时编辑器照常可用，
+  只提示演示模式不可用
 
 若当前 Python 版本暂时没有 pygame 轮子，编辑器会自动退化为静音时钟后端，
 状态栏会明确提示；滚动、缩放、播放进度、编辑功能全部照常工作。

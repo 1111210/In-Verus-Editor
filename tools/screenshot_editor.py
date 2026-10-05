@@ -25,10 +25,10 @@ from _common import ROOT, add_paths, use_utf8_console
 add_paths()
 use_utf8_console()
 
-from rhythm_editor import config  # noqa: E402
-from rhythm_editor import global_settings  # noqa: E402
-from rhythm_editor.app import EditorApp  # noqa: E402
-from rhythm_editor.demo import write_demo_chart  # noqa: E402
+import config  # noqa: E402
+import global_settings  # noqa: E402
+from app import EditorApp  # noqa: E402
+from demo import write_demo_chart  # noqa: E402
 from winshot import capture_to_png_smart  # noqa: E402
 
 

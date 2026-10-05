@@ -9,9 +9,9 @@ import unittest
 
 sys.path.insert(0, os.path.join(os.path.dirname(os.path.dirname(os.path.abspath(__file__))), "src"))
 
-from rhythm_editor.demo import build_demo_chart, selftest, write_demo_chart
-from rhythm_editor.io.chart_io import load_chart
-from rhythm_editor.model.validate import validate_chart
+from demo import build_demo_chart, selftest, write_demo_chart
+from chart_io import load_chart
+from model.validate import validate_chart
 
 
 class DemoTests(unittest.TestCase):
