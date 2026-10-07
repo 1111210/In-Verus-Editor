@@ -57,6 +57,7 @@ from .geometry import (
     note_in_time,
     polygon_overlap,
     region_edges,
+    region_beat_samples,
     sample_beats,
 )
 from .scene import Scene
@@ -693,6 +694,7 @@ class Renderer:
     def _region_may_be_visible(
         self,
         note: MouseRegion,
+        chart: Chart,
         group: SpeedGroup,
         view: ViewState,
         y_min: float,
@@ -712,10 +714,30 @@ class Renderer:
             return not (
                 note.tail_beat < span_low - margin or note.head_beat > span_high + margin
             )
+        if group.min_multiplier > 0.0:
+            # 流速全为正：位置对拍单调。把“可视秒数”按**最小滚动速度**折算成拍范围，
+            # 整段都在这个范围之外的区域直接排除 —— 否则每个远处的区域都要从判定线
+            # 积分过去，谱面里长空域多时开销很大。
+            timing = chart.timing
+            now = float(view.current_beat)
+            near_end = note.head_beat if note.head_beat > now else note.tail_beat
+            low_beat, high_beat = (now, near_end) if now <= near_end else (near_end, now)
+            slowest = group.min_multiplier * timing.min_seconds_per_beat(
+                low_beat, high_beat, now
+            )
+            if slowest > 0.0:
+                px_per_second = max(1e-6, view.px_per_second())
+                seconds_above = float(view.zoom_seconds)
+                seconds_below = (
+                    view.layout.play_bottom - view.layout.judgment_y
+                ) / px_per_second
+                slack = (max(seconds_above, seconds_below) + 1.0) / slowest
+                if note.tail_beat < now - slack or note.head_beat > now + slack:
+                    return False
         loudness = max(1.0, (y_max - y_min))
         low, high = y_min - loudness * 0.2, y_max + loudness * 0.2
-        for beat, _progress in sample_beats(note.beat_start, note.beat_end, group, 6):
-            if low <= view.note_y(beat, group) <= high:
+        for _beat, _progress, y in region_beat_samples(note, chart, view, 6):
+            if low <= y <= high:
                 return True
         return False
 
@@ -758,7 +780,7 @@ class Renderer:
     ):
         """空域 / 禁区的可见多边形、原始边界点与包围盒；完全在屏幕外时返回 ``None``。"""
         group = self._group(chart, note)
-        if not self._region_may_be_visible(note, group, view, y_min, y_max):
+        if not self._region_may_be_visible(note, chart, group, view, y_min, y_max):
             return None
         samples = self._region_sample_count(note, group, view, samples)
         points = self._region_points(note, chart, view, samples)
@@ -819,7 +841,7 @@ class Renderer:
                     or bounds_a[1] > bounds_b[3] or bounds_b[1] > bounds_a[3]
                 ):
                     continue
-                patch = polygon_overlap(poly_a, poly_b)
+                patch = polygon_overlap(poly_a, poly_b, band=(y_min, y_max))
                 if patch is None:
                     continue
                 self.scene.polygon(

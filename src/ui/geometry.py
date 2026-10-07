@@ -25,6 +25,9 @@ TAP_MIN_PX = 9.0
 SLIDE_MIN_PX = 22.0
 REGION_SAMPLES = 40
 MIN_SLIDE_PX = 18.0
+# 半透明重叠补丁的行扫描上限：正常输入远低于它（多边形已裁剪到鼠标平面），
+# 这里只是兜底，避免异常输入生成上万多边形点
+MAX_OVERLAP_ROWS = 600
 
 Bounds = Tuple[float, float, float, float]
 Point = Tuple[float, float]
@@ -34,6 +37,16 @@ def mouse_pane_rect(view: ViewState) -> Bounds:
     """鼠标平面在屏幕上的显示范围（只在横向裁剪，y 方向不限制）。"""
     left, right = view.layout.pane_mouse
     return (float(left), -1e9, float(right), 1e9)
+
+
+def visible_y_band(view: ViewState, margin: float = 120.0) -> Tuple[float, float]:
+    """纵向“值得保留采样点 / 需要参与叠加”的范围：游玩区上下各留一点余量。
+
+    空域 / 禁区在屏幕外的连续段只用首尾两点表示（见
+    :func:`region_beat_samples`），这里就是判定“在不在屏幕内”的那条带。
+    """
+    layout = view.layout
+    return (layout.play_top - margin, layout.play_bottom + margin)
 
 
 def clip_bounds(bounds: Bounds, rect: Bounds) -> Optional[Bounds]:
@@ -240,15 +253,117 @@ def slide_bounds(note: MouseSlide, chart: Chart, view: ViewState) -> Bounds:
 def region_edges(
     note: MouseRegion, chart: Chart, view: ViewState, samples: int = REGION_SAMPLES
 ) -> Tuple[List[Point], List[Point]]:
-    """空域的左右边界点列（未裁剪，从开头到结尾）。"""
-    group = chart.group_by_id(note.group)
+    """空域的左右边界点列（未裁剪，从开头到结尾）。
+
+    采样点只保留屏幕附近的部分（见 :func:`region_beat_samples`）：
+    长空域 / 禁区加上大量速度段时，屏幕外的段不会产出成百上千个无用点。
+    """
     left_edge: List[Point] = []
     right_edge: List[Point] = []
-    for beat, progress in sample_beats(note.beat_start, note.beat_end, group, samples):
-        y = view.note_y(beat, group)
+    for beat, progress, y in region_beat_samples(note, chart, view, samples):
         left_edge.append((view.norm_to_x(note.left.value_at(progress)), y))
         right_edge.append((view.norm_to_x(note.right.value_at(progress)), y))
     return left_edge, right_edge
+
+
+def region_beat_samples(
+    note: MouseRegion, chart: Chart, view: ViewState, samples: int = REGION_SAMPLES
+):
+    """逐点给出空域/禁区的 ``(beat, progress, y)``（按拍升序）。
+
+    长空域 / 禁区 + 大量速度段的关键约束，以及这里的做法：
+
+    * **断点** = 两端 ∪ 速度段边界 ∪ BPM 段边界。段内流速与每拍秒数都是常数，
+      ``y`` 随拍**线性**，所以折线用这些点表示就是精确的（变速 / BPM 变化不糊）；
+    * 距离按拍**增量积分**（每段一次乘法），整体 O(段数)，与空域跨度无关；
+    * 与可视带不相交的连续段只保留首尾两个点（段内线性 ⇒ 连接的直线仍在该侧，
+      形状不变），不再给屏幕外成百上千个段边界分点；
+    * 与可视带相交的段按**屏幕高度**细分，``samples`` 是所有细分点的总预算 ——
+      一个空域被流速推成多段、几段同时可见时，每段都会单独细分，不会丢。
+    """
+    group = chart.group_by_id(note.group)
+    timing = chart.timing
+    start, end = float(note.beat_start), float(note.beat_end)
+    span = end - start
+    if abs(span) < 1e-12:
+        yield start, 0.0, view.note_y(start, group)
+        return
+    low, high = visible_y_band(view)
+    low_beat, high_beat = (start, end) if start <= end else (end, start)
+    cuts = {start, end}
+    cuts.update(group.segment_starts_between(low_beat, high_beat))
+    cuts.update(timing.segment_starts_between(low_beat, high_beat))
+    ordered = sorted(cuts)
+
+    judgment_y = view.layout.judgment_y
+    px_per_second = view.px_per_second()
+    previous_beat = float(view.current_beat)
+    distance_seconds = 0.0
+    ys: List[float] = []
+    for index, beat in enumerate(ordered):
+        if index == 0:
+            # 第一段是「判定线 → 第一个断点」，可能跨好几个速度段：正常积分
+            distance_seconds += group.scroll_seconds(timing, previous_beat, beat)
+        else:
+            # 相邻断点之间 v 与 spb 都是常数：直接相乘，避免每点都走一遍积分
+            distance_seconds += (
+                group.multiplier_at(previous_beat)
+                * timing.seconds_per_beat(previous_beat)
+                * (beat - previous_beat)
+            )
+        previous_beat = beat
+        ys.append(judgment_y - distance_seconds * px_per_second)
+
+    budget = max(2, int(samples))
+    emitted: List[Tuple[float, float, float]] = []
+    run: List[int] = []          # 连续落在可视带同一侧的段（只记端点下标）
+    run_side = 0
+
+    def progress_of(beat: float) -> float:
+        return (beat - start) / span
+
+    def push_point(index: int) -> None:
+        beat, y = ordered[index], ys[index]
+        if emitted and abs(emitted[-1][0] - beat) < 1e-9:
+            return
+        emitted.append((beat, progress_of(beat), y))
+
+    def flush_run() -> None:
+        nonlocal run, run_side
+        if run:
+            push_point(run[0])
+            if len(run) > 1:
+                push_point(run[-1])
+            run = []
+        run_side = 0
+
+    for index in range(len(ordered) - 1):
+        y_a, y_b = ys[index], ys[index + 1]
+        piece_low, piece_high = (y_a, y_b) if y_a <= y_b else (y_b, y_a)
+        if piece_high < low or piece_low > high:
+            side = -1 if piece_high < low else 1
+            if side != run_side:
+                flush_run()
+                run_side = side
+            run.append(index)
+            run.append(index + 1)
+            continue
+        flush_run()
+        push_point(index)
+        visible_px = min(piece_high, high) - max(piece_low, low)
+        steps = min(budget, max(1, int(visible_px / 18.0) + 1))
+        for step in range(1, steps):
+            ratio = step / steps
+            beat = ordered[index] + (ordered[index + 1] - ordered[index]) * ratio
+            y = y_a + (y_b - y_a) * ratio
+            progress = progress_of(beat)
+            emitted.append((beat, progress, y))
+        budget -= max(0, steps - 1)
+        push_point(index + 1)
+    flush_run()
+    emitted.sort(key=lambda item: item[0])
+    for item in emitted:
+        yield item
 
 
 def region_polygon(note: MouseRegion, chart: Chart, view: ViewState, samples: int = REGION_SAMPLES) -> List[Point]:
@@ -277,9 +392,10 @@ def sample_beats(
     beats = {float(beat_start), float(beat_end)}
     for i in range(samples + 1):
         beats.add(float(beat_start) + span * i / samples)
-    for segment in group.segments:
-        if min(beat_start, beat_end) < segment.start_beat < max(beat_start, beat_end):
-            beats.add(float(segment.start_beat))
+    for start in group.segment_starts_between(
+        min(beat_start, beat_end), max(beat_start, beat_end)
+    ):
+        beats.add(float(start))
     ordered = sorted(beats)
     return [(beat, (beat - beat_start) / span) for beat in ordered]
 
@@ -332,20 +448,33 @@ def polygon_row_intervals(
 
 
 def polygon_overlap(
-    first: Sequence[Point], second: Sequence[Point], step: float = 3.0
+    first: Sequence[Point],
+    second: Sequence[Point],
+    step: float = 3.0,
+    band: Optional[Tuple[float, float]] = None,
 ) -> Optional[List[Point]]:
     """两个简单多边形的交集多边形；无法用单一区间表示时返回 ``None``。
 
     逐行扫描：每行取两个多边形的横向区间求交，交集必须**恰好一段**，
     结果拼成一个左右两条边的多边形。用于把两层半透明填充的重叠处补成合成色。
+    ``band`` 给出真正需要绘制的纵向范围（屏幕），扫描只在这个范围内进行 ——
+    长空域 / 禁区被速度组推到很远时，包围盒可能高达几万像素。
     """
     if len(first) < 3 or len(second) < 3:
         return None
-    ys = [p[1] for p in first] + [p[1] for p in second]
-    top, bottom = min(ys), max(ys)
+    # 交集只可能落在两个包围盒的**交集**里：先取包围盒交集，避免长空域 /
+    # 禁区被扫描几万行（那是纯粹的浪费，还会生成巨大的多边形）
+    first_ys = [p[1] for p in first]
+    second_ys = [p[1] for p in second]
+    top = max(min(first_ys), min(second_ys))
+    bottom = min(max(first_ys), max(second_ys))
+    if band is not None:
+        top = max(top, float(band[0]))
+        bottom = min(bottom, float(band[1]))
     if bottom - top < 2.0:
         return None
     rows = max(2, int((bottom - top) / max(1.0, float(step))))
+    rows = min(rows, MAX_OVERLAP_ROWS)
     left_points: List[Point] = []
     right_points: List[Point] = []
     started = False

@@ -188,13 +188,21 @@ def region_samples(
     steps = max(1, int(samples))
     for index in range(1, steps):
         beats.add(start + span_beats * index / steps)
-    for segment in group.segments:
-        if min(start, end) < segment.start_beat < max(start, end):
-            beats.add(float(segment.start_beat))
+    for cut in group.segment_starts_between(min(start, end), max(start, end)):
+        beats.add(float(cut))
     if min(start, end) < now_beat < max(start, end):
         beats.add(float(now_beat))       # 时间下界也作为采样点：截断位置精确
-    points = [(beat, scroll_ms(chart, group, now_ms, beat)) for beat in sorted(beats)]
-    points = [item for item in points if item[0] >= now_beat - 1e-9]
+    # 距离按拍**增量积分**：相邻采样点之间只积分一小段，而不是每个点都从判定时刻
+    # 重新积分一遍 —— 空域很长、速度段很多时，后者的开销是「采样点数 × 段数」。
+    points: List[Tuple[float, float]] = []
+    previous_beat = now_beat
+    distance_ms = 0.0
+    for beat in sorted(beats):
+        if beat < now_beat - 1e-9:
+            continue
+        distance_ms += group.scroll_seconds(timing, previous_beat, beat) * 1000.0
+        previous_beat = beat
+        points.append((beat, distance_ms))
     if len(points) < 2:
         return []
     low, high = float(near_ms), float(span_ms)
