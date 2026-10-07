@@ -21,7 +21,7 @@
 
 * 滑键与空域的**任意时刻**都不能被禁区**完全覆盖**（横向范围整段被盖住）；
 * 覆盖按**并集**计算：多个禁区在同一时刻的横向范围拼起来也算数；
-* 与滑键 - 空域规则一致，**禁区的开始 / 结束时刻不计入**。
+* 禁区的**开始 / 结束时刻同样计入**（那一刻禁区已经生效）。
 
 说明：规则的判定对象是“判定时刻”，速度组只影响视觉表现，不影响判定时间。
 """
@@ -228,11 +228,11 @@ def _check_beats(start: float, end: float) -> List[float]:
 def _forbidden_active(
     buckets: Dict[int, List[MouseRegion]], beat: float
 ) -> List[MouseRegion]:
-    """该时刻“生效”的禁区（与滑键 - 空域规则一致：开始 / 结束时刻不计入）。"""
+    """该时刻“生效”的禁区：**包含开始 / 结束时刻**（端点那一刻也算盖住）。"""
     return [
         zone
         for zone in buckets.get(int(beat // REGION_BUCKET_BEATS), ())
-        if region_active_at(zone, beat)
+        if zone.beat_start - EPS <= beat <= zone.beat_end + EPS
     ]
 
 
@@ -241,6 +241,7 @@ def check_forbidden(chart: Chart) -> List[Issue]:
 
     对空域在其时间跨度内采样（``_check_beats``），对滑键检查它的判定时刻；
     每一时刻把生效禁区的横向范围取**并集**，并集完整盖住目标范围才算问题。
+    禁区的开始 / 结束时刻**计入**（那一刻禁区已经生效）。
     """
     issues: List[Issue] = []
     zones = [n for n in chart.mouse_notes if isinstance(n, ForbiddenRegion)]
@@ -311,7 +312,7 @@ def format_report(chart: Chart, issues: Sequence[Issue]) -> str:
         "  · 滑键所在时刻若落在空域内部（开始 / 结束时刻不算），",
         "    则滑键横向范围必须与该空域相交或紧贴",
         "  · 滑键与空域的任意时刻都不能被禁区完全覆盖；多个禁区的横向范围会合并计算",
-        "    （禁区的开始 / 结束时刻同样不计入）",
+        "    （禁区的开始 / 结束时刻同样计入）",
         "",
     ]
     lane_issues = [i for i in issues if i.kind == ISSUE_LANE]

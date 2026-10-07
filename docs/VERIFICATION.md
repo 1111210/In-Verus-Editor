@@ -139,7 +139,7 @@ python tools/check_audio.py
 | 弹出窗口只有一个确认按钮（没有「取消」） | `test_dialogs.py::DialogButtonTests` |
 | 鼠标图案的贴图中心对齐鼠标运动平面（滑键贴图双倍高、下半透明，可见楔形仍在平面上方） | `test_preview_render.py::TextureTests::test_real_assets_have_expected_geometry`、`test_preview_render.py::SoftwareViewTests` |
 | 空域 / 禁区：同一套几何与放置流程，禁区画成红色，两层半透明填充重叠处按合成色显示 | `test_model_notes.py::MouseNoteTests::test_forbidden_region_geometry_and_clone`、`test_editor_render.py::EditorRenderTests::test_forbidden_region_uses_red_fill`、`test_preview_render.py::SoftwareViewTests::test_forbidden_zone_is_red_and_blends_with_region` |
-| 禁区覆盖：滑键与空域的任意时刻都不能被（多个）禁区完全盖住；只盖一部分、或在禁区起止时刻都不算 | `test_model_notes.py::ValidateTests::test_forbidden_covers_slide_or_region`、`test_forbidden_union_of_zones_counts`、`test_forbidden_region_span_is_checked_everywhere`、`test_forbidden_start_and_end_moments_are_excluded` |
+| 禁区覆盖：滑键与空域的任意时刻都不能被（多个）禁区完全盖住（含禁区起止时刻）；只盖一部分不算 | `test_model_notes.py::ValidateTests::test_forbidden_covers_slide_or_region`、`test_forbidden_union_of_zones_counts`、`test_forbidden_region_span_is_checked_everywhere`、`test_forbidden_start_and_end_moments_count` |
 | 速度组在演示视图里生效（位置按 ∫v、剔除与排序也按滚动距离） | `test_preview_render.py::SoftwareViewTests::test_demo_view_applies_speed_groups`、`test_model_timing.py::SpeedGroupTests` |
 | 反向流速的物件在判定线之前（更靠近摄像头）照常绘制，超出相机可视下界才剔除 | `test_preview_render.py::ProjectionTests::test_projection_and_visible_bounds`、`test_preview_render.py::SoftwareViewTests::test_reverse_notes_draw_in_front_of_the_judgement_line` |
 | 宽窗口下游玩区水平拉伸铺满可用宽度（6K 平面接近窗口左右边缘） | `test_preview_render.py::ProjectionTests::test_field_fills_window_and_stretches_on_wide_screens` |
