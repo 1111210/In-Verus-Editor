@@ -423,3 +423,14 @@ def note_from_dict(data: Dict[str, Any]) -> Note:
 
 def sort_key(note: Note) -> Tuple[float, float, str]:
     return (note.head_beat, note.tail_beat, note.id)
+
+
+def clip_head(data: Dict[str, Any]) -> float:
+    """剪贴板 / 快照条目的开头时刻。
+
+    区间物件（长按 / 空域 / 禁区）只有 ``beat_start``，瞬时物件只有 ``beat``；
+    这里按字段判断，新增同类物件时不用再改（否则粘贴会按错误的时间偏移落点）。
+    """
+    if "beat_start" in data:
+        return float(data.get("beat_start", 0.0))
+    return float(data.get("beat", 0.0))

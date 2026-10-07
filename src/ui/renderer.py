@@ -1162,9 +1162,9 @@ class Renderer:
             self._draw_clipboard_ghost(chart, view, pending)
 
     def _draw_clipboard_ghost(self, chart: Chart, view: ViewState, pending: PendingPreview) -> None:
-        from model.notes import note_from_dict
+        from model.notes import clip_head, note_from_dict
 
-        heads = [float(d.get("beat", d.get("beat_start", 0.0))) for d in pending.clipboard]
+        heads = [clip_head(d) for d in pending.clipboard]
         base = pending.clipboard_beat - (min(heads) if heads else 0.0)
         theme = self.theme
         for index, data in enumerate(pending.clipboard):

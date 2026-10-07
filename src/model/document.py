@@ -29,9 +29,8 @@ from typing import Any, Callable, Dict, Iterable, List, Optional, Sequence, Set,
 from .chart import Chart
 from .notes import (
     LaneNote,
-    NOTE_LANE,
-    NOTE_REGION,
     Note,
+    clip_head,
     note_from_dict,
 )
 
@@ -275,7 +274,7 @@ class Document:
         """把剪贴板内容粘贴到 ``base_beat``：轨道/水平位置不动，只平移时间。"""
         if not self.clipboard:
             return []
-        heads = [_clip_head(d) for d in self.clipboard]
+        heads = [clip_head(d) for d in self.clipboard]
         offset = float(base_beat) - min(heads)
         selection_before = set(self.selection)
         created: List[Note] = []
@@ -353,11 +352,3 @@ class Document:
     def undo_records_size(self) -> int:
         """撤销栈里累计记录的物件条目数（内存诊断用）。"""
         return sum(record.size for record in self._undo)
-
-
-def _clip_head(data: Dict[str, Any]) -> float:
-    if data.get("type") == NOTE_LANE:
-        return float(data.get("beat_start", 0.0))
-    if data.get("type") == NOTE_REGION:
-        return float(data.get("beat_start", 0.0))
-    return float(data.get("beat", 0.0))
