@@ -11,11 +11,17 @@
 * **端点相接（紧贴）不算冲突**：例如长按在第 10 拍结束、另一个按键正好在第 10 拍 —— 允许。
   但瞬时按键落在长按/多轨按键的**内部**要报错。
 
-鼠标平面：**只检查滑键**（禁区不参与检查）。
+鼠标平面：滑键与空域，外加禁区覆盖检查。
 
 * 滑键所在时刻如果没有任何空域 —— 通过；
 * 如果该时刻存在空域（**空域的开始 / 结束时刻不算“同时存在”**），
   则滑键的横向范围必须与该空域的横向范围**相交或紧贴**，否则报错。
+
+禁区（与滑键 / 空域相对）：
+
+* 滑键与空域的**任意时刻**都不能被禁区**完全覆盖**（横向范围整段被盖住）；
+* 覆盖按**并集**计算：多个禁区在同一时刻的横向范围拼起来也算数；
+* 与滑键 - 空域规则一致，**禁区的开始 / 结束时刻不计入**。
 
 说明：规则的判定对象是“判定时刻”，速度组只影响视觉表现，不影响判定时间。
 """
@@ -30,9 +36,13 @@ from .notes import ForbiddenRegion, LaneNote, MouseRegion, MouseSlide, Note
 
 EPS = 1e-7
 REGION_BUCKET_BEATS = 4.0   # 空域按 4 拍分桶，避免大谱面上滑键检查退化成 O(n·m)
+# 禁区覆盖检查：空域在每个检查时刻上采样（每拍多少个点 / 最多多少个点）
+FORBIDDEN_SAMPLES_PER_BEAT = 4.0
+FORBIDDEN_MAX_SAMPLES = 400
 
 ISSUE_LANE = "lane_overlap"
 ISSUE_SLIDE = "slide_region"
+ISSUE_FORBIDDEN = "forbidden_cover"
 
 
 @dataclass
@@ -65,6 +75,22 @@ def ranges_touch_or_overlap(lo1: float, hi1: float, lo2: float, hi2: float,
                             eps: float = 1e-6) -> bool:
     """两个横向范围是否相交或紧贴。"""
     return not (hi1 < lo2 - eps or hi2 < lo1 - eps)
+
+
+def intervals_cover(
+    lo: float, hi: float, intervals: Sequence[Tuple[float, float]], eps: float = 1e-6
+) -> bool:
+    """``[lo, hi]`` 是否被若干区间（取并集）**完全覆盖**。"""
+    if hi < lo:
+        lo, hi = hi, lo
+    merged: List[Tuple[float, float]] = []
+    for raw_lo, raw_hi in sorted(intervals):
+        start, end = min(raw_lo, raw_hi), max(raw_lo, raw_hi)
+        if merged and start <= merged[-1][1] + eps:
+            merged[-1] = (merged[-1][0], max(merged[-1][1], end))
+        else:
+            merged.append((start, end))
+    return any(start <= lo + eps and hi <= end + eps for start, end in merged)
 
 
 def region_active_at(region: MouseRegion, beat: float, eps: float = EPS) -> bool:
@@ -187,7 +213,86 @@ def check_slides(chart: Chart) -> List[Issue]:
 
 def validate_chart(chart: Chart) -> List[Issue]:
     """执行全部检查，返回问题列表（空列表 = 通过）。"""
-    return check_lane_notes(chart) + check_slides(chart)
+    return check_lane_notes(chart) + check_slides(chart) + check_forbidden(chart)
+
+
+def _check_beats(start: float, end: float) -> List[float]:
+    """覆盖检查的采样拍：均匀取样，跨度大时限制上限。"""
+    start, end = float(start), float(end)
+    if end - start <= EPS:
+        return [start]
+    count = int(min(FORBIDDEN_MAX_SAMPLES, max(3, int((end - start) * FORBIDDEN_SAMPLES_PER_BEAT) + 1)))
+    return [start + (end - start) * index / (count - 1) for index in range(count)]
+
+
+def _forbidden_active(
+    buckets: Dict[int, List[MouseRegion]], beat: float
+) -> List[MouseRegion]:
+    """该时刻“生效”的禁区（与滑键 - 空域规则一致：开始 / 结束时刻不计入）。"""
+    return [
+        zone
+        for zone in buckets.get(int(beat // REGION_BUCKET_BEATS), ())
+        if region_active_at(zone, beat)
+    ]
+
+
+def check_forbidden(chart: Chart) -> List[Issue]:
+    """禁区覆盖：滑键与空域在任意时刻都不能被（一个或多个）禁区完全覆盖。
+
+    对空域在其时间跨度内采样（``_check_beats``），对滑键检查它的判定时刻；
+    每一时刻把生效禁区的横向范围取**并集**，并集完整盖住目标范围才算问题。
+    """
+    issues: List[Issue] = []
+    zones = [n for n in chart.mouse_notes if isinstance(n, ForbiddenRegion)]
+    if not zones:
+        return issues
+    targets: List[MouseRegion | MouseSlide] = [
+        n for n in chart.mouse_notes
+        if isinstance(n, MouseSlide)
+        or (isinstance(n, MouseRegion) and not isinstance(n, ForbiddenRegion))
+    ]
+    if not targets:
+        return issues
+    buckets = _build_region_buckets(zones)
+    for target in targets:
+        if isinstance(target, MouseSlide):
+            beats = [target.beat]
+        else:
+            beats = _check_beats(target.beat_start, target.beat_end)
+        for beat in beats:
+            active = _forbidden_active(buckets, beat)
+            if not active:
+                continue
+            if isinstance(target, MouseSlide):
+                lo, hi = target.x_range()
+            else:
+                lo, hi = target.left_at(beat), target.right_at(beat)
+            intervals = [
+                (zone.left_at(beat), zone.right_at(beat)) for zone in active
+            ]
+            if not intervals_cover(lo, hi, intervals):
+                continue
+            x_lo, x_hi = min(lo, hi), max(lo, hi)
+            zone_ids = "、".join(zone.id for zone in active)
+            if isinstance(target, MouseSlide):
+                message = (
+                    f"{target.id}（{_beat_text(target)}，横向 {x_lo:g} → {x_hi:g}）："
+                    f"被禁区 {zone_ids} 完全覆盖"
+                )
+            else:
+                message = (
+                    f"{target.id}（{_beat_text(target)}）：第 {beat:g} 拍横向 "
+                    f"{x_lo:g} → {x_hi:g} 被禁区 {zone_ids} 完全覆盖"
+                )
+            issues.append(
+                Issue(
+                    ISSUE_FORBIDDEN,
+                    message,
+                    (target.id, *(zone.id for zone in active)),
+                )
+            )
+            break
+    return issues
 
 
 # ------------------------------------------------------------------ 报告
@@ -205,10 +310,13 @@ def format_report(chart: Chart, issues: Sequence[Issue]) -> str:
         "    （端点相接的“紧贴”不算冲突，但瞬时按键落在长按内部算冲突）",
         "  · 滑键所在时刻若落在空域内部（开始 / 结束时刻不算），",
         "    则滑键横向范围必须与该空域相交或紧贴",
+        "  · 滑键与空域的任意时刻都不能被禁区完全覆盖；多个禁区的横向范围会合并计算",
+        "    （禁区的开始 / 结束时刻同样不计入）",
         "",
     ]
     lane_issues = [i for i in issues if i.kind == ISSUE_LANE]
     slide_issues = [i for i in issues if i.kind == ISSUE_SLIDE]
+    forbidden_issues = [i for i in issues if i.kind == ISSUE_FORBIDDEN]
     if not issues:
         lines.append("检查结果：未发现问题 ✓")
         return "\n".join(lines)
@@ -222,6 +330,11 @@ def format_report(chart: Chart, issues: Sequence[Issue]) -> str:
     if slide_issues:
         lines.append(f"【滑键与空域】共 {len(slide_issues)} 处")
         for index, issue in enumerate(slide_issues, 1):
+            lines.append(f"  {index}. {issue.message}")
+        lines.append("")
+    if forbidden_issues:
+        lines.append(f"【禁区覆盖】共 {len(forbidden_issues)} 处")
+        for index, issue in enumerate(forbidden_issues, 1):
             lines.append(f"  {index}. {issue.message}")
         lines.append("")
     return "\n".join(lines)
