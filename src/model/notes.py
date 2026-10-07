@@ -2,7 +2,8 @@
 
 三件套：
 * ``LaneNote``     —— 6K 下落式物件：单轨 / 多轨（横跨相邻多条轨道）以及对应的长按。
-* ``MouseRegion``  —— 空域：左/右两条边界曲线（首尾位置 + 线型）。
+* ``MouseRegion``  —— 空域：左/右两条边界曲线（首尾位置 + 线型），期间鼠标需留在区域内。
+* ``ForbiddenRegion`` —— 禁区：几何与编辑逻辑和空域完全相同，但属于必须避开的区域。
 * ``MouseSlide``   —— 鼠标滑键：到达判定线时需在范围内朝指定方向滑动。
 
 所有物件都记录 ``group``（所属速度组 id），速度组同时记录自己包含的物件 id，
@@ -18,8 +19,8 @@ import config
 
 NOTE_LANE = "lane"
 NOTE_REGION = "region"
+NOTE_FORBIDDEN = "forbidden"
 NOTE_SLIDE = "slide"
-NOTE_CLICK = "click"
 
 
 def ease_value(ease: str, progress: float) -> float:
@@ -270,13 +271,29 @@ class MouseRegion(MouseNote):
     def to_dict(self) -> Dict[str, Any]:
         return {
             "id": self.id,
-            "type": NOTE_REGION,
+            "type": self.kind,
             "beat_start": round(self.beat_start, 9),
             "beat_end": round(self.beat_end, 9),
             "left": self.left.to_dict(),
             "right": self.right.to_dict(),
             "group": self.group,
         }
+
+
+class ForbiddenRegion(MouseRegion):
+    """禁区：与空域完全相同的几何与放置 / 编辑 / 拖动逻辑，但必须避开。"""
+
+    kind = NOTE_FORBIDDEN
+
+    def clone(self, new_id: str, delta_beats: float = 0.0) -> "ForbiddenRegion":
+        return ForbiddenRegion(
+            new_id,
+            self.beat_start + delta_beats,
+            self.beat_end + delta_beats,
+            replace(self.left),
+            replace(self.right),
+            self.group,
+        )
 
 
 class MouseSlide(MouseNote):
@@ -335,79 +352,17 @@ class MouseSlide(MouseNote):
         }
 
 
-class MouseClick(MouseNote):
-    """鼠标点击按键：到达判定线时需要在它的横向范围内点击（左键 / 右键均可）。
-
-    * ``center`` —— 中心横坐标（0..1 归一化，允许超出）
-    * ``radius`` —— 横向半宽（归一化）；范围即 ``center ± radius``。
-      渲染成与 6K 按键同款的长方形：宽度 = 2×radius，高度固定。
-    """
-
-    kind = NOTE_CLICK
-
-    def __init__(
-        self,
-        note_id: str,
-        beat: float,
-        center: float,
-        radius: float = config.MIN_CLICK_RADIUS,
-        group: int = config.DEFAULT_GROUP_ID,
-    ) -> None:
-        super().__init__(note_id, group)
-        self.beat = float(beat)
-        self.center = float(center)
-        self.radius = max(float(config.MIN_CLICK_RADIUS), float(radius))
-
-    @property
-    def x_start(self) -> float:
-        return self.center - self.radius
-
-    @property
-    def x_end(self) -> float:
-        return self.center + self.radius
-
-    @property
-    def head_beat(self) -> float:
-        return self.beat
-
-    def x_range(self) -> Tuple[float, float]:
-        return self.x_start, self.x_end
-
-    def contains_x(self, value: float) -> bool:
-        return self.x_start - config.EPS <= value <= self.x_end + config.EPS
-
-    def shift(self, delta_beats: float) -> None:
-        self.beat += delta_beats
-
-    def clone(self, new_id: str, delta_beats: float = 0.0) -> "MouseClick":
-        return MouseClick(new_id, self.beat + delta_beats, self.center, self.radius, self.group)
-
-    def mirrored(self) -> None:
-        self.center = 1.0 - self.center
-
-    def to_dict(self) -> Dict[str, Any]:
-        return {
-            "id": self.id,
-            "type": NOTE_CLICK,
-            "beat": round(self.beat, 9),
-            "center": round(self.center, 6),
-            "radius": round(self.radius, 6),
-            "group": self.group,
-        }
-
-
 # ---------------------------------------------------------------- 图层顺序
 # 渲染（编辑器画布 / 演示视图）与命中测试共用这唯一一份定义。
 # 数值越小越先画（越靠下层），越大越靠上层：
-# 多轨长按 < 单轨长按 < 多轨单键 < 单轨单键 < 空域 < 滑键 < 鼠标点击。
+# 多轨长按 < 单轨长按 < 多轨单键 < 单轨单键 < 空域 / 禁区 < 滑键。
 LAYER_MULTI_HOLD = 0
 LAYER_SINGLE_HOLD = 1
 LAYER_MULTI_TAP = 2
 LAYER_SINGLE_TAP = 3
 LAYER_REGION = 4
 LAYER_SLIDE = 5
-LAYER_CLICK = 6
-LAYER_MAX = LAYER_CLICK
+LAYER_MAX = LAYER_SLIDE
 
 
 def layer_rank(note: Note) -> int:
@@ -420,8 +375,6 @@ def layer_rank(note: Note) -> int:
         return LAYER_REGION
     if isinstance(note, MouseSlide):
         return LAYER_SLIDE
-    if isinstance(note, MouseClick):
-        return LAYER_CLICK
     return LAYER_MULTI_HOLD
 
 
@@ -448,20 +401,21 @@ def note_from_dict(data: Dict[str, Any]) -> Note:
             BoundaryCurve.from_dict(data.get("right")),  # type: ignore[arg-type]
             group,
         )
+    if kind == NOTE_FORBIDDEN:
+        return ForbiddenRegion(
+            note_id,
+            float(data.get("beat_start", 0.0)),
+            float(data.get("beat_end", data.get("beat_start", 0.0))),
+            BoundaryCurve.from_dict(data.get("left")),  # type: ignore[arg-type]
+            BoundaryCurve.from_dict(data.get("right")),  # type: ignore[arg-type]
+            group,
+        )
     if kind == NOTE_SLIDE:
         return MouseSlide(
             note_id,
             float(data.get("beat", 0.0)),
             float(data.get("x_start", 0.0)),
             float(data.get("x_end", data.get("x_start", 0.0))),
-            group,
-        )
-    if kind == NOTE_CLICK:
-        return MouseClick(
-            note_id,
-            float(data.get("beat", 0.0)),
-            float(data.get("center", 0.5)),
-            float(data.get("radius", config.MIN_CLICK_RADIUS)),
             group,
         )
     raise ValueError(f"unknown note type: {kind!r}")

@@ -15,7 +15,7 @@ import config
 from chart_io import load_chart, save_chart
 from model.chart import Chart, EditorSettings, Metadata
 from model.document import Document
-from model.notes import BoundaryCurve, LaneNote, MouseClick, MouseRegion, MouseSlide
+from model.notes import BoundaryCurve, LaneNote, MouseRegion, MouseSlide
 from model.speed import SpeedSegment
 from model.timing import BpmSegment, TimingMap
 
@@ -105,16 +105,6 @@ def build_demo_chart() -> Chart:
 
     roundtrip_slide = MouseSlide(chart.new_note_id("M"), 55.0, 0.25, 0.75)
     chart.add(roundtrip_slide)
-
-    # 鼠标点击按键（到达判定线时需要在它的横向范围内点击，左键 / 右键均可）
-    click_specs = [
-        (12.0, 0.40, 0.15),   # 该时刻没有空域：直接点
-        (18.0, 0.50, 0.20),   # 落在空域 M1 内
-        (25.5, 0.50, 0.20),   # 落在空域 M2 内（该段是加速组）
-        (29.0, 0.60, 0.15),   # 落在空域 M3 内（边界正在收缩）
-    ]
-    for beat, center, radius in click_specs:
-        chart.add(MouseClick(chart.new_note_id("M"), beat, center, radius))
 
     # 速度组：加速 / 反向
     fast = chart.add_group("加速特效", [SpeedSegment(0.0, 1.0), SpeedSegment(24.0, 2.0), SpeedSegment(28.0, 1.0)])

@@ -27,7 +27,7 @@ python tools/acceptance.py              # 需求 → 证据清单
 [OK ] 6K 物件：单轨 / 多轨 / 长按 -- 32 个
 [OK ] 空域（半透明蓝 + 不透明左右边界 + 缓动） -- 3 个
 [OK ] 鼠标滑键（方向由首尾位置决定） -- 6 个
-[OK ] 鼠标点击按键（左右红色竖线 + 中间红色横线 + 红色实心菱形，最上层） -- 4 个
+[OK ] 禁区（与空域同一套几何与放置 / 编辑逻辑，绘制为红色） -- 示例谱面 3 个空域、0 个禁区
 [OK ] BPM 列表（第 0 拍项存在，含每小节拍数）
 [OK ] 速度组（默认组 + 特效组，含 0/负数流速）
 [OK ] 全局设置（缩放 / 网格 / 横向辅助 / 音频延迟；不写进谱面）
@@ -51,7 +51,7 @@ python -m unittest discover -s tests -t .
 | 测试文件 | 覆盖内容 |
 | --- | --- |
 | `test_model_timing.py` | BPM 列表、偏移、拍 ↔ 秒换算、网格吸附、小节线、速度组积分与非单调位置 |
-| `test_model_notes.py` | 单轨 / 多轨 / 长按、空域 / 滑键 / 鼠标点击、镜像与序列化、自动检查规则 |
+| `test_model_notes.py` | 单轨 / 多轨 / 长按、空域 / 禁区 / 滑键、镜像与序列化、自动检查规则 |
 | `test_model_chart.py` | 谱面分组与 ID、撤销 / 重做、复制粘贴、排序缓存、谱面 JSON 与音频复制 |
 | `test_settings.py` | 编辑器全局设置读写、旧存档迁移、损坏回退、演示视图参数夹取 |
 | `test_demo.py` | 示例谱面结构、内置自检、自动检查 |
@@ -73,7 +73,8 @@ python run_editor.py charts/demo/demo.json
    用「左右滑键」点击时横坐标吸附到网格线。
 4. 「视图 → 时间网格细分」选择 3 → 出现三连音网格。
 5. 「长按」：点起点后滚动、缩放，再点结束时刻（可点在鼠标区域上）→ 生成长按。
-6. 「空域」：两次点击定时间，再依次点击左右边界首尾，在对话框里选择线型。
+6. 「空域」：两次点击定时间，再依次点击左右边界首尾，在对话框里选择线型；
+   换「禁区」工具重复一次 → 同样的流程，生成红色半透明区域；与空域重叠时显示两层合成色。
 7. 「选择」框选若干物件 → `Ctrl+C`、`Ctrl+V` 后点击新时间 → 轨道与横向位置不变。
 8. `M` 镜像 → 6K 物件跨中轴线翻转，滑键方向反转。
 9. 「速度组」新建组 → 添加 `从 x 拍起，倍率 -1` → 组内物件反向运动；删除组后回到默认组。
@@ -135,7 +136,8 @@ python tools/check_audio.py
 | 判定线跟随听到的位置（延迟补偿按倍速缩放） | `test_audio.py::RateTests::test_latency_is_signed_and_scales_with_rate`、`test_editor_app.py::EditorAppTests::test_play_pause_snaps_judgment_line` |
 | 演示视图跟随编辑器独立的演示视图设置（固定软件渲染） | `test_editor_app.py::EditorAppTests::test_demo_view_settings_are_independent_and_applied` |
 | 弹出窗口只有一个确认按钮（没有「取消」） | `test_dialogs.py::DialogButtonTests` |
-| 鼠标图案的贴图中心对齐鼠标运动平面（点击上下各半；滑键贴图双倍高、下半透明，可见楔形仍在平面上方） | `test_preview_render.py::TextureTests::test_real_assets_have_expected_geometry`、`test_preview_render.py::SoftwareViewTests` |
+| 鼠标图案的贴图中心对齐鼠标运动平面（滑键贴图双倍高、下半透明，可见楔形仍在平面上方） | `test_preview_render.py::TextureTests::test_real_assets_have_expected_geometry`、`test_preview_render.py::SoftwareViewTests` |
+| 空域 / 禁区：同一套几何与放置流程，禁区画成红色，两层半透明填充重叠处按合成色显示 | `test_model_notes.py::MouseNoteTests::test_forbidden_region_geometry_and_clone`、`test_editor_render.py::EditorRenderTests::test_forbidden_region_uses_red_fill`、`test_preview_render.py::SoftwareViewTests::test_forbidden_zone_is_red_and_blends_with_region` |
 | 速度组在演示视图里生效（位置按 ∫v、剔除与排序也按滚动距离） | `test_preview_render.py::SoftwareViewTests::test_demo_view_applies_speed_groups`、`test_model_timing.py::SpeedGroupTests` |
 | 反向流速的物件在判定线之前（更靠近摄像头）照常绘制，超出相机可视下界才剔除 | `test_preview_render.py::ProjectionTests::test_projection_and_visible_bounds`、`test_preview_render.py::SoftwareViewTests::test_reverse_notes_draw_in_front_of_the_judgement_line` |
 | 宽窗口下游玩区水平拉伸铺满可用宽度（6K 平面接近窗口左右边缘） | `test_preview_render.py::ProjectionTests::test_field_fills_window_and_stretches_on_wide_screens` |

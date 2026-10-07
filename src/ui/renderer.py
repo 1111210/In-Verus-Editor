@@ -8,7 +8,7 @@
 
 渲染顺序（自下而上）：
 背景 -> 区域底色 / 轨道 -> 时间网格 -> 合法区域边界 -> 横向辅助网格
--> 物件（多轨长按 -> 单轨长按 -> 多轨单键 -> 单轨单键 -> 空域 -> 滑键 -> 点击按键）
+-> 物件（多轨长按 -> 单轨长按 -> 多轨单键 -> 单轨单键 -> 空域 / 禁区 -> 滑键）
 -> 判定线 -> 区域标题 -> 预览幽灵 / 橡皮筋 -> HUD
 
 物件的七层顺序刻意“从大到小”摆放：即使谱面故意写成非法重叠，
@@ -28,7 +28,7 @@ import config
 from model.chart import Chart
 from model.notes import (
     BoundaryCurve,
-    LAYER_CLICK,
+    ForbiddenRegion,
     LAYER_MAX,
     LAYER_MULTI_HOLD,
     LAYER_MULTI_TAP,
@@ -37,7 +37,6 @@ from model.notes import (
     LAYER_SINGLE_TAP,
     LAYER_SLIDE,
     LaneNote,
-    MouseClick,
     MouseRegion,
     MouseSlide,
     NOTE_REGION,
@@ -56,6 +55,7 @@ from .geometry import (
     hit_signature,
     mouse_pane_rect,
     note_in_time,
+    polygon_overlap,
     region_edges,
     sample_beats,
 )
@@ -73,6 +73,9 @@ GROUP_COLORS = (
     "#4dd0e1",
     "#f4a259",
 )
+
+# 每帧最多补几块“两层半透明填充重叠”的合成色（重叠本身很少见，设上限避免极端谱面卡顿）
+MAX_OVERLAP_PATCHES = 8
 
 REGION_SAMPLES = 40
 # 横向辅助网格：线距小于这个值就抽稀（等分没有上限，不能逐条画）
@@ -556,14 +559,17 @@ class Renderer:
             (LAYER_SINGLE_HOLD, lambda n, s: self._draw_lane_note(n, chart, view, s, y_min, y_max)),
             (LAYER_MULTI_TAP, lambda n, s: self._draw_lane_note(n, chart, view, s, y_min, y_max)),
             (LAYER_SINGLE_TAP, lambda n, s: self._draw_lane_note(n, chart, view, s, y_min, y_max)),
-            (LAYER_REGION,
-             lambda n, s: self._draw_region(n, chart, view, s, y_min, y_max, region_samples)),
+            (LAYER_REGION, None),          # 单独处理：填充 / 重叠合成 / 边线三遍
             (LAYER_SLIDE, lambda n, s: self._draw_slide(n, chart, view, s, y_min, y_max)),
-            (LAYER_CLICK, lambda n, s: self._draw_click(n, chart, view, s, y_min, y_max)),
         )
         for rank, draw in layers:
             self.scene.set_layer(4 + rank)
             visible = buckets[rank]
+            if rank == LAYER_REGION:
+                self._draw_region_layer(
+                    visible, chart, view, state, y_min, y_max, region_samples
+                )
+                continue
             if rank in (LAYER_MULTI_HOLD, LAYER_MULTI_TAP):
                 # 多轨物件：跨的轨道越多越先画（越靠下层），同跨度保持时间顺序
                 visible.sort(key=lambda n: n.lane_end - n.lane_start, reverse=True)
@@ -664,86 +670,6 @@ class Renderer:
                 anchor="nw",
             )
 
-    def _draw_click(
-        self,
-        note: MouseClick,
-        chart: Chart,
-        view: ViewState,
-        selected: bool,
-        y_min: float = -1e9,
-        y_max: float = 1e9,
-    ) -> None:
-        """鼠标点击按键：左右两条红色实线标出范围 + 中间一条红色横线 + 中央红色实心菱形。
-
-        三条实线的粗细都与 6K 按键的中心实线相同（``theme.note_line_width``），
-        整个物件**竖向居中**在判定时刻上（中间横线与菱形中心都落在时间网格线上）。
-        """
-        theme = self.theme
-        group = self._group(chart, note)
-        y = view.note_y(note.beat, group)
-        if y < y_min or y > y_max:
-            return
-        x = view.norm_to_x(note.center)
-        radius_px = max(1.0, float(note.radius) * view.layout.mouse_width)
-        # 高度与 6K 单键相同，且以判定时刻为垂直中点
-        top, bottom = y - TAP_MIN_PX / 2.0, y + TAP_MIN_PX / 2.0
-        x0, x1 = x - radius_px, x + radius_px
-        pane = mouse_pane_rect(view)
-        bounds = clip_bounds((x0, top, x1, bottom), pane)
-        if bounds is None:
-            return
-        self._hit_entries.append((note, bounds, None))
-        # 左右两条红色实线（= 范围边界），粗细与 6K 按键中心实线一致；
-        # 超出鼠标平面显示范围的部分裁掉，不画进 6K 区域
-        for key, edge in (("click-left", x0), ("click-right", x1)):
-            segment = clip_segment((edge, top), (edge, bottom), pane)
-            if segment is not None:
-                self.scene.line(
-                    f"{key}:{note.id}",
-                    segment[0][0], segment[0][1], segment[1][0], segment[1][1],
-                    fill=theme.click_edge,
-                    width=theme.note_line_width,
-                )
-        # 中间红色横线：连起左右两条竖线，粗细与 6K 单键的横线一致
-        segment = clip_segment((x0, y), (x1, y), pane)
-        if segment is not None:
-            self.scene.line(
-                f"click-line:{note.id}",
-                segment[0][0], segment[0][1], segment[1][0], segment[1][1],
-                fill=theme.click_edge,
-                width=theme.note_line_width,
-            )
-        # 中央红色实心菱形：尺寸固定（不随按键大小变化），中心落在判定时刻上
-        d = float(config.CLICK_DIAMOND_RADIUS_PX)
-        diamond = clip_polygon([(x - d, y), (x, y - d), (x + d, y), (x, y + d)], pane)
-        if len(diamond) >= 3:
-            self.scene.polygon(
-                f"click-diamond:{note.id}",
-                diamond,
-                fill=theme.click_diamond,
-                outline="",
-            )
-        if selected:
-            selection = clip_bounds((x0 - 4, top - 4, x1 + 4, bottom + 4), pane)
-            if selection is not None:
-                self.scene.rect(
-                    f"sel:{note.id}",
-                    *selection,
-                    fill="",
-                    outline=theme.select,
-                    width=2,
-                    dash=(4, 3),
-                )
-            self.scene.text(
-                f"lbl:{note.id}",
-                bounds[0],
-                top - 18,
-                f"{note.id} · 点击按键 · 组{note.group}",
-                fill=theme.select,
-                font=theme.font(theme.font_small),
-                anchor="nw",
-            )
-
     def _region_points(
         self,
         note: MouseRegion,
@@ -793,50 +719,137 @@ class Renderer:
                 return True
         return False
 
-    def _draw_region(
+    # ------------------------------------------------------------ 空域 / 禁区
+    @staticmethod
+    def _region_is_forbidden(note: MouseRegion) -> bool:
+        return isinstance(note, ForbiddenRegion)
+
+    def _region_fill_color(self, note: MouseRegion) -> str:
+        return self.theme.forbidden_fill if self._region_is_forbidden(note) else self.theme.region_fill
+
+    def _region_edge_color(self, note: MouseRegion) -> str:
+        return self.theme.forbidden_edge if self._region_is_forbidden(note) else self.theme.region_edge
+
+    @staticmethod
+    def _blend_over_black(top: str, bottom: str) -> str:
+        """两层半透明填充重叠处的合成色（先画底层、再叠上层、背景纯黑）。
+
+        两层的填充都用 ``stipple_fill``（50% 点阵，相位相同）：上层会把下层同位
+        置的点盖住，所以重叠处的正确颜色是 ``0.5×上层 + 0.25×下层``。
+        """
+        def rgb(value: str) -> Tuple[int, int, int]:
+            value = value.lstrip("#")
+            return int(value[0:2], 16), int(value[2:4], 16), int(value[4:6], 16)
+
+        mixed = tuple(
+            min(255, round(0.5 * top_channel + 0.25 * bottom_channel))
+            for top_channel, bottom_channel in zip(rgb(top), rgb(bottom))
+        )
+        return "#%02x%02x%02x" % mixed
+
+    def _region_geometry(
         self,
         note: MouseRegion,
         chart: Chart,
         view: ViewState,
-        selected: bool,
-        y_min: float = -1e9,
-        y_max: float = 1e9,
-        samples: int = REGION_SAMPLES,
-    ) -> None:
-        theme = self.theme
+        y_min: float,
+        y_max: float,
+        samples: int,
+    ):
+        """空域 / 禁区的可见多边形、原始边界点与包围盒；完全在屏幕外时返回 ``None``。"""
         group = self._group(chart, note)
-        # 先做可见性预判：屏幕外的空域不算边界形状
         if not self._region_may_be_visible(note, group, view, y_min, y_max):
-            return
+            return None
         samples = self._region_sample_count(note, group, view, samples)
         points = self._region_points(note, chart, view, samples)
         ys = [p[1] for p in points]
         if max(ys) < y_min or min(ys) > y_max:
-            return
+            return None
         pane = mouse_pane_rect(view)
         visible = clip_polygon(points, pane)
         if len(visible) < 3:
-            return
+            return None
         xs = [p[0] for p in visible]
-        bounds = (min(xs), min(ys), max(xs), max(ys))
-        self._hit_entries.append((note, bounds, visible))
-        self.scene.polygon(
-            f"region:{note.id}",
-            visible,
-            fill=theme.region_fill,
-            outline="",
-            stipple=theme.stipple_fill,
-        )
-        half = len(points) // 2
-        left_edge = points[:half]
-        right_edge = list(reversed(points[half:]))
-        # 空域只绘制**左右两条边界线**（不画上下封口横线）；边界线同样裁剪到
-        # 鼠标平面的显示范围：整体在外的不画，跨界在面板边裁断
-        for prefix, edge in (("region-left", left_edge), ("region-right", right_edge)):
-            for index, run in enumerate(clip_polyline(edge, pane)):
-                key = f"{prefix}:{note.id}" if index == 0 else f"{prefix}:{note.id}#{index + 1}"
-                self.scene.polyline(key, run, fill=theme.region_edge, width=3)
-        if selected:
+        return visible, points, (min(xs), min(ys), max(xs), max(ys))
+
+    def _draw_region_layer(
+        self,
+        notes: List[Note],
+        chart: Chart,
+        view: ViewState,
+        state: RenderState,
+        y_min: float,
+        y_max: float,
+        samples: int,
+    ) -> None:
+        """空域 / 禁区：先画半透明填充，再补两两重叠处的合成色，最后画边线。
+
+        Tk 的点阵（stipple）相位固定：同相位的两层半透明填充会互相遮盖，
+        按顺序画会变成“只看见上面那层”。所以在重叠处补一块两层合成的颜色，
+        让叠加关系在编辑界面里也能看出来（与演示视图的 alpha 混合一致）。
+        """
+        theme = self.theme
+        pane = mouse_pane_rect(view)
+        # 1) 半透明填充：登记命中区域，并留下多边形供重叠处使用
+        drawn = []
+        for note in notes:
+            item = self._region_geometry(note, chart, view, y_min, y_max, samples)
+            if item is None:
+                continue
+            visible, points, bounds = item
+            self._hit_entries.append((note, bounds, visible))
+            self.scene.polygon(
+                f"region:{note.id}",
+                visible,
+                fill=self._region_fill_color(note),
+                outline="",
+                stipple=theme.stipple_fill,
+            )
+            drawn.append((note, visible, points, bounds))
+        # 2) 重叠处：补“上层叠下层”的合成色（后来者在上）
+        patches = 0
+        for index, (note_a, poly_a, _points_a, bounds_a) in enumerate(drawn):
+            if patches >= MAX_OVERLAP_PATCHES:
+                break
+            for note_b, poly_b, _points_b, bounds_b in drawn[index + 1:]:
+                if patches >= MAX_OVERLAP_PATCHES:
+                    break
+                if (
+                    bounds_a[0] > bounds_b[2] or bounds_b[0] > bounds_a[2]
+                    or bounds_a[1] > bounds_b[3] or bounds_b[1] > bounds_a[3]
+                ):
+                    continue
+                patch = polygon_overlap(poly_a, poly_b)
+                if patch is None:
+                    continue
+                self.scene.polygon(
+                    f"region-overlap:{note_a.id}:{note_b.id}",
+                    patch,
+                    fill=self._blend_over_black(
+                        self._region_fill_color(note_b), self._region_fill_color(note_a)
+                    ),
+                    outline="",
+                    stipple=theme.stipple_fill,
+                )
+                patches += 1
+        # 3) 边界线 / 选中框 / 标签
+        for note, _visible, points, bounds in drawn:
+            half = len(points) // 2
+            left_edge = points[:half]
+            right_edge = list(reversed(points[half:]))
+            # 空域 / 禁区都只绘制**左右两条边界线**（不画上下封口横线）；边界线同样
+            # 裁剪到鼠标平面的显示范围：整体在外的不画，跨界在面板边裁断
+            edge_color = self._region_edge_color(note)
+            for prefix, edge in (("region-left", left_edge), ("region-right", right_edge)):
+                for index, run in enumerate(clip_polyline(edge, pane)):
+                    key = (
+                        f"{prefix}:{note.id}"
+                        if index == 0
+                        else f"{prefix}:{note.id}#{index + 1}"
+                    )
+                    self.scene.polyline(key, run, fill=edge_color, width=3)
+            if note.id not in state.selection:
+                continue
             self.scene.rect(
                 f"sel:{note.id}",
                 bounds[0] - 3,
@@ -848,11 +861,12 @@ class Renderer:
                 width=2,
                 dash=(4, 3),
             )
+            label = "禁区" if self._region_is_forbidden(note) else "空域"
             self.scene.text(
                 f"lbl:{note.id}",
                 bounds[0],
                 bounds[1] - 16,
-                f"{note.id} · 空域 · 组{note.group}",
+                f"{note.id} · {label} · 组{note.group}",
                 fill=theme.select,
                 font=theme.font(theme.font_small),
                 anchor="nw",
@@ -1042,7 +1056,9 @@ class Renderer:
                 dash=(4, 3),
                 stipple=theme.stipple_soft,
             )
-        elif pending.tool == config.TOOL_MOUSE_REGION and pending.beat_start is not None:
+        elif pending.tool in (config.TOOL_MOUSE_REGION, config.TOOL_MOUSE_FORBIDDEN) \
+                and pending.beat_start is not None:
+            forbidden = pending.tool == config.TOOL_MOUSE_FORBIDDEN
             end = pending.beat_end if pending.beat_end is not None else pending.beat_start
             left = pending.left or BoundaryCurve(0.0, 0.0)
             right = pending.right or BoundaryCurve(1.0, 1.0)
@@ -1060,7 +1076,7 @@ class Renderer:
                 self.scene.polygon(
                     "pending:region",
                     visible,
-                    fill=theme.region_fill,
+                    fill=theme.forbidden_fill if forbidden else theme.region_fill,
                     outline="",
                     stipple=theme.stipple_soft,
                 )
@@ -1132,65 +1148,6 @@ class Renderer:
                         arrow="last" if head_inside else "none",
                         arrowshape=(12, 14, 5),
                     )
-        elif pending.tool == config.TOOL_MOUSE_CLICK and pending.x_start is not None and pending.beat_start is not None:
-            # 点击按键预览：选中心时给一根竖直虚线；选大小时给半透明红圆盘 + 实心菱形
-            y = view.note_y(pending.beat_start)
-            x = view.norm_to_x(pending.x_start)
-            d = float(config.CLICK_DIAMOND_RADIUS_PX)
-            top, bottom = y - TAP_MIN_PX / 2.0, y + TAP_MIN_PX / 2.0
-            pane = mouse_pane_rect(view)
-            if pending.step == 0:
-                segment = clip_segment(
-                    (x, layout.play_top), (x, layout.play_bottom), pane
-                )
-                if segment is not None:
-                    self.scene.line(
-                        "pending:click-guide",
-                        segment[0][0], segment[0][1], segment[1][0], segment[1][1],
-                        fill=theme.pending,
-                        width=2,
-                        dash=(6, 4),
-                    )
-            else:
-                end = pending.x_end if pending.x_end is not None else pending.x_start
-                # 与真实放置保持一致：半径不小于 MIN_CLICK_RADIUS
-                radius_px = max(
-                    config.MIN_CLICK_RADIUS, abs(end - pending.x_start)
-                ) * layout.mouse_width
-                # 与成品一致：左右两条红色实线标出范围（虚线表示尚未放置）
-                for key, edge in (
-                    ("pending:click-left", x - radius_px),
-                    ("pending:click-right", x + radius_px),
-                ):
-                    segment = clip_segment((edge, top), (edge, bottom), pane)
-                    if segment is None:
-                        continue
-                    self.scene.line(
-                        key,
-                        segment[0][0], segment[0][1], segment[1][0], segment[1][1],
-                        fill=theme.click_edge,
-                        width=theme.note_line_width,
-                        dash=(4, 3),
-                    )
-                segment = clip_segment((x - radius_px, y), (x + radius_px, y), pane)
-                if segment is not None:
-                    self.scene.line(
-                        "pending:click-line",
-                        segment[0][0], segment[0][1], segment[1][0], segment[1][1],
-                        fill=theme.click_edge,
-                        width=theme.note_line_width,
-                        dash=(4, 3),
-                    )
-            diamond = clip_polygon(
-                [(x - d, y), (x, y - d), (x + d, y), (x, y + d)], pane
-            )
-            if len(diamond) >= 3:
-                self.scene.polygon(
-                    "pending:click-diamond",
-                    diamond,
-                    fill=theme.click_diamond,
-                    outline="",
-                )
         if pending.hint:
             self.scene.text(
                 "pending:hint",

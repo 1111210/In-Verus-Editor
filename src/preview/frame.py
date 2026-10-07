@@ -13,7 +13,7 @@ from dataclasses import dataclass
 from typing import List, Optional, Tuple
 
 from model.chart import Chart
-from model.notes import LaneNote, MouseClick, MouseRegion, MouseSlide, Note, layer_rank
+from model.notes import LaneNote, MouseRegion, MouseSlide, Note, layer_rank
 from model.timing import TimingMap
 from .scene import (
     K6_LEFT,
@@ -34,7 +34,7 @@ NOTE_SIDE_INSET = 0.02
 TAP_VISIBLE_FRACTION = 92.0 / 96.0
 # 长按开头的可见下限（正常情况下与单键同厚度）。
 HOLD_HEAD_MIN = 0.25 * UNIT_SCALE
-# 滑键 / 鼠标点击图案的厚度下限。
+# 滑键图案的厚度下限。
 PATTERN_MIN_THICKNESS = 0.006 * UNIT_SCALE
 
 
@@ -113,7 +113,7 @@ def note_z_span(
     判定区间里**时间已经过去的部分不画**：长按 / 空域从「当前时刻」画到它们的
     结束时刻（``Note.tail_beat``），所以正在判定的长按只剩还没走完的那一截，
     不会在判定线之前拖出一条已经判过的尾巴；整个物件都已经过去时返回 ``None``。
-    单键 / 滑键 / 鼠标点击只占判定时刻那一点。
+    单键 / 滑键只占判定时刻那一点。
     """
     return _note_z_span_at(chart, note, chart.timing.song_ms_to_beat(now_ms), span_ms)
 
@@ -127,7 +127,7 @@ def note_in_view(
 ) -> bool:
     """物件此刻是否应当绘制：**时间与位置两个条件都要满足**。
 
-    * 时间：判定还没结束（``note_visible``：单键 / 滑键 / 点击到判定时刻，
+    * 时间：判定还没结束（``note_visible``：单键 / 滑键到判定时刻，
       长按 / 空域到结束时刻）；
     * 位置：物件**还没过去的那部分**的 z 范围与可视范围 ``[z_near, START_Z]`` 相交
       （``z_near`` 由 ``PreviewScene.visible_z_near`` 按窗口尺寸估算）。
@@ -318,15 +318,6 @@ class SlideShape:
     direction: int
 
 
-@dataclass(frozen=True)
-class ClickShape:
-    """鼠标点击按键的横向范围与中心（世界坐标）。"""
-
-    x0: float
-    x1: float
-    center: float
-
-
 def lane_shape(note: LaneNote) -> LaneShape:
     low = min(note.lane_start, note.lane_end)
     high = max(note.lane_start, note.lane_end)
@@ -353,13 +344,6 @@ def slide_shape(note: MouseSlide) -> SlideShape:
     )
 
 
-def click_shape(note: MouseClick) -> ClickShape:
-    low, high = note.x_range()
-    x0 = MOUSE_LEFT + min(low, high) * MOUSE_LEGAL_WIDTH
-    x1 = MOUSE_LEFT + max(low, high) * MOUSE_LEGAL_WIDTH
-    return ClickShape(x0, x1, MOUSE_LEFT + note.center * MOUSE_LEGAL_WIDTH)
-
-
 def region_bounds(note: MouseRegion, beat: float) -> Tuple[float, float]:
     """空域在某一拍处的左右边界（世界横坐标）。"""
     return (
@@ -374,24 +358,8 @@ def hold_head_height(note_thickness: float) -> float:
 
 
 def pattern_height(thickness: float) -> float:
-    """滑键 / 鼠标点击图案的可见厚度（含下限）。"""
+    """滑键图案的可见厚度（含下限）。"""
     return max(PATTERN_MIN_THICKNESS, thickness)
-
-
-def click_center(thickness: float) -> Tuple[float, float]:
-    """点击图案的 ``(竖直中心 y, 竖直尺寸)``。
-
-    贴图内容占满整张图，中心落在鼠标运动平面上（``MOUSE_PLANE_HEIGHT``）——
-    与编辑器画布一致（那里图案以判定时刻为垂直中点），不是底边贴在平面上。
-    """
-    return (MOUSE_PLANE_HEIGHT, pattern_height(thickness))
-
-
-def click_span(thickness: float) -> Tuple[float, float]:
-    """点击图案的竖直范围 ``(下沿, 上沿)``：上下各一半。"""
-    center, height = click_center(thickness)
-    half = height / 2.0
-    return (center - half, center + half)
 
 
 # 滑键主体 / 箭头贴图是“可见楔形在上半、下半完全透明”的双倍高图

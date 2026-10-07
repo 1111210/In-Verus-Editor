@@ -8,13 +8,13 @@ from typing import Any, Dict, Iterable, List, Optional, Sequence, Set
 import config
 from metronome import METRONOME_MODES, MODE_OFF
 from .notes import (
+    ForbiddenRegion,
     LaneNote,
-    MouseClick,
     MouseNote,
     MouseRegion,
     MouseSlide,
+    NOTE_FORBIDDEN,
     NOTE_LANE,
-    NOTE_CLICK,
     NOTE_REGION,
     NOTE_SLIDE,
     Note,
@@ -87,7 +87,6 @@ class EditorSettings:
     demo_note_thickness: float = config.DEMO_NOTE_THICKNESS
     demo_multi_thickness: float = config.DEMO_MULTI_THICKNESS
     demo_slide_thickness: float = config.DEMO_SLIDE_THICKNESS
-    demo_click_thickness: float = config.DEMO_CLICK_THICKNESS
     demo_speed: float = config.DEMO_SPEED
     demo_side_lane_highlight: bool = False
 
@@ -123,9 +122,6 @@ class EditorSettings:
         self.demo_slide_thickness = min(
             pattern_high, max(pattern_low, float(self.demo_slide_thickness))
         )
-        self.demo_click_thickness = min(
-            pattern_high, max(pattern_low, float(self.demo_click_thickness))
-        )
         self.demo_speed = round(min(speed_high, max(speed_low, float(self.demo_speed))), 3)
         self.demo_side_lane_highlight = bool(self.demo_side_lane_highlight)
 
@@ -149,7 +145,6 @@ class EditorSettings:
             "demo_note_thickness": self.demo_note_thickness,
             "demo_multi_thickness": self.demo_multi_thickness,
             "demo_slide_thickness": self.demo_slide_thickness,
-            "demo_click_thickness": self.demo_click_thickness,
             "demo_speed": self.demo_speed,
             "demo_side_lane_highlight": self.demo_side_lane_highlight,
         }
@@ -179,9 +174,6 @@ class EditorSettings:
             ),
             demo_slide_thickness=float(
                 data.get("demo_slide_thickness", config.DEMO_SLIDE_THICKNESS)
-            ),
-            demo_click_thickness=float(
-                data.get("demo_click_thickness", config.DEMO_CLICK_THICKNESS)
             ),
             demo_speed=float(data.get("demo_speed", config.DEMO_SPEED)),
             demo_side_lane_highlight=bool(data.get("demo_side_lane_highlight", False)),
@@ -438,9 +430,14 @@ class Chart:
         if self._note_counts is None:
             self._note_counts = {
                 NOTE_LANE: len(self.lane_notes),
-                NOTE_REGION: sum(1 for n in self.mouse_notes if isinstance(n, MouseRegion)),
+                NOTE_REGION: sum(
+                    1 for n in self.mouse_notes
+                    if isinstance(n, MouseRegion) and not isinstance(n, ForbiddenRegion)
+                ),
+                NOTE_FORBIDDEN: sum(
+                    1 for n in self.mouse_notes if isinstance(n, ForbiddenRegion)
+                ),
                 NOTE_SLIDE: sum(1 for n in self.mouse_notes if isinstance(n, MouseSlide)),
-                NOTE_CLICK: sum(1 for n in self.mouse_notes if isinstance(n, MouseClick)),
             }
         return dict(self._note_counts)
 

@@ -12,7 +12,6 @@ import config
 from model.chart import Chart
 from model.notes import (
     LaneNote,
-    MouseClick,
     MouseRegion,
     MouseSlide,
     Note,
@@ -238,15 +237,6 @@ def slide_bounds(note: MouseSlide, chart: Chart, view: ViewState) -> Bounds:
     return min(x0, x1) - 4, y - SLIDE_MIN_PX / 2, max(x0, x1) + 4, y + SLIDE_MIN_PX / 2
 
 
-def click_bounds(note: MouseClick, chart: Chart, view: ViewState) -> Bounds:
-    """鼠标点击按键的命中框：与渲染一致的长方形（宽度 = 2×半宽，高度固定、竖向居中）。"""
-    group = chart.group_by_id(note.group)
-    y = view.note_y(note.beat, group)
-    half = max(1.0, float(note.radius) * view.layout.mouse_width)
-    x = view.norm_to_x(note.center)
-    return x - half, y - TAP_MIN_PX / 2.0, x + half, y + TAP_MIN_PX / 2.0
-
-
 def region_edges(
     note: MouseRegion, chart: Chart, view: ViewState, samples: int = REGION_SAMPLES
 ) -> Tuple[List[Point], List[Point]]:
@@ -313,13 +303,75 @@ def note_bounds(note: Note, chart: Chart, view: ViewState) -> Optional[Bounds]:
         return lane_note_bounds(note, chart, view)
     if isinstance(note, MouseRegion):
         return region_bounds(note, chart, view)
-    if isinstance(note, MouseClick):
-        bounds = click_bounds(note, chart, view)
-        return clip_bounds(bounds, mouse_pane_rect(view))
     if isinstance(note, MouseSlide):
         bounds = slide_bounds(note, chart, view)
         return clip_bounds(bounds, mouse_pane_rect(view))
     return None
+
+
+# ---------------------------------------------------------------- 多边形叠加
+def polygon_row_intervals(
+    points: Sequence[Point], y: float, eps: float = 1e-9
+) -> List[Tuple[float, float]]:
+    """扫描线 ``y`` 与多边形的交点区间（奇偶规则；无交点时为空列表）。"""
+    crossings: List[float] = []
+    count = len(points)
+    for index in range(count):
+        x0, y0 = points[index]
+        x1, y1 = points[(index + 1) % count]
+        if abs(y1 - y0) <= eps:
+            continue
+        low, high = (y0, y1) if y0 < y1 else (y1, y0)
+        if low <= y < high:            # 半开区间：顶点只算一次
+            crossings.append(x0 + (x1 - x0) * (y - y0) / (y1 - y0))
+    crossings.sort()
+    return [
+        (crossings[i], crossings[i + 1])
+        for i in range(0, len(crossings) - 1, 2)
+    ]
+
+
+def polygon_overlap(
+    first: Sequence[Point], second: Sequence[Point], step: float = 3.0
+) -> Optional[List[Point]]:
+    """两个简单多边形的交集多边形；无法用单一区间表示时返回 ``None``。
+
+    逐行扫描：每行取两个多边形的横向区间求交，交集必须**恰好一段**，
+    结果拼成一个左右两条边的多边形。用于把两层半透明填充的重叠处补成合成色。
+    """
+    if len(first) < 3 or len(second) < 3:
+        return None
+    ys = [p[1] for p in first] + [p[1] for p in second]
+    top, bottom = min(ys), max(ys)
+    if bottom - top < 2.0:
+        return None
+    rows = max(2, int((bottom - top) / max(1.0, float(step))))
+    left_points: List[Point] = []
+    right_points: List[Point] = []
+    started = False
+    ended = False
+    for index in range(rows + 1):
+        y = top + (bottom - top) * index / rows
+        first_intervals = polygon_row_intervals(first, y)
+        second_intervals = polygon_row_intervals(second, y)
+        if len(first_intervals) > 1 or len(second_intervals) > 1:
+            return None
+        if not first_intervals or not second_intervals:
+            ended = ended or started
+            continue
+        x0 = max(first_intervals[0][0], second_intervals[0][0])
+        x1 = min(first_intervals[0][1], second_intervals[0][1])
+        if x1 - x0 <= 0.5:
+            ended = ended or started
+            continue
+        if ended:
+            return None                # 交集在中间断开：不合成单一多边形
+        started = True
+        left_points.append((x0, y))
+        right_points.append((x1, y))
+    if len(left_points) < 2:
+        return None
+    return left_points + list(reversed(right_points))
 
 
 def point_in_rect(px: float, py: float, bounds: Bounds, pad: float = 0.0) -> bool:

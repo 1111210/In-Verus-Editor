@@ -38,7 +38,7 @@ MOUSE_LEGAL_WIDTH = MOUSE_RIGHT - MOUSE_LEFT   # = 1 单位
 MOUSE_PLANE_HEIGHT = 0.4 * UNIT_SCALE   # 鼠标平面在 6K 平面上方（≈0.286 单位）
 # 轨道长度：远端更远 -> 刚出现的按键显得更小
 START_Z = 26.0 * UNIT_SCALE     # ≈18.57 单位
-NOTE_HEIGHT_UNIT = 0.03 * UNIT_SCALE   # 滑键 / 点击按键图案高度（≈0.0214 单位）
+NOTE_HEIGHT_UNIT = 0.03 * UNIT_SCALE   # 滑键图案高度（≈0.0214 单位）
 
 
 @dataclass

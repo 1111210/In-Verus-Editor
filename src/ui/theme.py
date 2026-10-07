@@ -43,16 +43,14 @@ class Theme:
 
     region_fill: str = "#2f6df6"
     region_edge: str = "#3f8bff"
+    # 禁区：几何与空域相同，画成红色（半透明红底 + 红色边线）
+    forbidden_fill: str = "#e0392b"
+    forbidden_edge: str = "#ff5140"
     slide_fill: str = "#25c06b"
     slide_edge: str = "#25e07f"
     # 向左滑键：半透明黄色（与向右的绿色区分开）
     slide_left_fill: str = "#e8c24a"
     slide_left_edge: str = "#ffd666"
-
-    # 鼠标点击按键：左右两条红色竖线标出范围 + 中间一条红色横线（粗细都与 6K 按键的中心实线相同）
-    #             + 中央红色实心菱形
-    click_edge: str = "#ff2d20"
-    click_diamond: str = "#ff2d20"
 
     select: str = "#ffd166"
     pending: str = config.PENDING_COLOR

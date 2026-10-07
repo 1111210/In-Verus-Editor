@@ -31,23 +31,28 @@ EXPECTED_HOLD_BODY = (32, 128)
 # 按“图片中心对齐鼠标运动平面”摆放（见 preview/frame.py::slide_center）
 EXPECTED_SLIDE_ARROW = (48, 96)
 EXPECTED_SLIDE_BODY = (256, 256)
-EXPECTED_CLICK_DIAMOND = (64, 64)
-EXPECTED_CLICK_RANGE = (128, 64)
-EXPECTED_CLICK_EDGE = (32, 64)
 EXPECTED_LANE = (128, 512)
 EXPECTED_LANE_EDGE = (8, 512)
 EXPECTED_REGION_AREA = (256, 256)
 EXPECTED_MOUSE_MARKER = (96, 96)
 SINGLE_PIXEL_SIZE = (1, 1)
 
-# 单像素图（多像素时取平均）
-SINGLE_PIXEL_NAMES = ("region_fill", "region_edge", "region_line")
+# 单像素图（多像素时取平均）：空域（蓝）与禁区（红）
+SINGLE_PIXEL_NAMES = (
+    "region_fill",
+    "region_edge",
+    "region_line",
+    "forbidden_fill",
+    "forbidden_edge",
+    "forbidden_line",
+)
 
 
 def expected_sizes() -> Dict[str, Tuple[int, int]]:
     """所有贴图名字 -> 期望尺寸。"""
     sizes: Dict[str, Tuple[int, int]] = {name: SINGLE_PIXEL_SIZE for name in SINGLE_PIXEL_NAMES}
     sizes["region_area"] = EXPECTED_REGION_AREA
+    sizes["forbidden_area"] = EXPECTED_REGION_AREA
     sizes["mouse_marker_solid"] = EXPECTED_MOUSE_MARKER
     sizes["mouse_marker_outline"] = EXPECTED_MOUSE_MARKER
     for lane in range(1, LANE_COUNT + 1):
@@ -59,9 +64,6 @@ def expected_sizes() -> Dict[str, Tuple[int, int]]:
     for name in ("left", "right"):
         sizes[f"slide_arrow_{name}"] = EXPECTED_SLIDE_ARROW
         sizes[f"slide_body_{name}"] = EXPECTED_SLIDE_BODY
-    sizes["click_diamond"] = EXPECTED_CLICK_DIAMOND
-    sizes["click_range"] = EXPECTED_CLICK_RANGE
-    sizes["click_edge"] = EXPECTED_CLICK_EDGE
     for side in ("left", "right"):
         sizes[f"lane_edge_{side}_highlight"] = EXPECTED_LANE_EDGE
         sizes[f"lane_edge_{side}_highlight_pressed"] = EXPECTED_LANE_EDGE

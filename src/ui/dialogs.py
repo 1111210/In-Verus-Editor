@@ -18,8 +18,8 @@ from model.chart import Chart, EditorSettings, Metadata
 from model.document import Document
 from model.notes import (
     BoundaryCurve,
+    ForbiddenRegion,
     LaneNote,
-    MouseClick,
     MouseRegion,
     MouseSlide,
     Note,
@@ -503,7 +503,7 @@ class VolumeDialog(BaseDialog):
             self._labels[key] = label
         ttk.Label(
             body,
-            text="打击音效：单键 / 多轨按键 / 滑键 / 鼠标点击按键到达判定线，"
+            text="打击音效：单键 / 多轨按键 / 滑键到达判定线，"
                  "以及长按、空域开头到达判定线时的一声白噪声（在「音效」菜单里开关）。",
             style="Dim.TLabel",
             wraplength=460,
@@ -690,7 +690,6 @@ class DemoViewDialog(BaseDialog):
             demo_note_thickness=settings.demo_note_thickness,
             demo_multi_thickness=settings.demo_multi_thickness,
             demo_slide_thickness=settings.demo_slide_thickness,
-            demo_click_thickness=settings.demo_click_thickness,
             demo_speed=settings.demo_speed,
             demo_side_lane_highlight=settings.demo_side_lane_highlight,
         )
@@ -719,7 +718,6 @@ class DemoViewDialog(BaseDialog):
             ("demo_note_thickness", "单键", note_low, note_high, note_step, 2),
             ("demo_multi_thickness", "多轨单键", note_low, note_high, note_step, 2),
             ("demo_slide_thickness", "滑键图案", pattern_low, pattern_high, pattern_step, 3),
-            ("demo_click_thickness", "鼠标点击图案", pattern_low, pattern_high, pattern_step, 3),
         )
         for row, (key, text, low, high, step, digits) in enumerate(rows):
             self._add_slider(thickness, row, key, text, low, high, step, digits)
@@ -775,7 +773,7 @@ class DemoViewDialog(BaseDialog):
         return round(round(value / step) * step, 6)
 
     def _format(self, key: str, value: float) -> str:
-        digits = 1 if key == "demo_speed" else (3 if "slide" in key or "click" in key else 2)
+        digits = 1 if key == "demo_speed" else (3 if "slide" in key else 2)
         return f"{value:.{digits}f}"
 
     def _on_slider(self, key: str) -> None:
@@ -784,7 +782,7 @@ class DemoViewDialog(BaseDialog):
             if key == "demo_speed"
             else (
                 config.DEMO_PATTERN_THICKNESS_RANGE[2]
-                if "slide" in key or "click" in key
+                if "slide" in key
                 else config.DEMO_NOTE_THICKNESS_RANGE[2]
             )
         )
@@ -810,9 +808,6 @@ class DemoViewDialog(BaseDialog):
             ),
             "demo_slide_thickness": value(
                 "demo_slide_thickness", config.DEMO_PATTERN_THICKNESS_RANGE[2]
-            ),
-            "demo_click_thickness": value(
-                "demo_click_thickness", config.DEMO_PATTERN_THICKNESS_RANGE[2]
             ),
             "demo_speed": value("demo_speed", config.DEMO_SPEED_RANGE[2]),
             "demo_side_lane_highlight": bool(self.var_side.get()),
@@ -1053,7 +1048,8 @@ class NoteEditDialog(BaseDialog):
                 wraplength=380,
             ).grid(row=5, column=0, columnspan=2, sticky="w", pady=(4, 0))
         elif isinstance(note, MouseRegion):
-            ttk.Label(body, text=f"{note.id} · 空域", style="Head.TLabel").grid(
+            label = "禁区" if isinstance(note, ForbiddenRegion) else "空域"
+            ttk.Label(body, text=f"{note.id} · {label}", style="Head.TLabel").grid(
                 row=0, column=0, columnspan=4, sticky="w", pady=(0, 6)
             )
             self.e_beat_start = labeled_entry(body, 1, "开始拍", f"{note.beat_start:g}", width=14)
@@ -1077,7 +1073,7 @@ class NoteEditDialog(BaseDialog):
             ttk.Label(
                 body,
                 text="位置以合法区域最左侧为 0、最右侧为 1，允许超出（例如 -0.2 或 1.3）；\n"
-                     "放置时空域尚未点击的边界点按默认值显示：左边界 0、右边界 1。",
+                     f"放置时{label}尚未点击的边界点按默认值显示：左边界 0、右边界 1。",
                 style="Dim.TLabel",
                 wraplength=420,
             ).grid(row=9, column=0, columnspan=4, sticky="w", pady=(4, 0))
@@ -1092,21 +1088,6 @@ class NoteEditDialog(BaseDialog):
                 body,
                 text="结束位置大于起始位置表示向右滑动，小于表示向左滑动。",
                 style="Dim.TLabel",
-            ).grid(row=4, column=0, columnspan=2, sticky="w", pady=(4, 0))
-        elif isinstance(note, MouseClick):
-            ttk.Label(body, text=f"{note.id} · 鼠标点击按键", style="Head.TLabel").grid(
-                row=0, column=0, columnspan=2, sticky="w", pady=(0, 6)
-            )
-            self.e_beat = labeled_entry(body, 1, "判定拍", f"{note.beat:g}", width=14)
-            self.e_center = labeled_entry(body, 2, "中心位置", f"{note.center:g}", width=14)
-            self.e_radius = labeled_entry(body, 3, "半宽（大小）", f"{note.radius:g}", width=14)
-            ttk.Label(
-                body,
-                text=f"范围 = 中心 ± 半宽（最小半宽 {config.MIN_CLICK_RADIUS:g}）；"
-                     "位置以合法区域最左侧为 0、最右侧为 1，允许超出。"
-                     "按键渲染为长方形（宽度 = 2×半宽，高度固定），中央菱形大小固定、不可编辑。",
-                style="Dim.TLabel",
-                wraplength=380,
             ).grid(row=4, column=0, columnspan=2, sticky="w", pady=(4, 0))
         else:  # pragma: no cover
             ttk.Label(body, text="未知物件类型").grid(row=0, column=0)
@@ -1167,18 +1148,8 @@ class NoteEditDialog(BaseDialog):
                 "x_end": x_end,
                 "group": note.group,
             }
-        else:
-            self.result = {
-                "id": note.id,
-                "type": note.kind,
-                "beat": parse_float(self.e_beat.get(), note.beat),
-                "center": parse_float(self.e_center.get(), note.center),
-                "radius": max(
-                    config.MIN_CLICK_RADIUS,
-                    parse_float(self.e_radius.get(), note.radius),
-                ),
-                "group": note.group,
-            }
+        else:  # pragma: no cover - 未知类型
+            self.result = {}
         self.destroy()
 
 
@@ -1243,13 +1214,11 @@ GUIDE_TEXT = """【界面】
 5 空域（数字键 5）：先点击开始时间、结束时间；再依次点击「左边界起点 / 左边界终点 /
    右边界起点 / 右边界终点」四个位置（未点击的点按默认值预览：左边界 0、右边界 1）；
    最后在弹出的对话框里选择两条边界的线型（线性 / 缓入 / 缓出），也可以微调位置。
-6 左右滑键（数字键 6）：先点击设定时间与横向位置，再点击第二次决定滑动方向；
+6 禁区（数字键 6）：放置、编辑、拖动的操作与空域完全相同，但绘制成红色
+   （半透明红底 + 红色边线），表示需要避开的区域。
+7 左右滑键（数字键 7）：先点击设定时间与横向位置，再点击第二次决定滑动方向；
    开启横向辅助网格时会吸附到网格线上。
-7 鼠标点击按键（数字键 7）：先点击设定中心位置（时间同时吸附网格），再点击旁边确定按键大小；
-   物件到达判定线时需要在它的横向范围内点击（左键 / 右键都可以）。
-   显示成与 6K 按键同款的长方形（半透明红 + 白边，没有中间白实线）；
-   长方形与中央那个固定大小的不透明红菱形都以判定时刻为垂直中点（网格线穿过中点）。
-   —— 鼠标部分的横向位置：启用横向辅助网格时吸附到网格线并夹进 0..1 合法区域；
+    —— 鼠标部分的横向位置：启用横向辅助网格时吸附到网格线并夹进 0..1 合法区域；
    未启用时按鼠标真实位置放置，即使超出合法区域（出界）也照常放置。
 Esc 取消当前放置流程；切换工具同样会放弃未完成的操作。放置过程中会显示幽灵预览。
 
@@ -1297,8 +1266,8 @@ SHORTCUTS_TEXT = """【工具切换】
 3  多轨按键
 4  长按（含多轨）
 5  空域
-6  左右滑键
-7  鼠标点击按键
+6  禁区
+7  左右滑键
 Esc  取消当前放置流程（演示模式下为退出演示）
 Tab  进入 / 退出演示模式
 

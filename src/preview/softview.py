@@ -19,7 +19,7 @@ from typing import List, Optional, Tuple
 import pygame
 
 from model.chart import Chart
-from model.notes import LaneNote, MouseClick, MouseRegion, MouseSlide, Note
+from model.notes import ForbiddenRegion, LaneNote, MouseRegion, MouseSlide, Note
 from model.speed import SpeedGroup
 from . import frame, textures
 from .scene import (
@@ -51,6 +51,7 @@ ROOT = _resource_root()
 BG = (10, 10, 14)
 WHITE = (240, 240, 245)
 MOUSE_TINT = (90, 220, 255)
+FORBIDDEN_TINT = (255, 90, 70)
 K6_TINT = (120, 160, 255)
 SIDE_TINT = (58, 35, 82)
 LANE_PRESS_TINT = (44, 86, 150)     # 按下轨道时的高亮底色
@@ -625,8 +626,6 @@ class SoftwareView:
                 self._draw_region(note, now_ms)
             elif isinstance(note, MouseSlide):
                 self._draw_pattern(note, now_ms)
-            elif isinstance(note, MouseClick):
-                self._draw_pattern(note, now_ms)
 
     def _draw_lane_note(self, note: LaneNote, now_ms: float) -> None:
         """6K 单键 / 长按：用预设贴图绘制（贴图**底端**在判定边，到达判定线即判定）。"""
@@ -744,26 +743,31 @@ class SoftwareView:
         return True
 
     def _draw_region(self, note: MouseRegion, now_ms: float) -> None:
-        """空域：画在鼠标物件运动的水平面内（**同一种颜色**的半透明底 + 左右两条边线）。
+        """空域 / 禁区：画在鼠标物件运动的水平面内（半透明底 + 左右两条边线）。
 
         位置由所属速度组的 ``∫v`` 反推；只采样**滚动距离在可视跨度内**的那几段
         （``frame.region_samples``）：超出轨道尽头的点不采样，否则会全挤在
-        ``z = START_Z`` 上相互重叠，叠出的 alpha 更实，看起来像空域堆在平面远端。
+        ``z = START_Z`` 上相互重叠，叠出的 alpha 更实，看起来像堆在平面远端。
+        禁区与空域的几何完全一致，只是换一组红色贴图。
         """
         assert self.chart is not None
         if not frame.note_visible(self.chart.timing, note, now_ms):
-            return                      # 判定已结束：整个空域（含判定线高亮）都不画
+            return                      # 判定已结束：整个区域（含判定线高亮）都不画
+        forbidden = isinstance(note, ForbiddenRegion)
+        area_name = "forbidden_area" if forbidden else "region_area"
+        edge_name = "forbidden_edge" if forbidden else "region_edge"
+        line_name = "forbidden_line" if forbidden else "region_line"
         span = self._visible_span_ms()
-        # 底图：整片**同一种颜色**的半透明淡蓝（避免横向条纹的接缝）
-        area_color = self.texture_avg.get("region_area")
+        # 底图：整片**同一种颜色**的半透明底（避免横向条纹的接缝）
+        area_color = self.texture_avg.get(area_name)
         if area_color is None:
-            surface = self._tex("region_area")
+            surface = self._tex(area_name)
             if surface is not None:
                 area_color = textures.average_color(surface)
         # 左右边界：单像素边界图（多像素时由加载阶段取平均）
-        edge_color = self.texture_avg.get("region_edge")
+        edge_color = self.texture_avg.get(edge_name)
         if edge_color is None:
-            surface = self._tex("region_edge")
+            surface = self._tex(edge_name)
             if surface is not None:
                 edge_color = textures.average_color(surface)
         near_ms = self._plane_near_distance_ms(MOUSE_PLANE_HEIGHT, span)   # 判定线之前也画
@@ -783,9 +787,11 @@ class SoftwareView:
                     min(255, area_color[3] + 40),
                 )
             else:
-                # 半透明：空域在鼠标平面上，挡住下面的 6K 物件就没法看谱了
+                # 半透明：区域在鼠标平面上，挡住下面的 6K 物件就没法看谱了
                 self._alpha_quad(
-                    left_points + list(reversed(right_points)), (60, 110, 200), 104
+                    left_points + list(reversed(right_points)),
+                    (200, 60, 50) if forbidden else (60, 110, 200),
+                    104,
                 )
             # 边线的**屏幕线宽按透视缩放**：判定线处最宽、远端最细。
             for index in range(len(left_points) - 1):
@@ -805,14 +811,20 @@ class SoftwareView:
                         ]
                         self._alpha_quad(quad, edge_color[:3], int(round(edge_color[3] * fade)))
                     else:
-                        self._line_scaled(a, b, MOUSE_TINT, int(max(1, round(4 * fade))), scale)
-        # 空域判定线：只在这段空域确实压在判定线上（可见段跨过距离 0）时画 ——
-        # 时间没到 / 已经结束的空域不该在判定线上留一条亮线
+                        self._line_scaled(
+                            a,
+                            b,
+                            FORBIDDEN_TINT if forbidden else MOUSE_TINT,
+                            int(max(1, round(4 * fade))),
+                            scale,
+                        )
+        # 判定线高亮：只在这段区域确实压在判定线上（可见段跨过距离 0）时画 ——
+        # 时间没到 / 已经结束的区域不该在判定线上留一条亮线
         if not frame.runs_cross_line(runs):
             return
-        line_color = self.texture_avg.get("region_line")
+        line_color = self.texture_avg.get(line_name)
         if line_color is None:
-            surface = self._tex("region_line")
+            surface = self._tex(line_name)
             if surface is not None:
                 line_color = textures.average_color(surface)
         if line_color is not None:
@@ -832,12 +844,12 @@ class SoftwareView:
             self._line(
                 self._proj(MOUSE_LEFT, MOUSE_PLANE_HEIGHT, 0.0),
                 self._proj(MOUSE_LEFT + MOUSE_LEGAL_WIDTH, MOUSE_PLANE_HEIGHT, 0.0),
-                MOUSE_TINT,
+                FORBIDDEN_TINT if forbidden else MOUSE_TINT,
                 3,
             )
 
     def _draw_pattern(self, note: Note, now_ms: float) -> None:
-        """滑键 / 鼠标点击按键：图案平行于判定平面，改用预设贴图。"""
+        """滑键：图案平行于判定平面，改用预设贴图（缺贴图时程序化绘制兜底）。"""
         z_near = self._plane_z_near(MOUSE_PLANE_HEIGHT)   # 反向时图案会走到判定线之前
         span = self._visible_span_ms()
         # 时间（判定未结束）+ 位置（z 在可视范围内）两个条件都要满足
@@ -847,91 +859,46 @@ class SoftwareView:
             START_Z,
             max(z_near, self._note_z(self._head_ms(note), now_ms, group=self._note_group(note))),
         )
-        if self.textures or self._tex("click_diamond") is not None:
+        if self.textures or self._tex("slide_body_right") is not None:
             if self._draw_pattern_textured(note, z):
                 return
         self._draw_pattern_legacy(note, z)
 
     def _draw_pattern_textured(self, note: Note, z: float) -> bool:
-        """贴图版滑键 / 点击按键（缺贴图时返回 False，改走程序化绘制兜底）。"""
-        if isinstance(note, MouseSlide):
-            shape = frame.slide_shape(note)
-            direction = shape.direction
-            name = "right" if direction > 0 else "left"
-            height = frame.pattern_height(self.settings.slide_thickness)
-            # 贴图是双倍高（上半楔形 / 下半透明）：所见楔形仍在平面上方
-            low, high = frame.slide_span(self.settings.slide_thickness)
-            start_x, end_x = shape.start_x, shape.end_x
-            # 贴图的左边界要绑**屏幕左边**（不是"起点"）：左滑键的起点在右、
-            # 终点在左，若按起点绑就会把整张贴图左右镜像（贴图按中心 + 宽度摆放，
-            # 本来就是绑屏幕左边的，与编辑器里的画法一致）
-            left_x, right_x = shape.left_x, shape.right_x
-            body_quad = [
-                self._proj(left_x, high, z),
-                self._proj(right_x, high, z),
-                self._proj(right_x, low, z),
-                self._proj(left_x, low, z),
-            ]
-            if not self._blit_tex_quad(f"slide_body_{name}", body_quad):
-                return False
-            # 箭头：宽度不拉伸（用贴图原宽），高度按用户设置拉伸；贴在朝向侧顶点
-            arrow = self._tex(f"slide_arrow_{name}")
-            if arrow is not None and arrow.get_width() > 0:
-                inner = end_x - height * direction       # 箭头朝内延伸，宽度 = 厚度（不拉伸）
-                inner_left, inner_right = min(inner, end_x), max(inner, end_x)
-                arrow_quad = [
-                    self._proj(inner_left, high, z),
-                    self._proj(inner_right, high, z),
-                    self._proj(inner_right, low, z),
-                    self._proj(inner_left, low, z),
-                ]
-                # 左 / 右箭头是各自方向的贴图（与主体一样镜像成对），无需再翻转
-                self._blit_tex_quad(f"slide_arrow_{name}", arrow_quad)
-            return True
-        assert isinstance(note, MouseClick)
-        low, high = frame.click_span(self.settings.click_thickness)
-        height = high - low
-        shape = frame.click_shape(note)
-        x0, x1, cx = shape.x0, shape.x1, shape.center
-        middle = MOUSE_PLANE_HEIGHT          # 图案以鼠标运动平面为中点
-        range_quad = [
-            self._proj(x0, high, z),
-            self._proj(x1, high, z),
-            self._proj(x1, low, z),
-            self._proj(x0, low, z),
+        """贴图版滑键（缺贴图时返回 False，改走程序化绘制兜底）。"""
+        assert isinstance(note, MouseSlide)
+        shape = frame.slide_shape(note)
+        direction = shape.direction
+        name = "right" if direction > 0 else "left"
+        height = frame.pattern_height(self.settings.slide_thickness)
+        # 贴图是双倍高（上半楔形 / 下半透明）：所见楔形仍在平面上方
+        low, high = frame.slide_span(self.settings.slide_thickness)
+        start_x, end_x = shape.start_x, shape.end_x
+        # 贴图的左边界要绑**屏幕左边**（不是"起点"）：左滑键的起点在右、
+        # 终点在左，若按起点绑就会把整张贴图左右镜像（贴图按中心 + 宽度摆放，
+        # 本来就是绑屏幕左边的，与编辑器里的画法一致）
+        left_x, right_x = shape.left_x, shape.right_x
+        body_quad = [
+            self._proj(left_x, high, z),
+            self._proj(right_x, high, z),
+            self._proj(right_x, low, z),
+            self._proj(left_x, low, z),
         ]
-        if not self._blit_tex_quad("click_range", range_quad):
+        if not self._blit_tex_quad(f"slide_body_{name}", body_quad):
             return False
-        d = height / 2.0                              # 菱形 / 边界的半高
-        self._blit_tex_quad(
-            "click_diamond",
-            [
-                self._proj(cx - d, middle + d, z),
-                self._proj(cx + d, middle + d, z),
-                self._proj(cx + d, middle - d, z),
-                self._proj(cx - d, middle - d, z),
-            ],
-        )
-        # 边界标识 = 菱形竖切的右半：左边界朝内（向右），右边界镜像
-        self._blit_tex_quad(
-            "click_edge",
-            [
-                self._proj(x0, middle + d, z),
-                self._proj(x0 + d, middle + d, z),
-                self._proj(x0 + d, middle - d, z),
-                self._proj(x0, middle - d, z),
-            ],
-        )
-        self._blit_tex_quad(
-            "click_edge",
-            [
-                self._proj(x1 - d, middle + d, z),
-                self._proj(x1, middle + d, z),
-                self._proj(x1, middle - d, z),
-                self._proj(x1 - d, middle - d, z),
-            ],
-            flip_x=True,
-        )
+        # 箭头：宽度不拉伸（用贴图原宽），高度按用户设置拉伸；贴在朝向侧顶点
+        arrow = self._tex(f"slide_arrow_{name}")
+        if arrow is not None and arrow.get_width() > 0:
+            inner = end_x - height * direction       # 箭头朝内延伸，宽度 = 厚度（不拉伸）
+            inner_left, inner_right = min(inner, end_x), max(inner, end_x)
+            arrow_quad = [
+                self._proj(inner_left, high, z),
+                self._proj(inner_right, high, z),
+                self._proj(inner_right, low, z),
+                self._proj(inner_left, low, z),
+            ]
+            # 左 / 右箭头是各自方向的贴图（与主体一样镜像成对），无需再翻转
+            self._blit_tex_quad(f"slide_arrow_{name}", arrow_quad)
         return True
 
     def _draw_pattern_legacy(self, note: Note, z: float) -> None:
@@ -970,55 +937,6 @@ class SoftwareView:
                     alpha,
                 )
             return
-        assert isinstance(note, MouseClick)
-        color = (235, 90, 80)
-        height = self.settings.click_thickness
-        shape = frame.click_shape(note)
-        x0, x1 = shape.x0, shape.x1
-        middle = MOUSE_PLANE_HEIGHT          # 图案以鼠标运动平面为中点
-        # 形状是**中间厚、两边薄的菱形**，并且透明度一起渐变（中间实、两端淡）
-        span_px = abs(
-            self._proj(x1, MOUSE_PLANE_HEIGHT, z)[0]
-            - self._proj(x0, MOUSE_PLANE_HEIGHT, z)[0]
-        )
-        steps = max(12, min(64, int(span_px / 3.0) + 1))
-        alpha_edge, alpha_mid = 40, 226
-        for index in range(steps):
-            t0 = index / steps
-            t1 = (index + 1) / steps
-            xa = x0 + (x1 - x0) * t0
-            xb = x0 + (x1 - x0) * t1
-            la = 1.0 - abs(2.0 * t0 - 1.0)        # 中点 1、两端 0 -> 菱形轮廓
-            lb = 1.0 - abs(2.0 * t1 - 1.0)
-            half_a = max(0.0004 * UNIT_SCALE, height / 2.0 * la)
-            half_b = max(0.0004 * UNIT_SCALE, height / 2.0 * lb)
-            alpha = int(round(alpha_edge + (alpha_mid - alpha_edge) * (la + lb) / 2.0))
-            self._alpha_quad(
-                [
-                    self._proj(xa, middle - half_a, z),
-                    self._proj(xb, middle - half_b, z),
-                    self._proj(xb, middle + half_b, z),
-                    self._proj(xa, middle + half_a, z),
-                ],
-                color,
-                alpha,
-            )
-        # 中间横线：与键盘点击物件的横线一致（红色）
-        self._line(
-            self._proj(x0, middle, z), self._proj(x1, middle, z), (255, 70, 60), 2
-        )
-        # 中央实心菱形标记（固定大小，不随按键尺寸变化）
-        cx = shape.center
-        d = NOTE_HEIGHT_UNIT / 2
-        self._quad(
-            [
-                self._proj(cx - d, middle, z),
-                self._proj(cx, middle + d, z),
-                self._proj(cx + d, middle, z),
-                self._proj(cx, middle - d, z),
-            ],
-            (255, 60, 50),
-        )
 
 
 def available() -> bool:
@@ -1032,7 +950,6 @@ def view_settings_for(editor_settings) -> ViewSettings:
     view.note_thickness = float(editor_settings.demo_note_thickness)
     view.multi_thickness = float(editor_settings.demo_multi_thickness)
     view.slide_thickness = float(editor_settings.demo_slide_thickness)
-    view.click_thickness = float(editor_settings.demo_click_thickness)
     view.speed = float(editor_settings.demo_speed)
     view.side_lane_highlight = bool(editor_settings.demo_side_lane_highlight)
     view.normalize()

@@ -25,7 +25,7 @@ from chart_io import (
 )
 from model.chart import Chart
 from model.document import Document
-from model.notes import BoundaryCurve, MouseRegion
+from model.notes import BoundaryCurve, ForbiddenRegion, MouseRegion
 from model.timing import TimingMap
 from model.validate import format_report, validate_chart
 from global_settings import (
@@ -481,7 +481,7 @@ class EditorApp:
             f"布局：{layout_name}"
             f"　|　倍速 {config.format_rate(self.audio.rate)}"
             f"　|　物件：6K {counts['lane']} · 区域 {counts['region']} · 滑键 {counts['slide']}"
-            f" · 点击 {counts['click']}"
+            f" · 禁区 {counts['forbidden']}"
             f"　|　判定线：第 {self.view.current_beat:.3f} 拍"
             f"　|　{self.controller.selection_summary()}"
             f"　|　{self.audio.status_text}"
@@ -1171,8 +1171,13 @@ class EditorApp:
         left: Tuple[float, float],
         right: Tuple[float, float],
     ) -> Optional[Dict]:
-        """空域：时间与左右边界首尾位置点完后，用对话框确认线型（也可以微调位置）。"""
-        template = MouseRegion(
+        """空域 / 禁区：时间与左右边界首尾位置点完后，用对话框确认线型（也可以微调位置）。"""
+        template_class = (
+            ForbiddenRegion
+            if self.controller.tool == config.TOOL_MOUSE_FORBIDDEN
+            else MouseRegion
+        )
+        template = template_class(
             "temp",
             beat_start,
             beat_end,
