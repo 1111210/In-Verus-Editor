@@ -11,10 +11,11 @@
 * **端点相接（紧贴）不算冲突**：例如长按在第 10 拍结束、另一个按键正好在第 10 拍 —— 允许。
   但瞬时按键落在长按/多轨按键的**内部**要报错。
 
-鼠标平面：**只检查滑键**。
+鼠标平面：滑键与鼠标点击按键共用下面这条规则。
 
 * 滑键所在时刻如果没有任何空域 —— 通过；
-* 如果该时刻存在空域，则滑键的横向范围必须与该空域的横向范围**相交或紧贴**，否则报错。
+* 如果该时刻存在空域（**空域的开始 / 结束时刻不算“同时存在”**），
+  则滑键的横向范围必须与该空域的横向范围**相交或紧贴**，否则报错。
 
 说明：规则的判定对象是“判定时刻”，速度组只影响视觉表现，不影响判定时间。
 """
@@ -66,6 +67,15 @@ def ranges_touch_or_overlap(lo1: float, hi1: float, lo2: float, hi2: float,
                             eps: float = 1e-6) -> bool:
     """两个横向范围是否相交或紧贴。"""
     return not (hi1 < lo2 - eps or hi2 < lo1 - eps)
+
+
+def region_active_at(region: MouseRegion, beat: float, eps: float = EPS) -> bool:
+    """``beat`` 处空域是否“同时存在”。
+
+    **空域的开始 / 结束时刻不算同时存在**：滑键（或点击按键）正好落在空域的起止
+    那一刻时不参与这条检查；只有落在空域内部，才要求横向范围相交 / 紧贴。
+    """
+    return region.beat_start + eps < beat < region.beat_end - eps
 
 
 def lane_range_overlap(a: LaneNote, b: LaneNote) -> Tuple[int, int] | None:
@@ -128,7 +138,10 @@ def _build_region_buckets(regions: Sequence[MouseRegion]) -> Dict[int, List[Mous
 
 
 def check_slides(chart: Chart) -> List[Issue]:
-    """鼠标部分：滑键所在时刻要么没有空域，要么与空域相交 / 紧贴。"""
+    """滑键：所在时刻要么没有空域，要么与空域相交 / 紧贴。
+
+    空域的开始 / 结束时刻不算“同时存在”，滑键正好落在那一刻时不检查。
+    """
     issues: List[Issue] = []
     regions = [n for n in chart.mouse_notes if isinstance(n, MouseRegion)]
     slides = [n for n in chart.mouse_notes if isinstance(n, MouseSlide)]
@@ -140,7 +153,7 @@ def check_slides(chart: Chart) -> List[Issue]:
         active = [
             region
             for region in buckets.get(cell, ())
-            if region.beat_start - EPS <= slide.beat <= region.beat_end + EPS
+            if region_active_at(region, slide.beat)
         ]
         if not active:
             continue
@@ -174,7 +187,8 @@ def check_slides(chart: Chart) -> List[Issue]:
 def check_clicks(chart: Chart) -> List[Issue]:
     """鼠标点击按键：
 
-    * 与滑键相同的规则 —— 所在时刻要么没有空域，要么与空域相交 / 紧贴；
+    * 与滑键相同的规则 —— 所在时刻要么没有空域，要么与空域相交 / 紧贴
+      （空域的开始 / 结束时刻不算“同时存在”）；
     * 额外限制 —— **同一时刻不能出现两个鼠标点击按键**。
     """
     issues: List[Issue] = []
@@ -206,7 +220,7 @@ def check_clicks(chart: Chart) -> List[Issue]:
         active = [
             region
             for region in buckets.get(cell, ())
-            if region.beat_start - EPS <= click.beat <= region.beat_end + EPS
+            if region_active_at(region, click.beat)
         ]
         if not active:
             continue
@@ -255,7 +269,8 @@ def format_report(chart: Chart, issues: Sequence[Issue]) -> str:
         "检查规则：",
         "  · 任意轨道在任意时刻只能存在一个按键；长按 / 多轨按键与其它按键重叠都算冲突",
         "    （端点相接的“紧贴”不算冲突，但瞬时按键落在长按内部算冲突）",
-        "  · 滑键所在时刻若存在空域，则滑键横向范围必须与该空域相交或紧贴",
+        "  · 滑键所在时刻若落在空域内部（开始 / 结束时刻不算），",
+        "    则滑键横向范围必须与该空域相交或紧贴",
         "  · 鼠标点击按键与滑键规则相同，且同一时刻不能出现两个点击按键",
         "",
     ]
