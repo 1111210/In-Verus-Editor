@@ -1,9 +1,9 @@
 """音频播放后端与倍速（变速变调：慢放会同时降低音调）。
 
 后端：
-* PygameBackend            —— pygame.mixer.music 流式播放（倍速 = 1.0x 时使用）
+* PygameBackend            —— pygame.mixer.music 流式播放（1.0x 且不需要混音时使用）
 * StretchedSoundBackend    —— 用线性插值重采样把样本拉长后播放
-  （倍速 < 1.0x 时使用；慢放 = 降采样，所以音调随之变低，等价于“降低采样率”）
+  （有倍速或需要混入音效时使用；慢放 = 降采样，音调随之变低）
 * SilentBackend            —— 静音时钟（没有 pygame / 没有音频文件时的兜底）
 
 所有后端的 position_ms() 都返回歌曲原始时间轴上的位置，
@@ -380,7 +380,7 @@ class PygameBackend:  # pragma: no cover - 依赖 pygame
 
 
 class StretchedSoundBackend:  # pragma: no cover - 依赖 pygame + numpy
-    """时间伸缩播放后端：把 PCM 分窗口拉伸（音调不变）后用 Sound 播放。"""
+    """重采样播放后端：把 PCM 分窗口按倍速拉伸后用 Sound 播放（慢放音调随之变低）。"""
 
     name = "pygame+resample"
     supports_seek = True
