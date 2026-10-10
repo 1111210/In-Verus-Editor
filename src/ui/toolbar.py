@@ -3,7 +3,7 @@
 顶栏只保留 **几个分组入口 + 播放/暂停 + 快速缩放**（全部是黑底按钮，弹出的二级菜单也是黑底）：
 
 * 文件   —— 新建 / 打开 / 保存 / 另存为
-* 编辑   —— 撤销 / 重做 / 复制 / 粘贴 / 镜像 / 删除 / 全选（编辑物件是顶栏独立按钮）
+* 编辑   —— 撤销 / 重做 / 剪切 / 复制 / 粘贴 / 镜像 / 删除 / 全选（编辑物件是顶栏独立按钮）
 * 放置   —— 选择、单轨、多轨、长按（含多轨）、空域、禁区、左右滑键（二级菜单里可勾选）
 * 视图   —— 缩放、时间网格细分、横向辅助网格、跳转、全屏
 * 谱面设置 —— 元数据、BPM 与偏移
@@ -59,6 +59,8 @@ class Toolbar(ttk.Frame):
         self.theme = theme
         self.root: tk.Misc = app.root
         self._registered: List[Tuple[tk.Menu, int, Entry, Optional[tk.Variable], object]] = []
+        # 菜单项 -> (菜单, 条目下标)：撤销 / 重做要按动作名动态改文字
+        self._entry_positions: Dict[int, Tuple[tk.Menu, int]] = {}
         self._vars: Dict[str, tk.Variable] = {}
         self._group_buttons: Dict[str, tk.Menubutton] = {}
         self._direct_buttons: List[Tuple[ttk.Button, Optional[Callable[[], bool]]]] = []
@@ -69,7 +71,7 @@ class Toolbar(ttk.Frame):
         # 缓存上一次真正写入菜单/按钮的值：每帧无脑 entryconfigure 会导致菜单频闪
         self._last_entry_state: List[Optional[Tuple[str, Optional[bool]]]] = []
         self._last_entry_labels: List[Optional[str]] = []
-        self._last_labels: Dict[Tuple[str, int], str] = {}
+        self._last_labels: Dict[int, str] = {}
         self._last_play_text: Optional[str] = None
         self._last_place_text: Optional[str] = None
         self._last_rate_text: Optional[str] = None
@@ -90,6 +92,10 @@ class Toolbar(ttk.Frame):
         can_redo = lambda: app.document.can_redo() and not app.demo_mode  # noqa: E731
         has_clipboard = lambda: bool(app.document.clipboard) and not app.demo_mode  # noqa: E731
 
+        # 撤销 / 重做保留引用：菜单文字随动作名动态更新（见 sync / _set_entry_label）
+        self._undo_entry = Entry("撤销", app.undo, "Ctrl+Z", enabled=can_undo)
+        self._redo_entry = Entry("重做", app.redo, "Ctrl+Y", enabled=can_redo)
+
         # 「文件」与「编辑」整合成一个一级菜单
         document_group = Group("文件 / 编辑", [
             Entry("新建谱面", app.new_chart, "Ctrl+N"),
@@ -100,9 +106,10 @@ class Toolbar(ttk.Frame):
             Entry(separator=True),
             Entry("退出", app.on_close),
             Entry(separator=True),
-            Entry("撤销", app.undo, "Ctrl+Z", enabled=can_undo),
-            Entry("重做", app.redo, "Ctrl+Y", enabled=can_redo),
+            self._undo_entry,
+            self._redo_entry,
             Entry(separator=True),
+            Entry("剪切", app.cut_selection, "Ctrl+X", enabled=has_selection),
             Entry("复制", app.copy_selection, "Ctrl+C", enabled=has_selection),
             Entry("粘贴（点击目标时间）", app.begin_paste, "Ctrl+V", enabled=has_clipboard),
             Entry("沿中轴线镜像", app.mirror_selection, "M", enabled=has_selection),
@@ -395,21 +402,24 @@ class Toolbar(ttk.Frame):
             if entry.checked is not None:
                 var = tk.BooleanVar(value=bool(entry.checked()))
                 index = menu.index("end")
+                position = (index + 1) if index is not None else 0
                 menu.add_checkbutton(
                     label=label,
                     command=self._wrap_command(entry.command),
                     variable=var,
                     accelerator=accelerator,
                 )
-                self._registered.append((menu, (index + 1) if index is not None else 0, entry, var, True))
+                self._registered.append((menu, position, entry, var, True))
             else:
                 index = menu.index("end")
+                position = (index + 1) if index is not None else 0
                 menu.add_command(
                     label=label,
                     command=self._wrap_command(entry.command),
                     accelerator=accelerator,
                 )
-                self._registered.append((menu, (index + 1) if index is not None else 0, entry, None, False))
+                self._registered.append((menu, position, entry, None, False))
+            self._entry_positions[id(entry)] = (menu, position)
 
     def _wrap_command(self, command: Optional[Callable[[], None]]):
         """菜单项被点击时先收起菜单（并记录状态），再执行动作。"""
@@ -566,8 +576,14 @@ class Toolbar(ttk.Frame):
             self._last_entry_state[position] = desired
 
         # 撤销 / 重做 显示具体动作名
-        self._set_label("编辑", 0, f"撤销 {document.undo_label()}".strip() if document.can_undo() else "撤销")
-        self._set_label("编辑", 1, f"重做 {document.redo_label()}".strip() if document.can_redo() else "重做")
+        self._set_entry_label(
+            self._undo_entry,
+            f"撤销 {document.undo_label()}".strip() if document.can_undo() else "撤销",
+        )
+        self._set_entry_label(
+            self._redo_entry,
+            f"重做 {document.redo_label()}".strip() if document.can_redo() else "重做",
+        )
 
         place_button = self._group_buttons.get("放置")
         if place_button is not None:
@@ -593,16 +609,17 @@ class Toolbar(ttk.Frame):
                 button.configure(state=state)
                 self._last_direct_state[position] = state
 
-    def _set_label(self, group_label: str, command_index: int, text: str) -> None:
-        """按命令序号修改某个分组菜单（含菜单栏副本）的条目文字。"""
-        key = (group_label, command_index)
+    def _set_entry_label(self, entry: Entry, text: str) -> None:
+        """修改某个菜单项的文字（撤销 / 重做显示具体动作名）。"""
+        key = id(entry)
         if self._last_labels.get(key) == text:
             return
+        target = self._entry_positions.get(key)
+        if target is None:
+            return
+        menu, index = target
+        try:
+            menu.entryconfigure(index, label=text)
+        except tk.TclError:  # pragma: no cover
+            return
         self._last_labels[key] = text
-        for menu in (self._menus.get(group_label),):
-            if menu is None:
-                continue
-            try:
-                menu.entryconfigure(command_index, label=text)
-            except tk.TclError:  # pragma: no cover
-                pass

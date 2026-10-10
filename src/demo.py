@@ -220,6 +220,19 @@ def selftest(verbose: bool = True) -> Tuple[bool, List[str]]:
     document.undo()
     check.ok(len(document.chart.all_notes()) == before + 2, "连续撤销回到粘贴后的状态")
 
+    # ---- 剪切：复制 + 删除，整体一步撤销 ----
+    document.select_only([created[0].id])
+    check.ok(document.cut_selection() == 1, "剪切选择")
+    check.ok(document.chart.find(created[0].id) is None, "剪切后物件从谱面移除")
+    check.ok(len(document.clipboard) == 1, "剪切后剪贴板仍保留数据")
+    document.undo()
+    check.ok(document.chart.find(created[0].id) is not None, "撤销剪切恢复物件")
+    check.ok(document.selection == {created[0].id}, "撤销剪切恢复选择")
+    document.redo()
+    check.ok(document.chart.find(created[0].id) is None, "重做剪切再次删除")
+    document.undo()
+    check.ok(len(document.chart.all_notes()) == before + 2, "撤销重做后回到剪切前状态")
+
     # ---- 速度组成员双向一致 ----
     for group in document.chart.speed_groups:
         for note_id in group.note_ids:

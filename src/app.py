@@ -233,6 +233,7 @@ class EditorApp:
         root.bind("<Control-y>", lambda e: self.redo())
         root.bind("<Control-Shift-Z>", lambda e: self.redo())
         root.bind("<Control-c>", lambda e: self.copy_selection())
+        root.bind("<Control-x>", lambda e: self.cut_selection())
         root.bind("<Control-v>", lambda e: self.begin_paste())
         root.bind("<Control-a>", lambda e: self.select_all())
         root.bind("<Control-m>", lambda e: self.mirror_selection())
@@ -1204,6 +1205,17 @@ class EditorApp:
     def copy_selection(self) -> None:
         count = self.document.copy_selection()
         self.status(f"已复制 {count} 个物件" if count else "未选择任何物件")
+
+    def cut_selection(self) -> None:
+        """剪切：复制到剪贴板后删除，整体只产生一步撤销。"""
+        if not self.document.selection:
+            self.status("未选择任何物件")
+            return
+        count = self.document.cut_selection()
+        if self.controller.paste_mode:
+            # 剪贴板内容已更新：退出已进入的粘贴模式，避免预览与实际粘贴不一致
+            self.controller.cancel_pending()
+        self.status(f"已剪切 {count} 个物件" if count else "未选择任何物件")
 
     def begin_paste(self) -> None:
         self.controller.begin_paste()

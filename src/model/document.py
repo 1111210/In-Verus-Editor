@@ -8,6 +8,7 @@
 
 * 放置 / 粘贴 → 撤销 = 删除这些新 id；重做 = 用保存的数据重建；
 * 删除 → 撤销 = 把被删物件的数据写回来；重做 = 再删一次；
+* 剪切 → 先复制到剪贴板再删除（复用“删除”的记录：撤销恢复物件与选择，重做再删一次）；
 * 镜像 / 编辑物件 / 改速度组归属 → 记录这些物件的“改动前 / 改动后”数据并互相替换；
 * 元数据 / BPM 与偏移 / 速度组面板 → 只记录这些轻量结构的旧值。
 
@@ -269,6 +270,17 @@ class Document:
         notes = self.selected_notes()
         self.clipboard = [n.to_dict() for n in notes]
         return len(self.clipboard)
+
+    def cut_selection(self, label: str = "剪切物件") -> int:
+        """剪切 = 复制到剪贴板 + 删除选中物件（整体只占一步撤销）。
+
+        复制只写剪贴板，不进撤销栈；删除提交一条记录，因此撤销会把物件与当时的
+        选择一起恢复，重做再删一次，剪贴板内容不受撤销影响。
+        """
+        count = self.copy_selection()
+        if count:
+            self.delete_notes(list(self.selection), label=label)
+        return count
 
     def paste_clipboard(self, base_beat: float, label: str = "粘贴物件") -> List[Note]:
         """把剪贴板内容粘贴到 ``base_beat``：轨道/水平位置不动，只平移时间。"""
