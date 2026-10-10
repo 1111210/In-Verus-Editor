@@ -7,7 +7,7 @@
 * **其他图**：尺寸和期望不符时**拉伸**到期望尺寸（平滑缩放）；
 * 文件缺失或读不出来：按期望尺寸生成占位图（单像素图用白色半透明），保证游戏仍能跑。
 
-贴图由 ``tools/make_preview_textures.py`` 生成，默认放在 ``assets/textures/preview/``。
+贴图默认放在 ``assets/textures/preview/``，缺失时按下文的占位规则生成。
 """
 
 from __future__ import annotations
@@ -19,8 +19,8 @@ import pygame
 
 LANE_COUNT = 6
 
-# 长按中间那条纯白竖线占键宽的比例：贴图（tools/make_preview_textures.py 里的同名
-# 常量）与软渲染手绘白线必须用同一个值，否则开头 / 主体接缝处会一粗一细。
+# 长按中间那条纯白竖线占键宽的比例：贴图与软渲染手绘白线必须用同一个值，
+# 否则开头 / 主体接缝处会一粗一细。
 HOLD_LINE_FRACTION = 1.0 / 8.0
 
 # 期望尺寸（宽, 高）：与实际文件不符时会拉伸 / 取平均

@@ -190,10 +190,6 @@ def _trim_startup_log(target: str) -> None:
         handle.writelines(tail)
 
 
-def audio_backend_available() -> bool:
-    return _PYGAME is not None
-
-
 def time_stretch(
     samples,
     rate: float,
@@ -986,7 +982,7 @@ class AudioPlayer:
         was_playing = self._playing
         position = self.position_ms()
         self.rate = rate
-        # 切换后端前先把旧的停掉（否则被换下的后端会继续出声，听起来像“停不下来”）
+        # 切换后端前先停掉当前后端，避免两路声音同时输出
         self._stop_all_backends()
         backend = self._select_backend()
         if backend is not self.backend:
@@ -999,9 +995,8 @@ class AudioPlayer:
             self._sync_effects()
         self._paused_at_ms = position
         self._playing = False
-        # 播放中改倍速会换成另一个后端（普通 ↔ 重采样），无缝接力很容易出现
-        # 片段重叠 / 丢失，所以这里**一律自动暂停**，停在当前位置：
-        # 按空格即可用新倍速继续（界面会提示）。
+        # 播放中切倍速会切换后端（普通 ↔ 重采样），两段音频很难无缝接力：
+        # 这里一律自动暂停在当前位置，按空格即可用新倍速继续（界面会提示）。
         self.paused_by_rate_change = bool(was_playing)
 
     # ------------------------------------------------------------------ 控制

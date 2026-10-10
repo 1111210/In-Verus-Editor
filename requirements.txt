@@ -1,17 +1,4 @@
-# 社区谱面编辑器依赖
-# ==================================================================
-# 界面：Python 标准库 tkinter（Python 3.10+ 自带；Linux 需要 python3-tk）
-# 音频：pygame-ce —— 真实音频播放与精确 seek（推荐安装）
-# 演示模式：同一份 pygame-ce 负责软件渲染的游玩视角预览
-#
-#     python -m venv .venv
-#     .\.venv\Scripts\python.exe -m pip install -r requirements.txt
-#     (Linux/macOS: .venv/bin/python -m pip install -r requirements.txt)
-#
-# 说明：核心编辑器不依赖任何第三方包。若当前 Python 版本暂时没有
-# pygame-ce 轮子，可跳过该依赖 —— 编辑器会自动退化为“静音时钟”后端，
-# 滚动、缩放、播放进度、编辑等功能全部照常可用（状态栏会明确提示）。
-# ==================================================================
+# 可选依赖：界面只用标准库 tkinter，缺以下包时自动退化为静音时钟。
 pygame-ce>=2.5.0
-# 变速不变调（时间伸缩 WSOLA）需要 numpy；不装也能用，只是倍速固定 1.0x
+# 变速不变调（时间伸缩 WSOLA）；不装时倍速固定 1.0x
 numpy>=1.26

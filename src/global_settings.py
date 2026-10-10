@@ -50,14 +50,14 @@ def save_settings(settings: EditorSettings, path: Optional[str] = None) -> str:
     return target
 
 
-def adopt_legacy_settings(settings: EditorSettings, legacy: Optional[Dict[str, Any]]) -> bool:
-    """把老谱面里的 ``editor`` 段并入全局设置（只在全局文件还没建立时迁移一次）。
+def adopt_chart_settings(settings: EditorSettings, data: Optional[Dict[str, Any]]) -> bool:
+    """把谱面 ``editor`` 段里的偏好并入全局设置（仅在全局文件尚未建立时）。
 
-    返回是否真的做了迁移。
+    返回是否真的写入了设置。
     """
-    if not legacy or os.path.exists(settings_path()):
+    if not data or os.path.exists(settings_path()):
         return False
-    merged = EditorSettings.from_dict(legacy)
+    merged = EditorSettings.from_dict(data)
     for field in (
         "zoom_seconds",
         "grid_division",

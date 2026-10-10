@@ -1,38 +1,54 @@
-# Python
+# ---------------------------------------------------------------- Python
 __pycache__/
 *.py[cod]
 *.egg-info/
 .pytest_cache/
 .mypy_cache/
+.ruff_cache/
+.coverage
+htmlcov/
+.tox/
+.nox/
 
-# Virtual environment
+# ------------------------------------------------------------ 虚拟环境
 .venv/
 venv/
 env/
+ENV/
 
-# Editor / OS
+# --------------------------------------------- 编辑器 / 系统的本地配置与临时文件
 .vscode/
 .idea/
+.vs/
+*.swp
+*.swo
+*~
 .DS_Store
 Thumbs.db
+desktop.ini
 
-# Runtime artifacts
-*.log
-_build/
-dist/
+# --------------------------------------------------------- 构建 / 运行期产物
 build/
-# Audio copied next to charts is user content; keep the repo small
-charts/**/*.mp3
-charts/**/*.ogg
-charts/**/*.wav
-charts/**/*.flac
-charts/**/*.m4a
+dist/
+_build/
+# PyInstaller 等打包工具的本地构建配置
+*.spec
+# 打包好的发布产物（改用 GitHub Release 等渠道分发，不入库）
+release/
+# 运行日志（超过上限自动截断）
+*.log
 
-
-# 音频自检日志（运行时生成，超过上限自动截断）
+# --------------------------------------------------------- 测试 / 诊断产物
+# 音频等自检日志
 _diag/
+# 测试与开发辅助脚本：本地保留、不入库
+tests/
+tools/
 # 本地草稿
 scratch/
 
-# 测试/验收跑出来的临时谱面
-charts/test/
+# ------------------------------------------------------------- 用户内容
+# 谱面目录整体视为用户内容，不入库；示例谱面用
+# `python run_editor.py --make-demo` 随时重新生成。
+# 其中的音频、临时测试谱面等自然也一并忽略。
+charts/

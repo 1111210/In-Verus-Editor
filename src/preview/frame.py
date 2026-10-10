@@ -75,14 +75,6 @@ def note_scroll_ms(chart: Chart, note: Note, now_ms: float) -> float:
     return scroll_ms(chart, chart.group_of_note(note), now_ms, note.head_beat)
 
 
-def note_ahead(chart: Chart, note: Note, now_ms: float, span_ms: float) -> bool:
-    """物件是否已进入可视范围。
-
-    按**滚动距离**判断（流速可正可负，拍差排序 ≠ 位置排序）。
-    """
-    return note_scroll_ms(chart, note, now_ms) <= span_ms
-
-
 def _note_z_span_at(
     chart: Chart, note: Note, now_beat: float, span_ms: float
 ) -> Optional[Tuple[float, float]]:
@@ -172,7 +164,7 @@ def region_samples(
       还没走完的那一段，不在判定线之前拖一条已经判过的尾巴；
     * 只保留滚动距离落在 ``[near_ms, span_ms]`` 的部分：``near_ms`` 由相机对
       该平面的可视下界（``PreviewScene.visible_z_near``）换算而来，默认 0 = 判定线；
-      超出轨道尽头的点不再采样，否则它们会全挤在远端相互叠色（看起来像空域堆在
+      轨道尽头以外的点直接丢弃，避免它们在远端相互叠色（看起来像空域堆在
       平面尽头）；
     * 距离在相邻采样之间是线性的（段边界已在采样点上），交点用线性插值精确定位；
     * 流速可正可负，同一空域可能被推成多段，所以返回**若干段**。
@@ -192,8 +184,8 @@ def region_samples(
         beats.add(float(cut))
     if min(start, end) < now_beat < max(start, end):
         beats.add(float(now_beat))       # 时间下界也作为采样点：截断位置精确
-    # 距离按拍**增量积分**：相邻采样点之间只积分一小段，而不是每个点都从判定时刻
-    # 重新积分一遍 —— 空域很长、速度段很多时，后者的开销是「采样点数 × 段数」。
+    # 距离按拍**增量积分**：相邻采样点之间只积分一小段，长空域 + 多速度段的
+    # 开销与采样点数成正比。
     points: List[Tuple[float, float]] = []
     previous_beat = now_beat
     distance_ms = 0.0
@@ -237,20 +229,6 @@ def region_samples(
     if len(current) >= 2:
         runs.append(current)
     return runs
-
-
-def region_crosses_line(
-    chart: Chart,
-    note: MouseRegion,
-    now_ms: float,
-    span_ms: float,
-    near_ms: float = 0.0,
-) -> bool:
-    """空域此刻是否正压在判定线上（可见段跨过距离 0）。
-
-    用来决定要不要在判定线上画空域高亮：时间没到 / 已经结束的空域不该留一条亮线。
-    """
-    return runs_cross_line(region_samples(chart, note, now_ms, span_ms, near_ms=near_ms))
 
 
 def runs_cross_line(runs: List[List[Tuple[float, float]]]) -> bool:
@@ -370,9 +348,8 @@ def pattern_height(thickness: float) -> float:
     return max(PATTERN_MIN_THICKNESS, thickness)
 
 
-# 滑键主体 / 箭头贴图是“可见楔形在上半、下半完全透明”的双倍高图
-# （见 ``tools/make_preview_textures.py::slide_body``）：按图片中心对齐鼠标平面
-# 摆放时，可见的楔形整条落在平面上方（底边贴平面）。
+# 滑键主体 / 箭头贴图是“可见楔形在上半、下半完全透明”的双倍高图：
+# 按图片中心对齐鼠标平面摆放时，可见的楔形整条落在平面上方（底边贴平面）。
 SLIDE_IMAGE_SCALE = 2.0
 
 

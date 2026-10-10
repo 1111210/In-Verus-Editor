@@ -849,7 +849,7 @@ class SoftwareView:
             )
 
     def _draw_pattern(self, note: Note, now_ms: float) -> None:
-        """滑键：图案平行于判定平面，改用预设贴图（缺贴图时程序化绘制兜底）。"""
+        """滑键：图案平行于判定平面，使用预设贴图（缺贴图时程序化绘制兜底）。"""
         z_near = self._plane_z_near(MOUSE_PLANE_HEIGHT)   # 反向时图案会走到判定线之前
         span = self._visible_span_ms()
         # 时间（判定未结束）+ 位置（z 在可视范围内）两个条件都要满足
@@ -862,10 +862,10 @@ class SoftwareView:
         if self.textures or self._tex("slide_body_right") is not None:
             if self._draw_pattern_textured(note, z):
                 return
-        self._draw_pattern_legacy(note, z)
+        self._draw_pattern_fallback(note, z)
 
     def _draw_pattern_textured(self, note: Note, z: float) -> bool:
-        """贴图版滑键（缺贴图时返回 False，改走程序化绘制兜底）。"""
+        """贴图版滑键（缺贴图时返回 False，交给程序化绘制兜底）。"""
         assert isinstance(note, MouseSlide)
         shape = frame.slide_shape(note)
         direction = shape.direction
@@ -901,7 +901,7 @@ class SoftwareView:
             self._blit_tex_quad(f"slide_arrow_{name}", arrow_quad)
         return True
 
-    def _draw_pattern_legacy(self, note: Note, z: float) -> None:
+    def _draw_pattern_fallback(self, note: Note, z: float) -> None:
         """程序绘制的样式（缺贴图时的兜底）。"""
         if isinstance(note, MouseSlide):
             color = (110, 230, 160) if note.direction >= 0 else (235, 210, 110)

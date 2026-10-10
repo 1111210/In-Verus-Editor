@@ -29,7 +29,7 @@ from model.notes import BoundaryCurve, ForbiddenRegion, MouseRegion
 from model.timing import TimingMap
 from model.validate import format_report, validate_chart
 from global_settings import (
-    adopt_legacy_settings,
+    adopt_chart_settings,
     load_settings,
     save_settings,
 )
@@ -789,9 +789,9 @@ class EditorApp:
         except Exception as exc:  # pragma: no cover - 依赖外部文件
             messagebox.showerror("打开失败", f"无法读取谱面：\n{exc}", parent=self.root)
             return
-        # 老谱面里可能还留着 editor 段：全局文件还没建立时迁移一次
-        legacy = raw.get("editor") if isinstance(raw, dict) else None
-        if adopt_legacy_settings(self.editor_settings, legacy):
+        # 谱面里可能带有 editor 段：全局设置文件尚未建立时据此初始化
+        chart_editor = raw.get("editor") if isinstance(raw, dict) else None
+        if adopt_chart_settings(self.editor_settings, chart_editor):
             save_settings(self.editor_settings)
             self._apply_volumes()
         chart.settings = self.editor_settings
