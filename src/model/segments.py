@@ -1,8 +1,8 @@
 """分段常量序列的公共操作。
 
-BPM 列表（``timing.py``）与流速列表（``speed.py``）是同一种数据：
+BPM 列表（timing.py）与流速列表（speed.py）是同一种数据：
 「从某一拍开始，参数保持常量，直到下一条记录」。这里集中两处共用的
-排序 / 去重 / 查询逻辑，具体参数的取值范围仍由各自的 ``make`` 负责。
+排序 / 去重 / 查询逻辑，具体参数的取值范围仍由各自的 make 负责。
 """
 
 from __future__ import annotations
@@ -30,7 +30,7 @@ def normalize_segments(
 ) -> List[T]:
     """排序、去重（同一拍保留最后一条），并保证列表非空、第一段从第 0 拍起。
 
-    ``make`` 负责把一条记录换算成合法值；``to_zero`` 给出「第一段挪到第 0 拍」
+    make 负责把一条记录换算成合法值；to_zero 给出「第一段挪到第 0 拍」
     的写法（默认不改动）。
     """
     cleaned = [make(seg) for seg in segments]
@@ -49,7 +49,7 @@ def normalize_segments(
 
 
 def segment_index_at(segments: Sequence[Segment], beat: float, eps: float = 1e-12) -> int:
-    """``beat`` 落在第几段；早于第一段时返回 0。"""
+    """beat 落在第几段；早于第一段时返回 0。"""
     index = 0
     for i, seg in enumerate(segments):
         if seg.start_beat <= beat + eps:
@@ -64,7 +64,7 @@ def segment_at(segments: Sequence[T], beat: float, eps: float = 1e-12) -> T:
 
 
 def segment_end(segments: Sequence[Segment], index: int) -> float:
-    """第 ``index`` 段的结束拍；最后一段返回 ``INF``。"""
+    """第 index 段的结束拍；最后一段返回 INF。"""
     if 0 <= index < len(segments) - 1:
         return segments[index + 1].start_beat
     return INF

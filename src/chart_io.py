@@ -1,7 +1,7 @@
 """谱面 JSON 读写与音频复制。
 
-音频策略：选择音频文件后，把歌曲复制到 **谱面文件所在文件夹** 的 ``audio/`` 子目录，
-谱面里记录相对路径（``audio/song.mp3``），保证谱面可以整体搬迁。
+音频策略：选择音频文件后，把歌曲复制到谱面文件所在文件夹的 audio/ 子目录，
+谱面里记录相对路径（audio/song.mp3），保证谱面可以整体搬迁。
 """
 
 from __future__ import annotations
@@ -16,7 +16,7 @@ from model.chart import Chart
 
 
 def ensure_chart_suffix(path: str) -> str:
-    """保证谱面文件名以 ``.json`` 结尾（只支持 JSON 格式）。"""
+    """保证谱面文件名以 .json 结尾（只支持 JSON 格式）。"""
     root, ext = os.path.splitext(path)
     if ext.lower() == config.CHART_EXTENSION:
         return path
@@ -56,9 +56,9 @@ def choose_audio_relative_path(audio_path: str) -> str:
 
 
 def copy_audio_into_chart_dir(audio_path: str, chart_path: str) -> str:
-    """复制歌曲到**谱面文件所在文件夹**，返回谱面内记录的文件名。
+    """复制歌曲到谱面文件所在文件夹，返回谱面内记录的文件名。
 
-    如果谱面尚未保存（``chart_path`` 为空），使用当前工作目录下的 ``charts/unsaved``。
+    如果谱面尚未保存（chart_path 为空），使用当前工作目录下的 charts/unsaved。
     """
     if not audio_path:
         return ""

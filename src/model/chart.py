@@ -61,13 +61,13 @@ class Metadata:
 class EditorSettings:
     """全局编辑器设置。
 
-    * ``zoom_seconds``         —— 屏幕上同时显示多长时间内出现的物件（缩放）。
-    * ``grid_division``        —— 时间网格：一拍细分为多少个音（正整数）。
-    * ``horizontal_divisions`` —— 鼠标平面横向辅助网格：0..1 合法区域几等分，0 表示关闭。
-    * ``audio_latency_ms``     —— 系统音频延迟：从执行播放到硬件出声的毫秒数。
-    * ``metronome``            —— 节拍音：``off``（默认）/ ``bar``（小节）/ ``beat``（节拍）。
-    * ``show_past_notes``      —— 判定时刻已过的物件是否继续绘制（默认关闭）。
-    * ``demo_*``               —— 演示视图（软件渲染的游玩视角预览）的独立渲染参数：
+    * zoom_seconds         —— 屏幕上同时显示多长时间内出现的物件（缩放）。
+    * grid_division        —— 时间网格：一拍细分为多少个音（正整数）。
+    * horizontal_divisions —— 鼠标平面横向辅助网格：0..1 合法区域几等分，0 表示关闭。
+    * audio_latency_ms     —— 系统音频延迟：从执行播放到硬件出声的毫秒数。
+    * metronome            —— 节拍音：off（默认）/ bar（小节）/ beat（节拍）。
+    * show_past_notes      —— 判定时刻已过的物件是否继续绘制（默认关闭）。
+    * demo_*               —— 演示视图（软件渲染的游玩视角预览）的独立渲染参数：
       物件厚度 / 流速 / 侧轨高亮。
     """
 
@@ -209,7 +209,7 @@ class Chart:
         self._order_revision = 0
         # 谱面内容版本号（物件增删 / 编辑 / 时间变动都会 +1；渲染与命中缓存用）
         self.revision = 0
-        # 下列都是**派生索引**（不参与序列化）：按需建立，增删物件时同步维护
+        # 下列都是派生索引（不参与序列化）：按需建立，增删物件时同步维护
         self._id_index: Optional[Dict[str, Note]] = None
         self._used_ids: Optional[set] = None
         self._group_index: Optional[Dict[int, SpeedGroup]] = None
@@ -225,10 +225,10 @@ class Chart:
         return [n for n in self.sorted_notes() if isinstance(n, MouseNote)]
 
     def sorted_notes(self) -> List[Note]:
-        """按 ``(判定时刻, 结束时刻, id)`` 排序的物件列表（带缓存）。
+        """按 (判定时刻, 结束时刻, id) 排序的物件列表（带缓存）。
 
-        调用方**不要修改**返回的列表。缓存会在 ``add`` / ``remove`` /
-        ``invalidate_order()`` 之后自动重建；``Document.apply`` 每次编辑也会调用它，
+        调用方不要修改返回的列表。缓存会在 add / remove /
+        invalidate_order() 之后自动重建；Document.apply 每次编辑也会调用它，
         所以就地修改物件（镜像 / 平移 / 改时间）后同样会刷新。
         """
         if self._sorted_cache is None:
@@ -237,14 +237,14 @@ class Chart:
         return self._sorted_cache
 
     def sorted_head_beats(self) -> List[float]:
-        """与 :meth:`sorted_notes` 平行的开头拍列表（用于二分可视窗口）。"""
+        """与 sorted_notes 平行的开头拍列表（用于二分可视窗口）。"""
         if self._sorted_heads is None:
             self.sorted_notes()
         assert self._sorted_heads is not None
         return self._sorted_heads
 
     def max_note_span(self) -> float:
-        """全谱最长的 ``tail_beat − head_beat``（可视窗口回扫用，带缓存）。"""
+        """全谱最长的 tail_beat − head_beat（可视窗口回扫用，带缓存）。"""
         if self._max_note_span is None:
             self._max_note_span = max(
                 (float(n.tail_beat) - float(n.head_beat) for n in self.all_notes()),
@@ -448,7 +448,7 @@ class Chart:
             "version": config.CHART_FORMAT_VERSION,
             "metadata": self.metadata.to_dict(),
             "timing": self.timing.to_dict(),
-            # 注意：编辑器设置（视图 / 音效 / 编辑器设置）**不写进谱面**，
+            # 注意：编辑器设置（视图 / 音效 / 编辑器设置）不写进谱面，
             # 它们保存在全局配置文件里（见 global_settings.py）。
             "speed_groups": [g.to_dict() for g in self.speed_groups],
             "lanes": [n.to_dict() for n in self.sorted_notes() if isinstance(n, LaneNote)],

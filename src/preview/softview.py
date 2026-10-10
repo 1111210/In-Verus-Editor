@@ -1,11 +1,11 @@
 """演示视图的软件渲染（编辑器「演示模式」使用）。
 
-把 3D 世界（:mod:`preview.scene` / :mod:`preview.frame`）
-用 pygame 的**软件透视投影**画到离屏 Surface 上：不创建窗口、不初始化音频，也不含
+把 3D 世界（preview.scene / preview.frame）
+用 pygame 的软件透视投影画到离屏 Surface 上：不创建窗口、不初始化音频，也不含
 任何判定 / 计分 / 输入逻辑。编辑器演示模式把这里画出的帧贴到画布上（见
-``EditorApp.set_demo_mode`` / ``softview.draw_frame``）。
+EditorApp.set_demo_mode / softview.draw_frame）。
 
-渲染参数来自编辑器自己的「演示视图设置」（``EditorSettings.demo_*``）：物件厚度、
+渲染参数来自编辑器自己的「演示视图设置」（EditorSettings.demo_*）：物件厚度、
 流速、侧轨高亮，与谱面文件互相独立；渲染后端固定为软件渲染。
 """
 
@@ -38,7 +38,7 @@ from .scene import (
 from .settings import ViewSettings
 
 def _resource_root() -> str:
-    """仓库根目录（开发时）或打包后的资源解包目录（PyInstaller 的 ``_MEIPASS``）。"""
+    """仓库根目录（开发时）或打包后的资源解包目录（PyInstaller 的 _MEIPASS）。"""
     if getattr(sys, "frozen", False):
         return getattr(sys, "_MEIPASS", os.path.dirname(os.path.abspath(sys.executable)))
     return os.path.dirname(  # src/preview/softview.py → 仓库根目录
@@ -55,7 +55,7 @@ FORBIDDEN_TINT = (255, 90, 70)
 K6_TINT = (120, 160, 255)
 SIDE_TINT = (58, 35, 82)
 LANE_PRESS_TINT = (44, 86, 150)     # 按下轨道时的高亮底色
-# 空域左右边线的半宽（**世界单位**）：按 REGION_EDGE_HALF_WORLD × 透视缩放绘制，
+# 空域左右边线的半宽（世界单位）：按 REGION_EDGE_HALF_WORLD × 透视缩放绘制，
 # 远近粗细与贴图一致。0.006 是与 scene.UNIT_SCALE 配套的基准比例。
 REGION_EDGE_HALF_WORLD = 0.006 * UNIT_SCALE
 DEFAULT_TEXTURE_DIR = os.path.join(ROOT, "assets", "textures", "preview")
@@ -125,7 +125,7 @@ class SoftwareView:
     def _compute_texture_averages(self) -> None:
         """算好"平均色"贴图（软件绘制长条 / 轨道 / 边界时用它们填透视正确的多边形）。
 
-        在加载阶段一次性算好（`_load_textures` 里调用），渲染时直接取用；
+        在加载阶段一次性算好（_load_textures 里调用），渲染时直接取用；
         缺图的情况才即时计算。
         """
         self.texture_avg = {}
@@ -159,9 +159,9 @@ class SoftwareView:
         return self.textures.get(name)
 
     def _blit_tex_quad(self, name: str, corners, flip_x: bool = False) -> bool:
-        """按**仿射**把贴图铺到投影后的四边形上（不是拉伸到外接矩形）。
+        """按仿射把贴图铺到投影后的四边形上（不是拉伸到外接矩形）。
 
-        ``corners`` 顺序与贴图一致：``[左上, 右上, 右下, 左下]``。
+        corners 顺序与贴图一致：[左上, 右上, 右下, 左下]。
         用“上边向量”定旋转角与宽度、“左边向量”定高度，再以四边形中心对齐 blit；
         6K 平面里再配合“按屏幕高度切片”，透视就不会被抹平成方块。
         """
@@ -204,11 +204,11 @@ class SoftwareView:
 
     def _blit_lane_tex(self, name: str, x0: float, x1: float, z_near: float, z_far: float,
                        slices: int = 0, flip_x: bool = False) -> bool:
-        """把贴图按**透视正确**的方式铺在 6K 平面的一块区域里。
+        """把贴图按透视正确的方式铺在 6K 平面的一块区域里。
 
-        直接 ``_blit_tex_quad`` 只能做仿射（旋转 + 缩放），而轨道平面上的矩形在屏幕上
-        是**梯形**：左右边应该跟着轨道收敛。只按“上边角度 + 左边长度”贴，就会画成一个
-        **竖直矩形** —— 看起来像按键竖在平面里。这里沿 z 分片，每片再取贴图对应的
+        直接 _blit_tex_quad 只能做仿射（旋转 + 缩放），而轨道平面上的矩形在屏幕上
+        是梯形：左右边应该跟着轨道收敛。只按“上边角度 + 左边长度”贴，就会画成一个
+        竖直矩形 —— 看起来像按键竖在平面里。这里沿 z 分片，每片再取贴图对应的
         子块（v 从近端的 0 到远端的 1），逐片仿射，误差只有片内那一点点。
         """
         surface = self._tex(name)
@@ -231,10 +231,10 @@ class SoftwareView:
         return True
 
     def _lane_tex_pieces(self, x0: float, x1: float, zs, tex_w: int, tex_h: int):
-        """把 6K 平面里的一块区域按 ``zs``（近 -> 远）切片。
+        """把 6K 平面里的一块区域按 zs（近 -> 远）切片。
 
-        返回 ``[(z_near, z_far, 源矩形, 目标矩形), ...]``。相邻分片的**目标矩形边界
-        整像素对齐**（上一片的下边界 == 下一片的上边界）：同一个 z 的屏幕 y 与 x 无关，
+        返回 [(z_near, z_far, 源矩形, 目标矩形), ...]。相邻分片的目标矩形边界
+        整像素对齐（上一片的下边界 == 下一片的上边界）：同一个 z 的屏幕 y 与 x 无关，
         所以只要按同一条 y 取整，片与片之间既不会留缝也不会重叠。
 
         所有分片共用同一条 y 取整，因此片与片之间既不会漏出下层颜色，也不会重叠。
@@ -245,7 +245,7 @@ class SoftwareView:
             za, zb = zs[index], zs[index + 1]
             if zb <= za:
                 continue
-            # 贴图 v：0 = 近端（判定线一侧，图像的**下**边），1 = 远端
+            # 贴图 v：0 = 近端（判定线一侧，图像的下边），1 = 远端
             v0, v1 = index / count, (index + 1) / count
             y1 = int(round((1.0 - v1) * tex_h))
             y0 = int(round((1.0 - v0) * tex_h))
@@ -267,7 +267,7 @@ class SoftwareView:
 
     def _blit_surface_rect(self, surface, rect, flip_x: bool = False,
                            key_prefix: str = "") -> bool:
-        """把一片贴图缩放到**整数矩形**上（分片贴图用；带缓存）。"""
+        """把一片贴图缩放到整数矩形上（分片贴图用；带缓存）。"""
         if surface is None:
             return False
         width = max(1, int(rect[2]))
@@ -296,9 +296,9 @@ class SoftwareView:
 
     @staticmethod
     def _spread_quad_x(quad, pixels: float = 1.0):
-        """把 ``[远左, 远右, 近右, 近左]`` 四边形的左右两条边各向外挪 ``pixels`` 像素。
+        """把 [远左, 远右, 近右, 近左] 四边形的左右两条边各向外挪 pixels 像素。
 
-        车道高亮是填充多边形，而 pygame 的填充**不含右 / 下边界像素**：它正好压在
+        车道高亮是填充多边形，而 pygame 的填充不含右 / 下边界像素：它正好压在
         车道分界线上时，会漏出一条 1px 的深色线（贴着轨道边界的那条斜线）。
         """
         far_left, far_right, near_right, near_left = quad
@@ -346,9 +346,9 @@ class SoftwareView:
     REGION_EDGE_MIN_HALF_PX = 0.35     # 再远也留一点，别整条看不见
 
     def _region_edge_style(self, scale: float):
-        """空域边线在某个透视缩放下的 ``(半宽像素, 不透明度系数)``。
+        """空域边线在某个透视缩放下的 (半宽像素, 不透明度系数)。
 
-        半宽 = ``REGION_EDGE_HALF_WORLD``（世界单位）× 该处的透视缩放，所以远近
+        半宽 = REGION_EDGE_HALF_WORLD（世界单位）× 该处的透视缩放，所以远近
         粗细自然变化；再按同样的比例降一点不透明度 —— pygame 的多边形填充最小
         也要占满 1 像素，只缩宽度的话远看还是跟近处一样实。
         """
@@ -360,7 +360,7 @@ class SoftwareView:
         return half, fade
 
     def _plane_strip_z(self, strips: int, world_y: float = 0.0) -> List[float]:
-        """某个水平面上按**屏幕高度**均匀切出来的 z 分界。
+        """某个水平面上按屏幕高度均匀切出来的 z 分界。
 
         直接按 z 均匀切的话，靠近判定线的一条会覆盖半屏（透视压缩），
         远处又挤成一条；贴图会被拉得又宽又斜。按屏幕高度切就均匀了。
@@ -382,11 +382,11 @@ class SoftwareView:
         return boundaries
 
     def _visible_span_ms(self) -> float:
-        """可视毫秒（物件从起点走到判定线所需的**歌曲毫秒**）。
+        """可视毫秒（物件从起点走到判定线所需的歌曲毫秒）。
 
-        「流速」应该是**视觉速度**：倍速只改变歌曲推进的快慢，不该让物件在屏幕上
+        「流速」应该是视觉速度：倍速只改变歌曲推进的快慢，不该让物件在屏幕上
         慢慢爬或飞过去。判定时钟按倍速推进，所以这里的跨度也要乘倍速，
-        这样走完全程始终是 `可视毫秒 / 倍速` 的**同一段真实时间**。
+        这样走完全程始终是 可视毫秒 / 倍速 的同一段真实时间。
         """
         return max(1.0, self.settings.scroll_ms * self.settings.rate)
 
@@ -395,7 +395,7 @@ class SoftwareView:
                 group: Optional[SpeedGroup] = None) -> float:
         """歌曲毫秒位置 → z。
 
-        ``group`` 给定时按该速度组积分（与编辑器的 ``ViewState.note_y`` 同一套
+        group 给定时按该速度组积分（与编辑器的 ViewState.note_y 同一套
         语义）；默认 1x 组等价于按时间差映射。
         """
         span = self._visible_span_ms()
@@ -414,10 +414,10 @@ class SoftwareView:
         return self.chart.group_of_note(note)
 
     def _plane_z_near(self, plane_y: float) -> float:
-        """该平面在画面里的**最近 z**（负值：判定平面与镜头之间）。
+        """该平面在画面里的最近 z（负值：判定平面与镜头之间）。
 
         相机在判定平面后方，所以反向运动的物件会走到判定线之前；只要它还在这条
-        下界之内就应当画出来（``PreviewScene.visible_z_near`` 按窗口尺寸估算）。
+        下界之内就应当画出来（PreviewScene.visible_z_near 按窗口尺寸估算）。
         """
         return self.scene.visible_z_near(plane_y, self.w, self.h)
 
@@ -433,7 +433,7 @@ class SoftwareView:
         far_right = self._proj(K6_LEFT + width, 0.0, START_Z)
         near_left = self._proj(K6_LEFT, 0.0, 0.0)
         near_right = self._proj(K6_LEFT + width, 0.0, 0.0)
-        # 每条轨道用贴图的颜色按**透视正确的四边形**铺（轨道贴图是平色块，切片反而会出台阶）
+        # 每条轨道用贴图的颜色按透视正确的四边形铺（轨道贴图是平色块，切片反而会出台阶）
         lane_textured = all(
             f"lane_{index}_default" in self.texture_avg for index in range(1, LANE_COUNT + 1)
         )
@@ -471,7 +471,7 @@ class SoftwareView:
             self._line(far_left, near_left, K6_TINT, 1)
             self._line(far_right, near_right, K6_TINT, 1)
         # 先画完 6K 平面自己的内容（车道线 / 侧轨高亮 / 按下高亮 / 小节线），
-        # 它们都在**鼠标平面下方**，最后再让鼠标平面的蓝底渐变盖上去
+        # 它们都在鼠标平面下方，最后再让鼠标平面的蓝底渐变盖上去
         if not lane_textured:
             for lane in range(LANE_COUNT + 1):
                 x = K6_LEFT + lane * LANE_WIDTH
@@ -524,7 +524,7 @@ class SoftwareView:
             if color is None:
                 continue
             edge_half = 0.008 * UNIT_SCALE          # 轨道边界贴图的半宽（世界单位）
-            # 边界是一条**等宽**的斜窄条：整条就是一个梯形，一个多边形画完。
+            # 边界是一条等宽的斜窄条：整条就是一个梯形，一个多边形画完。
             # 颜色取自贴图平均色，本来就是平的，不需要切片。
             quad = [
                 self._proj(x - edge_half, 0.0, START_Z),
@@ -628,7 +628,7 @@ class SoftwareView:
                 self._draw_pattern(note, now_ms)
 
     def _draw_lane_note(self, note: LaneNote, now_ms: float) -> None:
-        """6K 单键 / 长按：用预设贴图绘制（贴图**底端**在判定边，到达判定线即判定）。"""
+        """6K 单键 / 长按：用预设贴图绘制（贴图底端在判定边，到达判定线即判定）。"""
         assert self.chart is not None
         group = self._note_group(note)         # 位置按所属速度组的 ∫v 反推
         z_near = self._plane_z_near(0.0)       # 相机对 6K 平面的可视下界（反向物件用）
@@ -692,7 +692,7 @@ class SoftwareView:
                 else self.settings.note_thickness
             )
             far_z = min(START_Z, head_z + thickness)
-            # 用**分片透视**贴（左右边界跟着轨道收敛），否则仿射会把按键画成竖直矩形
+            # 用分片透视贴（左右边界跟着轨道收敛），否则仿射会把按键画成竖直矩形
             if self._blit_lane_tex(f"tap_{tex_index}", x0, x1,
                                    head_z, far_z):
                 return
@@ -703,9 +703,9 @@ class SoftwareView:
             self._line_scaled(near, near2, WHITE, 2.4, near[2])
 
     def _blit_strip(self, name: str, x0: float, x1: float, z0: float, z1: float, slices: int = 28) -> bool:
-        """铺一条贴图（6K 平面内）：**按屏幕高度切片**，保证每片都是窄条、透视正确。
+        """铺一条贴图（6K 平面内）：按屏幕高度切片，保证每片都是窄条、透视正确。
 
-        分片之间用 :meth:`_lane_tex_pieces` 的整数边界对齐，不会漏出下层颜色。
+        分片之间用 _lane_tex_pieces 的整数边界对齐，不会漏出下层颜色。
         """
         surface = self._tex(name)
         if surface is None or z1 <= z0:
@@ -723,10 +723,10 @@ class SoftwareView:
         return True
 
     def _blit_hold_center_line(self, x0: float, x1: float, head_z: float, tail_z: float) -> bool:
-        """长按主体中间那条纯白竖线（占键宽 = 贴图的 ``HOLD_LINE_FRACTION``，与开头一致）。
+        """长按主体中间那条纯白竖线（占键宽 = 贴图的 HOLD_LINE_FRACTION，与开头一致）。
 
-        画成**透视正确的梯形**（近端宽、远端窄），与开头贴图的线宽一致。
-        ``head_z`` / ``tail_z`` 已由调用方夹进可视范围（可以小于 0 = 判定线之前）。
+        画成透视正确的梯形（近端宽、远端窄），与开头贴图的线宽一致。
+        head_z / tail_z 已由调用方夹进可视范围（可以小于 0 = 判定线之前）。
         """
         center = (x0 + x1) / 2.0
         half = (x1 - x0) * textures.HOLD_LINE_FRACTION / 2.0
@@ -745,9 +745,9 @@ class SoftwareView:
     def _draw_region(self, note: MouseRegion, now_ms: float) -> None:
         """空域 / 禁区：画在鼠标物件运动的水平面内（半透明底 + 左右两条边线）。
 
-        位置由所属速度组的 ``∫v`` 反推；只采样**滚动距离在可视跨度内**的那几段
-        （``frame.region_samples``）：超出轨道尽头的点不采样，否则会全挤在
-        ``z = START_Z`` 上相互重叠，叠出的 alpha 更实，看起来像堆在平面远端。
+        位置由所属速度组的 ∫v 反推；只采样滚动距离在可视跨度内的那几段
+        （frame.region_samples）：超出轨道尽头的点不采样，否则会全挤在
+        z = START_Z 上相互重叠，叠出的 alpha 更实，看起来像堆在平面远端。
         禁区与空域的几何完全一致，只是换一组红色贴图。
         """
         assert self.chart is not None
@@ -758,7 +758,7 @@ class SoftwareView:
         edge_name = "forbidden_edge" if forbidden else "region_edge"
         line_name = "forbidden_line" if forbidden else "region_line"
         span = self._visible_span_ms()
-        # 底图：整片**同一种颜色**的半透明底（避免横向条纹的接缝）
+        # 底图：整片同一种颜色的半透明底（避免横向条纹的接缝）
         area_color = self.texture_avg.get(area_name)
         if area_color is None:
             surface = self._tex(area_name)
@@ -793,7 +793,7 @@ class SoftwareView:
                     (200, 60, 50) if forbidden else (60, 110, 200),
                     104,
                 )
-            # 边线的**屏幕线宽按透视缩放**：判定线处最宽、远端最细。
+            # 边线的屏幕线宽按透视缩放：判定线处最宽、远端最细。
             for index in range(len(left_points) - 1):
                 for points in (left_points, right_points):
                     a, b = points[index], points[index + 1]
@@ -874,7 +874,7 @@ class SoftwareView:
         # 贴图是双倍高（上半楔形 / 下半透明）：所见楔形仍在平面上方
         low, high = frame.slide_span(self.settings.slide_thickness)
         start_x, end_x = shape.start_x, shape.end_x
-        # 贴图的左边界要绑**屏幕左边**（不是"起点"）：左滑键的起点在右、
+        # 贴图的左边界要绑屏幕左边（不是"起点"）：左滑键的起点在右、
         # 终点在左，若按起点绑就会把整张贴图左右镜像（贴图按中心 + 宽度摆放，
         # 本来就是绑屏幕左边的，与编辑器里的画法一致）
         left_x, right_x = shape.left_x, shape.right_x
@@ -906,7 +906,7 @@ class SoftwareView:
         if isinstance(note, MouseSlide):
             color = (110, 230, 160) if note.direction >= 0 else (235, 210, 110)
             height = self.settings.slide_thickness
-            # 滑动朝向的一侧更厚、不透明度更高：起点 -> 终点 **厚度与透明度都渐变**
+            # 滑动朝向的一侧更厚、不透明度更高：起点 -> 终点 厚度与透明度都渐变
             shape = frame.slide_shape(note)
             start_x, end_x = shape.start_x, shape.end_x
             thin = max(0.004 * UNIT_SCALE, height * 0.25)

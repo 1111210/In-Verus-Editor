@@ -1,13 +1,13 @@
 """物件数据模型。
 
 三件套：
-* ``LaneNote``     —— 6K 下落式物件：单轨 / 多轨（横跨相邻多条轨道）以及对应的长按。
-* ``MouseRegion``  —— 空域：左/右两条边界曲线（首尾位置 + 线型），期间鼠标需留在区域内。
-* ``ForbiddenRegion`` —— 禁区：几何与编辑逻辑和空域完全相同，但属于必须避开的区域。
-* ``MouseSlide``   —— 鼠标滑键：到达判定线时需在范围内朝指定方向滑动。
+* LaneNote     —— 6K 下落式物件：单轨 / 多轨（横跨相邻多条轨道）以及对应的长按。
+* MouseRegion  —— 空域：左/右两条边界曲线（首尾位置 + 线型），期间鼠标需留在区域内。
+* ForbiddenRegion —— 禁区：几何与编辑逻辑和空域完全相同，但属于必须避开的区域。
+* MouseSlide   —— 鼠标滑键：到达判定线时需在范围内朝指定方向滑动。
 
-所有物件都记录 ``group``（所属速度组 id），速度组同时记录自己包含的物件 id，
-两者保持一致（见 ``chart.py`` 的 ``assign_group``）。
+所有物件都记录 group（所属速度组 id），速度组同时记录自己包含的物件 id，
+两者保持一致（见 chart.py 的 assign_group）。
 """
 
 from __future__ import annotations
@@ -40,7 +40,7 @@ def normalize_ease(ease: str | None) -> str:
 
 @dataclass
 class BoundaryCurve:
-    """一条边界：从 ``start`` 到 ``end`` 的插值，线型为 ``ease``。"""
+    """一条边界：从 start 到 end 的插值，线型为 ease。"""
 
     start: float = 0.0
     end: float = 0.0
@@ -102,9 +102,9 @@ class Note:
 class LaneNote(Note):
     """6K 下落式物件。
 
-    * ``lane_start == lane_end``  -> 单轨按键
-    * ``lane_start <  lane_end``  -> 横跨相邻多轨的按键
-    * ``beat_end  >  beat_start`` -> 长按（长度 = beat_end - beat_start）
+    * lane_start == lane_end  -> 单轨按键
+    * lane_start <  lane_end  -> 横跨相邻多轨的按键
+    * beat_end  >  beat_start -> 长按（长度 = beat_end - beat_start）
     """
 
     kind = NOTE_LANE
@@ -195,7 +195,7 @@ class MouseNote(Note):
 
 
 class MouseRegion(MouseNote):
-    """空域：从 ``beat_start`` 出现到 ``beat_end`` 消失，期间鼠标需留在区域内。"""
+    """空域：从 beat_start 出现到 beat_end 消失，期间鼠标需留在区域内。"""
 
     kind = NOTE_REGION
 
@@ -297,9 +297,9 @@ class ForbiddenRegion(MouseRegion):
 
 
 class MouseSlide(MouseNote):
-    """鼠标滑键：``beat`` 时刻到达判定线，从 ``x_start`` 滑向 ``x_end``。
+    """鼠标滑键：beat 时刻到达判定线，从 x_start 滑向 x_end。
 
-    ``direction`` 由首尾位置决定（+1 向右，-1 向左）——编辑器里由第二次点击的位置决定。
+    direction 由首尾位置决定（+1 向右，-1 向左）——编辑器里由第二次点击的位置决定。
     """
 
     kind = NOTE_SLIDE
@@ -366,7 +366,7 @@ LAYER_MAX = LAYER_SLIDE
 
 
 def layer_rank(note: Note) -> int:
-    """物件所属图层（0 = 最底层，:data:`LAYER_MAX` = 最顶层）。"""
+    """物件所属图层（0 = 最底层，LAYER_MAX = 最顶层）。"""
     if isinstance(note, LaneNote):
         if note.is_hold:
             return LAYER_MULTI_HOLD if note.is_multi else LAYER_SINGLE_HOLD
@@ -428,7 +428,7 @@ def sort_key(note: Note) -> Tuple[float, float, str]:
 def clip_head(data: Dict[str, Any]) -> float:
     """剪贴板 / 快照条目的开头时刻。
 
-    区间物件（长按 / 空域 / 禁区）只有 ``beat_start``，瞬时物件只有 ``beat``；
+    区间物件（长按 / 空域 / 禁区）只有 beat_start，瞬时物件只有 beat；
     这里按字段判断，新增同类物件时不用再改（否则粘贴会按错误的时间偏移落点）。
     """
     if "beat_start" in data:

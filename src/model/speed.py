@@ -1,17 +1,16 @@
 """速度组：用一个“流速列表”控制一组物件的运动速度，甚至反向运动。
 
-位置推算约定
-------------
+位置推算约定：
 每个物件的“判定时刻”一定位于判定线上；物件在其它时刻的位置由它所属速度组的
-流速反推得到::
+流速反推得到：
 
     D(t) = ∫_{t}^{t_judge} v(u) du
 
-``t`` 为判定线当前所在的拍（判定线永远吸附到时间网格上），``v`` 为该组在当前拍的
+t 为判定线当前所在的拍（判定线永远吸附到时间网格上），v 为该组在当前拍的
 流速倍率（默认速度 = 1，即与时间轴网格对齐：1 拍的时间 = 1 个网格距离单位）。
-``D`` 为正表示物件位于判定线上方（未来侧），为负表示被推向判定线下方（反向运动）。
+D 为正表示物件位于判定线上方（未来侧），为负表示被推向判定线下方（反向运动）。
 
-因为 ``D`` 只由流速与 **拍** 决定，BPM 列表不会影响物件运动速度。
+因为 D 只由流速与拍决定，BPM 列表不会影响物件运动速度。
 """
 
 from __future__ import annotations
@@ -28,7 +27,7 @@ INF = seglib.INF
 
 @dataclass
 class SpeedSegment:
-    """一条流速记录：从第 ``start_beat`` 拍（浮点）开始，流速为默认速度的 ``multiplier`` 倍。"""
+    """一条流速记录：从第 start_beat 拍（浮点）开始，流速为默认速度的 multiplier 倍。"""
 
     start_beat: float = 0.0
     multiplier: float = 1.0
@@ -42,7 +41,7 @@ class SpeedSegment:
 
 
 class SpeedGroup:
-    """速度组：``segments`` 为流速列表，``note_ids`` 为组内物件。"""
+    """速度组：segments 为流速列表，note_ids 为组内物件。"""
 
     def __init__(
         self,
@@ -74,7 +73,7 @@ class SpeedGroup:
         self._rebuild_caches()
 
     def _rebuild_caches(self) -> None:
-        """段起点 + 累计积分（``∫_0^{段起点} v``）：查询从 O(段数) 降到 O(log 段数)。"""
+        """段起点 + 累计积分（∫_0^{段起点} v）：查询从 O(段数) 降到 O(log 段数)。"""
         starts = [float(seg.start_beat) for seg in self.segments]
         cumulative = [0.0]
         for index, seg in enumerate(self.segments):
@@ -103,14 +102,14 @@ class SpeedGroup:
 
     @property
     def min_multiplier(self) -> float:
-        """整条流速列表里的**最小**倍率（可能为负 = 反向）。"""
+        """整条流速列表里的最小倍率（可能为负 = 反向）。"""
         return self._min_multiplier
 
     def scroll_seconds(self, timing, from_beat: float, to_beat: float) -> float:
-        """``∫ v(τ) · spb(τ) dτ``（秒）：物件在屏幕上走过的“滚动秒数”。
+        """∫ v(τ) · spb(τ) dτ（秒）：物件在屏幕上走过的“滚动秒数”。
 
-        * ``v`` 是流速倍率（可为 0 或负数），``spb`` 是该拍所在 BPM 段的“每拍秒数”；
-        * 默认流速下就等于两拍之间的**秒数差** —— 所以 BPM 变更处时间轴格子大小
+        * v 是流速倍率（可为 0 或负数），spb 是该拍所在 BPM 段的“每拍秒数”；
+        * 默认流速下就等于两拍之间的秒数差 —— 所以 BPM 变更处时间轴格子大小
           会立刻改变（高 BPM 的段落每拍更短）；
         * 流速与 BPM 都是分段常数，跨段时按两套边界切开逐段积分。
         """
@@ -157,7 +156,7 @@ class SpeedGroup:
         return self._cumulative[index] + (beat - seg.start_beat) * seg.multiplier
 
     def segment_starts_between(self, start_beat: float, end_beat: float) -> List[float]:
-        """``(start_beat, end_beat)`` 内（不含端点）的段起点，按拍升序。"""
+        """(start_beat, end_beat) 内（不含端点）的段起点，按拍升序。"""
         if end_beat <= start_beat:
             return []
         first = bisect.bisect_right(self._starts, float(start_beat))
@@ -174,7 +173,7 @@ class SpeedGroup:
         return self.cumulative(to_beat) - self.cumulative(from_beat)
 
     def judging_distance(self, current_beat: float, judge_beat: float) -> float:
-        """判定线在 ``current_beat`` 时，判定时刻为 ``judge_beat`` 的物件距判定线的距离。"""
+        """判定线在 current_beat 时，判定时刻为 judge_beat 的物件距判定线的距离。"""
         return self.distance(current_beat, judge_beat)
 
     def is_reversed_at(self, beat: float) -> bool:

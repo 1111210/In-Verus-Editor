@@ -1,13 +1,12 @@
-"""BPM 列表与偏移：拍号 <-> 秒 的双向换算。
+"""BPM 列表与偏移：拍号 <-> 秒的双向换算。
 
-设计约定
---------
-* 时间轴以 **拍（beat）** 为基本单位，歌曲位置以 **秒** 表示。
-* ``beat_to_seconds(b)`` 返回从歌曲开始（第 0 拍）到第 ``b`` 拍经过的秒数。
-* 偏移 ``offset_ms``：把歌曲“提前播放”的毫秒数。即第 0 拍对应的歌曲位置是
-  ``offset_ms`` 毫秒。因此判定线位于第 b 拍时，歌曲播放位置为
-  ``beat_to_seconds(b) * 1000 + offset_ms``。
-* BPM 只影响“拍 -> 秒”的换算，**不影响**物件运动速度（见 ``speed.py``）。
+设计约定：
+* 时间轴以拍（beat）为基本单位，歌曲位置以秒表示。
+* beat_to_seconds(b) 返回从歌曲开始（第 0 拍）到第 b 拍经过的秒数。
+* 偏移 offset_ms：把歌曲“提前播放”的毫秒数。即第 0 拍对应的歌曲位置是
+  offset_ms 毫秒。因此判定线位于第 b 拍时，歌曲播放位置为
+  beat_to_seconds(b) * 1000 + offset_ms。
+* BPM 只影响“拍 -> 秒”的换算，不影响物件运动速度（见 speed.py）。
 """
 
 from __future__ import annotations
@@ -24,7 +23,7 @@ INF = seglib.INF
 
 @dataclass
 class BpmSegment:
-    """一条 BPM 记录：从第 ``start_beat`` 拍开始，BPM 为 ``bpm``，每小节 ``beats_per_bar`` 拍。"""
+    """一条 BPM 记录：从第 start_beat 拍开始，BPM 为 bpm，每小节 beats_per_bar 拍。"""
 
     start_beat: float = 0.0
     bpm: float = 120.0
@@ -74,7 +73,7 @@ class TimingMap:
     def _rebuild_caches(self) -> None:
         """预计算段起点、累计秒数与累计小节数。
 
-        只是内存里的派生数据，不参与 :meth:`to_dict` / :meth:`from_dict`：
+        只是内存里的派生数据，不参与 to_dict / from_dict：
         拍 ↔ 秒、小节查询因此从 O(段数) 降到 O(log 段数)。
         """
         starts = [float(seg.start_beat) for seg in self.segments]
@@ -99,7 +98,7 @@ class TimingMap:
         self._bars_before: List[int] = bars
 
     def _index_at(self, beat: float) -> int:
-        """``beat`` 落在第几段（早于第一段时返回 0）。"""
+        """beat 落在第几段（早于第一段时返回 0）。"""
         index = bisect.bisect_right(self._starts, float(beat) + 1e-12) - 1
         if index < 0:
             return 0
@@ -154,7 +153,7 @@ class TimingMap:
 
     # ------------------------------------------- 歌曲位置（毫秒，含偏移）
     def beat_to_song_ms(self, beat: float) -> float:
-        """判定线位于第 ``beat`` 拍时，歌曲应播放到的位置（毫秒）。"""
+        """判定线位于第 beat 拍时，歌曲应播放到的位置（毫秒）。"""
         return self.beat_to_seconds(beat) * 1000.0 + self.offset_ms
 
     def song_ms_to_beat(self, song_ms: float) -> float:
@@ -170,9 +169,9 @@ class TimingMap:
     def bar_lines(self, start_beat: float, end_beat: float) -> List[float]:
         """返回 [start_beat, end_beat] 内的小节线拍位置。
 
-        规则：**每逢 BPM 变更一定新开一小节**（变更拍本身就是小节线，不要求它落在
+        规则：每逢 BPM 变更一定新开一小节（变更拍本身就是小节线，不要求它落在
         上一段的小节网格上；上一段最后会留下一个不完整的小节）。
-        每小节拍数为 ``0`` 的段落表示**关闭小节线**，该段内不产生任何小节线。
+        每小节拍数为 0 的段落表示关闭小节线，该段内不产生任何小节线。
         """
         lines: List[float] = []
         if end_beat < start_beat:
@@ -212,14 +211,14 @@ class TimingMap:
 
     # ------------------------------------------------------- 小节对齐（BPM 变更点）
     def has_bars_at(self, beat: float) -> bool:
-        """该拍所在段落是否画**段内**小节线（``beats_per_bar == 0`` 表示关闭）。
+        """该拍所在段落是否画段内小节线（beats_per_bar == 0 表示关闭）。
 
-        注意：即使关闭，BPM 变更处仍然有一根小节线（见 :meth:`bar_lines`）。
+        注意：即使关闭，BPM 变更处仍然有一根小节线（见 bar_lines）。
         """
         return int(self.segment_at(beat).beats_per_bar) > 0
 
     def bar_start_at_or_before(self, beat: float) -> float:
-        """返回 ``beat`` 之前（含）最近的一条小节线。
+        """返回 beat 之前（含）最近的一条小节线。
 
         * 每逢 BPM 变更一定新开一小节 —— 所以每条 BPM 记录的起点都是小节线；
         * 关闭小节线的段落内只有起点那一条线，段内后续拍都算在“这一节”里；
@@ -234,16 +233,16 @@ class TimingMap:
         return seg.start_beat + max(0, n) * step
 
     def is_bar_start(self, beat: float, tol: float = 1e-6) -> bool:
-        """``beat`` 是否正好落在小节线上（BPM 变更处一定有）。"""
+        """beat 是否正好落在小节线上（BPM 变更处一定有）。"""
         return abs(self.bar_start_at_or_before(beat) - float(beat)) <= tol
 
     def bar_index_at(self, beat: float) -> Tuple[int, float]:
         """返回 (小节序号（从 0 开始，跨段累计）, 该小节内位置)。
 
-        * 每逢 BPM 变更一定新开一小节：上一段末尾不完整的小节也按**一整节**计入，
+        * 每逢 BPM 变更一定新开一小节：上一段末尾不完整的小节也按一整节计入，
           所以第 N 段的第一拍永远是某小节的第一拍；
-        * 关闭小节线（``beats_per_bar == 0``）的段落没有小节编号，
-          返回 ``(之前累计的小节数, 0.0)``。
+        * 关闭小节线（beats_per_bar == 0）的段落没有小节编号，
+          返回 (之前累计的小节数, 0.0)。
         """
         beat = float(beat)
         index = self._index_at(beat)
@@ -257,7 +256,7 @@ class TimingMap:
         return bars + int(local // step), local % step
 
     def min_seconds_per_beat(self, start_beat: float, end_beat: float, fallback_beat: float) -> float:
-        """``[start, end]`` 内（含第 0 段）最短的每拍秒数，用于网格抽稀。"""
+        """[start, end] 内（含第 0 段）最短的每拍秒数，用于网格抽稀。"""
         fastest = self.seconds_per_beat(fallback_beat)
         if end_beat <= start_beat:
             return fastest
@@ -271,7 +270,7 @@ class TimingMap:
         return fastest
 
     def segment_starts_between(self, start_beat: float, end_beat: float) -> List[float]:
-        """``(start_beat, end_beat)`` 内（不含端点）的段起点，按拍升序。"""
+        """(start_beat, end_beat) 内（不含端点）的段起点，按拍升序。"""
         if end_beat <= start_beat:
             return []
         first = bisect.bisect_right(self._starts, float(start_beat))

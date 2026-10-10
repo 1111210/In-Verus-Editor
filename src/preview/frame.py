@@ -3,7 +3,7 @@
 渲染器只负责把这里算出的形状投到屏幕上，不自行推导物件的位置、尺寸与图层；
 可见性与排序也在这里统一给出（编辑器与演示视图共用同一套速度组语义）。
 
-坐标单位与 :mod:`preview.scene` 一致：鼠标合法区宽度 = 6K 中间四轨
+坐标单位与 preview.scene 一致：鼠标合法区宽度 = 6K 中间四轨
 宽度 = 1 单位。
 """
 
@@ -59,10 +59,10 @@ def note_visible(timing: TimingMap, note: Note, now_ms: float) -> bool:
 
 
 def scroll_ms(chart: Chart, group, now_ms: float, to_beat: float) -> float:
-    """``now_ms`` 时刻到 ``to_beat`` 拍，该速度组滚过的**毫秒**（可为负 = 反向）。
+    """now_ms 时刻到 to_beat 拍，该速度组滚过的毫秒（可为负 = 反向）。
 
-    与编辑器 ``ViewState.note_y`` 共用同一套语义：
-    ``∫ v(τ)·spb(τ) dτ``（见 ``model/speed.py::SpeedGroup.scroll_seconds``）——
+    与编辑器 ViewState.note_y 共用同一套语义：
+    ∫ v(τ)·spb(τ) dτ（见 model/speed.py::SpeedGroup.scroll_seconds）——
     判定时刻一定落在判定线上，其它时刻由所属速度组反推。
     """
     timing = chart.timing
@@ -71,14 +71,14 @@ def scroll_ms(chart: Chart, group, now_ms: float, to_beat: float) -> float:
 
 
 def note_scroll_ms(chart: Chart, note: Note, now_ms: float) -> float:
-    """物件**开头**距判定线的滚动毫秒（用它所属速度组积分）。"""
+    """物件开头距判定线的滚动毫秒（用它所属速度组积分）。"""
     return scroll_ms(chart, chart.group_of_note(note), now_ms, note.head_beat)
 
 
 def _note_z_span_at(
     chart: Chart, note: Note, now_beat: float, span_ms: float
 ) -> Optional[Tuple[float, float]]:
-    """``note_z_span`` 的按拍版本（避免每条物件都换算一次当前时刻）。"""
+    """note_z_span 的按拍版本（避免每条物件都换算一次当前时刻）。"""
     timing = chart.timing
     head = float(note.head_beat)
     tail = float(note.tail_beat)
@@ -100,11 +100,11 @@ def _note_z_span_at(
 def note_z_span(
     chart: Chart, note: Note, now_ms: float, span_ms: float
 ) -> Optional[Tuple[float, float]]:
-    """物件**还要绘制的那一段**的世界 z 范围 ``(近端, 远端)``。
+    """物件还要绘制的那一段的世界 z 范围 (近端, 远端)。
 
-    判定区间里**时间已经过去的部分不画**：长按 / 空域从「当前时刻」画到它们的
-    结束时刻（``Note.tail_beat``），所以正在判定的长按只剩还没走完的那一截，
-    不会在判定线之前拖出一条已经判过的尾巴；整个物件都已经过去时返回 ``None``。
+    判定区间里时间已经过去的部分不画：长按 / 空域从「当前时刻」画到它们的
+    结束时刻（Note.tail_beat），所以正在判定的长按只剩还没走完的那一截，
+    不会在判定线之前拖出一条已经判过的尾巴；整个物件都已经过去时返回 None。
     单键 / 滑键只占判定时刻那一点。
     """
     return _note_z_span_at(chart, note, chart.timing.song_ms_to_beat(now_ms), span_ms)
@@ -117,12 +117,12 @@ def note_in_view(
     span_ms: float,
     z_near: float,
 ) -> bool:
-    """物件此刻是否应当绘制：**时间与位置两个条件都要满足**。
+    """物件此刻是否应当绘制：时间与位置两个条件都要满足。
 
-    * 时间：判定还没结束（``note_visible``：单键 / 滑键到判定时刻，
+    * 时间：判定还没结束（note_visible：单键 / 滑键到判定时刻，
       长按 / 空域到结束时刻）；
-    * 位置：物件**还没过去的那部分**的 z 范围与可视范围 ``[z_near, START_Z]`` 相交
-      （``z_near`` 由 ``PreviewScene.visible_z_near`` 按窗口尺寸估算）。
+    * 位置：物件还没过去的那部分的 z 范围与可视范围 [z_near, START_Z] 相交
+      （z_near 由 PreviewScene.visible_z_near 按窗口尺寸估算）。
     """
     if not note_visible(chart.timing, note, now_ms):
         return False
@@ -134,17 +134,17 @@ def note_in_view(
 
 
 def z_from_distance(distance_ms: float, span_ms: float, start_z: Optional[float] = None) -> float:
-    """滚动距离（毫秒）→ 世界 z：``0`` = 判定线、``span_ms`` = 轨道尽头。
+    """滚动距离（毫秒）→ 世界 z：0 = 判定线、span_ms = 轨道尽头。
 
-    **不夹取**：反向流速的距离为负 → z 为负（判定平面与镜头之间）。调用方按
-    “可视范围 ~ 运动起点”（``PreviewScene.visible_z_near`` ~ ``START_Z``）判断可见性。
+    不夹取：反向流速的距离为负 → z 为负（判定平面与镜头之间）。调用方按
+    “可视范围 ~ 运动起点”（PreviewScene.visible_z_near ~ START_Z）判断可见性。
     """
     span_z = START_Z if start_z is None else float(start_z)
     return span_z * float(distance_ms) / max(1.0, float(span_ms))
 
 
 def distance_from_z(z: float, span_ms: float, start_z: Optional[float] = None) -> float:
-    """:func:`z_from_distance` 的逆运算：世界 z → 滚动距离（毫秒）。"""
+    """z_from_distance 的逆运算：世界 z → 滚动距离（毫秒）。"""
     span_z = START_Z if start_z is None else float(start_z)
     return float(span_ms) * float(z) / max(1e-6, span_z)
 
@@ -157,17 +157,17 @@ def region_samples(
     samples: int = 32,
     near_ms: float = 0.0,
 ) -> List[List[Tuple[float, float]]]:
-    """空域在当前画面上的可见段：``[[(beat, distance_ms), ...], ...]``。
+    """空域在当前画面上的可见段：[[(beat, distance_ms), ...], ...]。
 
-    * 采样在**拍**上等分，并强制包含速度段边界（流速跳变处是折点，不能糊掉）；
-    * **时间已经过去的部分不采样**（``beat < 当前拍``）：空域正在判定时只画
+    * 采样在拍上等分，并强制包含速度段边界（流速跳变处是折点，不能糊掉）；
+    * 时间已经过去的部分不采样（beat < 当前拍）：空域正在判定时只画
       还没走完的那一段，不在判定线之前拖一条已经判过的尾巴；
-    * 只保留滚动距离落在 ``[near_ms, span_ms]`` 的部分：``near_ms`` 由相机对
-      该平面的可视下界（``PreviewScene.visible_z_near``）换算而来，默认 0 = 判定线；
+    * 只保留滚动距离落在 [near_ms, span_ms] 的部分：near_ms 由相机对
+      该平面的可视下界（PreviewScene.visible_z_near）换算而来，默认 0 = 判定线；
       轨道尽头以外的点直接丢弃，避免它们在远端相互叠色（看起来像空域堆在
       平面尽头）；
     * 距离在相邻采样之间是线性的（段边界已在采样点上），交点用线性插值精确定位；
-    * 流速可正可负，同一空域可能被推成多段，所以返回**若干段**。
+    * 流速可正可负，同一空域可能被推成多段，所以返回若干段。
     """
     group = chart.group_of_note(note)
     timing = chart.timing
@@ -184,7 +184,7 @@ def region_samples(
         beats.add(float(cut))
     if min(start, end) < now_beat < max(start, end):
         beats.add(float(now_beat))       # 时间下界也作为采样点：截断位置精确
-    # 距离按拍**增量积分**：相邻采样点之间只积分一小段，长空域 + 多速度段的
+    # 距离按拍增量积分：相邻采样点之间只积分一小段，长空域 + 多速度段的
     # 开销与采样点数成正比。
     points: List[Tuple[float, float]] = []
     previous_beat = now_beat
@@ -232,7 +232,7 @@ def region_samples(
 
 
 def runs_cross_line(runs: List[List[Tuple[float, float]]]) -> bool:
-    """``region_samples`` 的可见段里是否有跨过距离 0 的（= 空域压在判定线上）。"""
+    """region_samples 的可见段里是否有跨过距离 0 的（= 空域压在判定线上）。"""
     for run in runs:
         distances = [distance for _beat, distance in run]
         if min(distances) <= 0.0 <= max(distances):
@@ -241,14 +241,14 @@ def runs_cross_line(runs: List[List[Tuple[float, float]]]) -> bool:
 
 
 def visible_notes(chart: Chart, now_ms: float, span_ms: float) -> List[Note]:
-    """当前应绘制的物件：按图层（自下而上）排序，层内**由远到近**。
+    """当前应绘制的物件：按图层（自下而上）排序，层内由远到近。
 
-    距离与剔除都用所属速度组的滚动毫秒（``∫v``），因此流速不同的物件
+    距离与剔除都用所属速度组的滚动毫秒（∫v），因此流速不同的物件
     不会因为“判定时刻更晚”就被错误地排到更近 / 更远的位置。
 
-    可见性按**物件还没判过的那一段**判断（``_note_z_span_at``）：反向流速时
-    物件开头可能还在很远处，而它的后半段已经跑到判定线**靠近摄像机的一侧** ——
-    只按开头剔除会把整段一起丢掉。``all_notes()`` 里绝大多数物件都远在可视
+    可见性按物件还没判过的那一段判断（_note_z_span_at）：反向流速时
+    物件开头可能还在很远处，而它的后半段已经跑到判定线靠近摄像机的一侧 ——
+    只按开头剔除会把整段一起丢掉。all_notes() 里绝大多数物件都远在可视
     范围之外，所以流速全非负时先用“起点距离”这个严格下界快速剔除。
     """
     timing = chart.timing
@@ -310,7 +310,7 @@ def lane_shape(note: LaneNote) -> LaneShape:
     x0 = K6_LEFT + low * LANE_WIDTH + LANE_WIDTH * NOTE_SIDE_INSET
     x1 = K6_LEFT + (high + 1) * LANE_WIDTH - LANE_WIDTH * NOTE_SIDE_INSET
     if note.is_hold:
-        # 长按按单键的**可见宽度**收窄（左右对称，中心不变）
+        # 长按按单键的可见宽度收窄（左右对称，中心不变）
         inset = (x1 - x0) * (1.0 - TAP_VISIBLE_FRACTION) / 2.0
         x0 += inset
         x1 -= inset
@@ -339,7 +339,7 @@ def region_bounds(note: MouseRegion, beat: float) -> Tuple[float, float]:
 
 
 def hold_head_height(note_thickness: float) -> float:
-    """长按开头的高度：与单键同厚度，但不小于 :data:`HOLD_HEAD_MIN`。"""
+    """长按开头的高度：与单键同厚度，但不小于 HOLD_HEAD_MIN。"""
     return max(HOLD_HEAD_MIN, note_thickness)
 
 
@@ -354,18 +354,18 @@ SLIDE_IMAGE_SCALE = 2.0
 
 
 def slide_center(thickness: float) -> Tuple[float, float]:
-    """滑键（主体 / 箭头）的 ``(竖直中心 y, 竖直尺寸)``。
+    """滑键（主体 / 箭头）的 (竖直中心 y, 竖直尺寸)。
 
-    与点击图案同一套约定：**图片中心**落在鼠标运动平面上；滑键贴图是双倍高，
+    与点击图案同一套约定：图片中心落在鼠标运动平面上；滑键贴图是双倍高，
     所以可见的楔形只占上半、落在平面上方。
     """
     return (MOUSE_PLANE_HEIGHT, SLIDE_IMAGE_SCALE * pattern_height(thickness))
 
 
 def slide_span(thickness: float) -> Tuple[float, float]:
-    """滑键贴图画到画面上的竖直范围 ``(下沿, 上沿)``（可见楔形只占上半）。
+    """滑键贴图画到画面上的竖直范围 (下沿, 上沿)（可见楔形只占上半）。
 
-    由 :func:`slide_center` 推出；软件渲染按这两个高度投影贴图。
+    由 slide_center 推出；软件渲染按这两个高度投影贴图。
     """
     center, height = slide_center(thickness)
     half = height / 2.0

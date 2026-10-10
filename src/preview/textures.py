@@ -2,12 +2,12 @@
 
 规则（在“加载中”阶段一次性做完，避免游戏内卡顿）：
 
-* **单像素图**（空域边界 / 填充 / 判定线等）：文件里出现多个像素时，
-  取**所有像素的平均值**（颜色与 alpha 分别平均），得到一张 1×1 的图；
-* **其他图**：尺寸和期望不符时**拉伸**到期望尺寸（平滑缩放）；
+* 单像素图（空域边界 / 填充 / 判定线等）：文件里出现多个像素时，
+  取所有像素的平均值（颜色与 alpha 分别平均），得到一张 1×1 的图；
+* 其他图：尺寸和期望不符时拉伸到期望尺寸（平滑缩放）；
 * 文件缺失或读不出来：按期望尺寸生成占位图（单像素图用白色半透明），保证游戏仍能跑。
 
-贴图默认放在 ``assets/textures/preview/``，缺失时按下文的占位规则生成。
+贴图默认放在 assets/textures/preview/，缺失时按下文的占位规则生成。
 """
 
 from __future__ import annotations
@@ -27,7 +27,7 @@ HOLD_LINE_FRACTION = 1.0 / 8.0
 EXPECTED_TAP = (96, 160)
 EXPECTED_HOLD_HEAD = (96, 96)
 EXPECTED_HOLD_BODY = (32, 128)
-# 滑键贴图是**两倍高**的：可见楔形 / 箭头画在上半、下半完全透明，
+# 滑键贴图是两倍高的：可见楔形 / 箭头画在上半、下半完全透明，
 # 按“图片中心对齐鼠标运动平面”摆放（见 preview/frame.py::slide_center）
 EXPECTED_SLIDE_ARROW = (48, 96)
 EXPECTED_SLIDE_BODY = (256, 256)
@@ -71,7 +71,7 @@ def expected_sizes() -> Dict[str, Tuple[int, int]]:
 
 
 def average_color(surface: pygame.Surface) -> Tuple[int, int, int, int]:
-    """一张图的**平均像素**（颜色与 alpha 一起平均）。"""
+    """一张图的平均像素（颜色与 alpha 一起平均）。"""
     width, height = surface.get_size()
     sums = [0, 0, 0, 0]
     count = 0

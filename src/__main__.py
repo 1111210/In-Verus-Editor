@@ -1,4 +1,4 @@
-"""``python src`` 入口（也可用 ``python run_editor.py``）。"""
+"""python src 入口（也可用 python run_editor.py）。"""
 
 from __future__ import annotations
 

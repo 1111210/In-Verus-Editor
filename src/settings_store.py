@@ -1,6 +1,6 @@
 """用户配置目录下的 JSON 设置文件：路径解析与容错读写。
 
-编辑器的 ``settings.json`` 存在用户目录，损坏 / 缺失 / 只读时一律退回默认值，
+编辑器的 settings.json 存在用户目录，损坏 / 缺失 / 只读时一律退回默认值，
 绝不能影响启动。
 """
 
@@ -12,7 +12,7 @@ from typing import Any, Dict
 
 
 def user_config_dir() -> str:
-    """用户配置目录：Windows 为 ``%APPDATA%/InFalsusEditor``，其它系统为 ``~/.config/infalsus-editor``。"""
+    """用户配置目录：Windows 为 %APPDATA%/InFalsusEditor，其它系统为 ~/.config/infalsus-editor。"""
     if os.name == "nt":
         base = os.environ.get("APPDATA") or os.path.join(
             os.path.expanduser("~"), "AppData", "Roaming"
@@ -33,7 +33,7 @@ def read_json_object(path: str) -> Dict[str, Any]:
 
 
 def write_json_object(path: str, data: Dict[str, Any]) -> bool:
-    """写出 JSON 对象；目录不存在时自动创建，失败返回 ``False``。"""
+    """写出 JSON 对象；目录不存在时自动创建，失败返回 False。"""
     try:
         folder = os.path.dirname(path)
         if folder:

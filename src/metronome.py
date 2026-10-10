@@ -1,8 +1,8 @@
 """播放音效：节拍音（打拍器）与打击音效。
 
-* :func:`effect_events` —— 纯函数，**预先算出整条时间轴上所有音效的时刻**
+* effect_events —— 纯函数，预先算出整条时间轴上所有音效的时刻
   （歌曲毫秒），播放时由音频层直接混进输出流，无需逐帧判断；
-* :func:`effect_samples` —— 按种类合成波形（正弦“滴”声 / 白噪声打击声）。
+* effect_samples —— 按种类合成波形（正弦“滴”声 / 白噪声打击声）。
 
 走的是“预计算 + 混音”：音效在音频窗口合成时按时刻叠加，所以极高 BPM / 掉帧
 也不会漏响、迟到；音效各自带音量（音乐 / 节拍音 / 打击音三个音量互相独立）。
@@ -39,10 +39,10 @@ HIT_NOISE_SEED = 20240929
 
 
 def click_samples(freq: float, sample_rate: int = SAMPLE_RATE, channels: int = 1):
-    """合成一声“滴”（长度固定为 ``CLICK_MS`` 毫秒，与播放倍速无关）。
+    """合成一声“滴”（长度固定为 CLICK_MS 毫秒，与播放倍速无关）。
 
-    返回 ``numpy`` 数组（int16）。**播放倍速只影响歌曲**：节拍音走独立的
-    ``pygame.mixer.Sound`` 通道，不做时间伸缩，所以慢放时这一声依然是这么长。
+    返回 numpy 数组（int16）。播放倍速只影响歌曲：节拍音走独立的
+    pygame.mixer.Sound 通道，不做时间伸缩，所以慢放时这一声依然是这么长。
     """
     import numpy as np
 
@@ -60,7 +60,7 @@ def click_samples(freq: float, sample_rate: int = SAMPLE_RATE, channels: int = 1
 
 
 def hit_samples(sample_rate: int = SAMPLE_RATE, channels: int = 1):
-    """合成一声“打击音”：**白噪声**，长度 / 包络 / 基准音量都与节拍音一致。"""
+    """合成一声“打击音”：白噪声，长度 / 包络 / 基准音量都与节拍音一致。"""
     import numpy as np
 
     total = max(1, int(sample_rate * CLICK_MS / 1000.0))
@@ -98,12 +98,12 @@ def effect_events(
     hit_enabled: bool = True,
     until_ms: Optional[float] = None,
 ) -> List[tuple]:
-    """预先算出整条时间轴上所有音效的**歌曲毫秒时刻**。
+    """预先算出整条时间轴上所有音效的歌曲毫秒时刻。
 
-    * 节拍音：``MODE_BAR`` 取小节线（BPM 变更处一定有），``MODE_BEAT`` 取整数拍；
-    * 打击音：每个物件的**开头判定时刻**（长按 / 空域取开头），
+    * 节拍音：MODE_BAR 取小节线（BPM 变更处一定有），MODE_BEAT 取整数拍；
+    * 打击音：每个物件的开头判定时刻（长按 / 空域取开头），
       同一时刻的和弦只响一声；
-    * 返回按时间排序的 ``[(song_ms, kind)]``，``kind`` ∈ ``bar`` / ``beat`` / ``hit``。
+    * 返回按时间排序的 [(song_ms, kind)]，kind ∈ bar / beat / hit。
 
     音频层按这张表把音效混进输出流；起播位置之前的条目不会被混（等于
     “跳转 / 暂停恢复不补发一串滴声”）。

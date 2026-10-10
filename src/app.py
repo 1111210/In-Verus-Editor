@@ -66,13 +66,13 @@ def should_stop_playback(
     music_end_seconds: Optional[float],
     margin: float = config.PLAY_END_MARGIN_SECONDS,
 ) -> bool:
-    """自动停止判据：**音乐与谱面都播完 ``margin`` 秒** 才停。
+    """自动停止判据：音乐与谱面都播完 margin 秒后才停。
 
-    * ``music_end_seconds`` 是音乐播完时的播放位置（秒；还没有音乐结束时为 ``None``）；
-      ``None`` 表示音乐永远不会结束 —— 例如没有载入歌曲时的静音时钟，
+    * music_end_seconds 是音乐播完时的播放位置（秒；还没有音乐结束时为 None）；
+      None 表示音乐永远不会结束 —— 例如没有载入歌曲时的静音时钟，
       这时不会自动停止，可以一直放着当“节拍器”用。
     * 谱面结束时刻取最后一个物件的判定时刻（空谱面取第 1 拍）换算成的秒数。
-    * 两者都超出 ``margin`` 秒才真正停下，所以短的那一边不会提前把播放掐掉。
+    * 两者都超出 margin 秒才真正停下，所以短的那一边不会提前把播放掐掉。
     """
     if music_end_seconds is None:
         return False
@@ -97,7 +97,7 @@ class EditorApp:
         apply_theme(self.root, self.theme)
 
         self.document = Document()
-        # 视图 / 音效 / 编辑器设置是**全局**的：不随谱面文件走
+        # 视图 / 音效 / 编辑器设置是全局的：不随谱面文件走
         self.editor_settings = load_settings()
         self.document.chart.settings = self.editor_settings
         self._settings_snapshot = self.editor_settings.to_dict()
@@ -400,24 +400,24 @@ class EditorApp:
     def _refresh_effects(
         self, refilter: bool = False, from_ms: Optional[float] = None
     ) -> None:
-        """把节拍音 / 打击音的**播放时刻预先算好**交给音频层混进输出。
+        """把节拍音 / 打击音的播放时刻预先算好交给音频层混进输出。
 
-        **增量维护**（不做全量重算）：
+        增量维护（不做全量重算）：
 
         * 节拍音只由 BPM / 每小节拍数 / 偏移 / 模式 / 覆盖范围决定；
-        * 打击音由物件（与时间轴）决定，用 ``Document.revision`` 判断有没有改过；
+        * 打击音由物件（与时间轴）决定，用 Document.revision 判断有没有改过；
         * 编辑物件只重算打击音，改音量完全不重算（只更新混音音量）；
-        * **倍速不参与时刻表** —— 时刻表永远是歌曲毫秒，倍速只在混音时决定
-          音效落在输出的哪个位置（``输出位置 = (时刻 − 窗口起点) / 倍速``），
+        * 倍速不参与时刻表 —— 时刻表永远是歌曲毫秒，倍速只在混音时决定
+          音效落在输出的哪个位置（输出位置 = (时刻 − 窗口起点) / 倍速），
           所以调速 / 慢放不需要重建时刻表。
 
         覆盖范围按 30 秒取整，小幅编辑不会改变范围、缓存可以复用。
 
-        每帧都会调用：**没有变化时只比较几个键**；``beat_bounds()``（要遍历
+        每帧都会调用：没有变化时只比较几个键；beat_bounds()（要遍历
         全部物件）也只在谱面版本 / 音频长度变化时才重算。
 
-        ``from_ms`` 指定“从哪个歌曲毫秒起播”：裁剪过去的条目必须按**新的
-        起播位置**算。默认用当前音频位置；起播时要显式传入目标位置，否则
+        from_ms 指定“从哪个歌曲毫秒起播”：裁剪过去的条目必须按新的
+        起播位置算。默认用当前音频位置；起播时要显式传入目标位置，否则
         暂停后往回滚再播放会把中间那一段的音效一起裁掉（打击音不响）。
         """
         chart = self.document.chart
@@ -862,7 +862,7 @@ class EditorApp:
         timing = self.document.chart.timing
         self.audio.latency_ms = self.document.chart.settings.audio_latency_ms
         song_ms = timing.beat_to_song_ms(self.view.current_beat)
-        # 按**新的起播位置**裁剪（不能用旧暂停位置：往回滚再播放会把中间
+        # 按新的起播位置裁剪（不能用旧暂停位置：往回滚再播放会把中间
         # 整段音效裁掉，听起来就是“有时打击音不响”）
         self._refresh_effects(refilter=True, from_ms=song_ms)
         self.audio.play(song_ms)
@@ -1331,9 +1331,9 @@ class EditorApp:
     def _draw_demo_frame(self) -> bool:
         """演示模式：把演示视图软件渲染的一帧贴到画布上。
 
-        复用 ``preview/softview.py``（软件渲染），只画场景本身：不画分数 /
+        复用 preview/softview.py（软件渲染），只画场景本身：不画分数 /
         判定 / 元数据等 HUD，也不画鼠标指针；渲染参数来自「演示视图设置」。
-        没有 pygame 时返回 ``False``，调用方回退到编辑器自己的叠加绘制。
+        没有 pygame 时返回 False，调用方回退到编辑器自己的叠加绘制。
         """
         try:
             from preview import softview

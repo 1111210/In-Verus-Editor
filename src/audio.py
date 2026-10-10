@@ -1,19 +1,17 @@
 """音频播放后端与倍速（变速变调：慢放会同时降低音调）。
 
-后端
-----
-* ``PygameBackend``            —— ``pygame.mixer.music`` 流式播放（倍速 = 1.0x 时使用）
-* ``StretchedSoundBackend``    —— 用**线性插值重采样**把样本拉长后播放
+后端：
+* PygameBackend            —— pygame.mixer.music 流式播放（倍速 = 1.0x 时使用）
+* StretchedSoundBackend    —— 用线性插值重采样把样本拉长后播放
   （倍速 < 1.0x 时使用；慢放 = 降采样，所以音调随之变低，等价于“降低采样率”）
-* ``SilentBackend``            —— 静音时钟（没有 pygame / 没有音频文件时的兜底）
+* SilentBackend            —— 静音时钟（没有 pygame / 没有音频文件时的兜底）
 
-所有后端的 ``position_ms()`` 都返回**歌曲原始时间轴**上的位置，
+所有后端的 position_ms() 都返回歌曲原始时间轴上的位置，
 因此上层（谱面/判定线）的换算完全不用区分后端。
 
-延迟补偿
---------
-``audio_latency_ms`` 表示“软件执行播放操作 -> 电脑硬件放出声音”的间隔。
-播放时用 ``后端位置 - 延迟`` 作为“耳朵听到的位置”，再换算成判定线所在拍。
+延迟补偿：
+audio_latency_ms 表示“软件执行播放操作 -> 电脑硬件放出声音”的间隔。
+播放时用 后端位置 - 延迟 作为“耳朵听到的位置”，再换算成判定线所在拍。
 """
 
 from __future__ import annotations
@@ -51,7 +49,7 @@ STRETCH_AVAILABLE = _PYGAME is not None and _NP is not None
 # 时间伸缩参数
 STRETCH_FRAME = 2048          # 每帧样本数（约 46ms @44.1kHz）
 STRETCH_OVERLAP = 4           # 75% 重叠
-# 一个窗口覆盖多少**输出**音频（原始窗口 = 这个值 × rate）。
+# 一个窗口覆盖多少输出音频（原始窗口 = 这个值 × rate）。
 # 通道只支持一个排队块（见 StretchedSoundBackend.poll），所以窗口取长一点：
 # 8 秒的余量足够 16ms 的 tick 从容补窗口，单次重采样也只有 ~15ms。
 STRETCH_TARGET_OUTPUT_MS = 8_000.0
@@ -66,7 +64,7 @@ EFFECT_TAIL_MS = 100.0
 
 
 def stretch_window_ms(rate: float) -> float:
-    """一个窗口覆盖多少**源**音频：按“输出约 8 秒”换算，再取源窗口下限。"""
+    """一个窗口覆盖多少源音频：按“输出约 8 秒”换算，再取源窗口下限。"""
     return min(
         STRETCH_WINDOW_MAX_MS,
         max(STRETCH_SOURCE_MIN_MS, STRETCH_TARGET_OUTPUT_MS * max(0.0, float(rate))),
@@ -74,7 +72,7 @@ def stretch_window_ms(rate: float) -> float:
 
 
 def _events_in_range(events, start_ms: float, stop_ms: float) -> list:
-    """取出 ``(start_ms, stop_ms)`` 之间的音效（``events`` 已按时刻排序）。"""
+    """取出 (start_ms, stop_ms) 之间的音效（events 已按时刻排序）。"""
     result = []
     first = bisect.bisect_right(events, start_ms, key=lambda item: item[0])
     for index in range(first, len(events)):
@@ -113,7 +111,7 @@ def audio_setup_hint() -> str:
 
 
 def audio_backend_state() -> str:
-    """音频状态：``ok`` / ``missing``（没 pygame）/ ``device``（设备打不开）。"""
+    """音频状态：ok / missing（没 pygame）/ device（设备打不开）。"""
     if _PYGAME is None:
         return "missing"
     if _MIXER_ERROR:
@@ -142,11 +140,11 @@ ENV_STARTUP_LOG = "INFALSUS_EDITOR_LOG"
 
 
 def write_startup_log(path: Optional[str] = None) -> str:
-    """把音频自检写进 ``_diag/audio_startup.log``（排障用，失败也不影响运行）。
+    """把音频自检写进 _diag/audio_startup.log（排障用，失败也不影响运行）。
 
     内容：时间、解释器、pygame / numpy 状态、失败原因、最终后端。启动时写一次，
     用户报“没有声音”时直接看这个文件即可；超过 256 KB 时只保留最近 200 行。
-    可用环境变量 ``INFALSUS_EDITOR_LOG`` 改到别的路径（测试里会用到）。
+    可用环境变量 INFALSUS_EDITOR_LOG 改到别的路径（测试里会用到）。
     """
     import datetime
 
@@ -441,10 +439,10 @@ class StretchedSoundBackend:  # pragma: no cover - 依赖 pygame + numpy
 
     # ------------------------------------------------------------------ 音效
     def set_effects(self, events, factory=None) -> None:
-        """设置**预先算好、且已按时间排序**的音效轨道：``events = [(歌曲毫秒, 种类)]``。
+        """设置预先算好、且已按时间排序的音效轨道：events = [(歌曲毫秒, 种类)]。
 
         只做一次浅拷贝（不排序、不重建时间数组）——时刻表由上层增量维护，
-        避免每次编辑都全量重算。``factory(kind, rate, channels)`` 合成波形。
+        避免每次编辑都全量重算。factory(kind, rate, channels) 合成波形。
         """
         previous = self._effects
         self._effects = list(events)
@@ -453,7 +451,7 @@ class StretchedSoundBackend:  # pragma: no cover - 依赖 pygame + numpy
             self._effect_cache.clear()      # 换工厂才需要重合成
             self._effect_margin_ms = EFFECT_TAIL_MS
         if self._playing and self._channel is not None and self._anchor is not None:
-            # 变化落在**当前窗口还没播到**的那一段（例如播放中在判定线前方
+            # 变化落在当前窗口还没播到的那一段（例如播放中在判定线前方
             # 放了物件）时，光换排队窗口不够：这一段缓冲里永远不会有它
             position = self.position_ms()
             stop = self._anchor[2]
@@ -469,10 +467,10 @@ class StretchedSoundBackend:  # pragma: no cover - 依赖 pygame + numpy
         self.set_mix(self._volume, gains)
 
     def set_mix(self, volume: float, gains) -> None:
-        """一次设置**歌曲音量 + 各音效音量**，混音模式下只重合成一次。
+        """一次设置歌曲音量 + 各音效音量，混音模式下只重合成一次。
 
         混音模式把歌曲音量烘进缓冲、音效各自带增益，所以两者只有在下次
-        合成窗口时才会变 —— 要立刻生效就得重合成**正在播**的窗口。
+        合成窗口时才会变 —— 要立刻生效就得重合成正在播的窗口。
         合并成一个入口是为了“同时改音乐与音效音量”时只重合成一次。
         """
         volume = max(0.0, min(1.0, float(volume)))
@@ -500,14 +498,14 @@ class StretchedSoundBackend:  # pragma: no cover - 依赖 pygame + numpy
         self._refresh_queued()
 
     def _refresh_queued(self) -> None:
-        """用当前的时刻表 / 音量重新合成**已排队**的窗口。
+        """用当前的时刻表 / 音量重新合成已排队的窗口。
 
         正在播的窗口已经交给通道、改不了；排队窗口是马上要播的那一段，
-        重新合成它就能让改设置 / 编辑在**下一个窗口**生效，不必等两个窗口
+        重新合成它就能让改设置 / 编辑在下一个窗口生效，不必等两个窗口
         （约 16 秒）。改动不频繁，一次重合成的代价可以接受。
 
         只有确认“锚点窗口还在播、排队窗口还没开始”时才替换：排队窗口一旦
-        已经开始播，替换会让同一段音乐播两遍（或整段断流），此时按 ``poll()``
+        已经开始播，替换会让同一段音乐播两遍（或整段断流），此时按 poll()
         的规则把它滚动成锚点，改动留到下一个窗口。
         """
         if not self._playing or self._queued is None or self._channel is None:
@@ -536,7 +534,7 @@ class StretchedSoundBackend:  # pragma: no cover - 依赖 pygame + numpy
         self._queued = window
 
     def _restart_current(self, position_ms: float) -> bool:
-        """从当前位置重新合成**正在播**的窗口（时刻表在没播到的部分变了）。
+        """从当前位置重新合成正在播的窗口（时刻表在没播到的部分变了）。
 
         已经交给通道的音频改不了：不重合成的话，播放中在判定线前方新增 /
         删除的音效要么不响、要么多响一声。新窗口从当前位置开始，音乐接着
@@ -570,9 +568,9 @@ class StretchedSoundBackend:  # pragma: no cover - 依赖 pygame + numpy
     def _mix_effects(self, output, start_ms: float, stop_ms: float) -> None:
         """把落在这一窗口里的音效混进输出缓冲。
 
-        音效按**自己的采样长度**叠加（不参与歌曲的时间伸缩），所以慢放时
-        “滴”声依然是 45ms；输出位置 = ``(音效时刻 − 窗口起点) / 倍速``。
-        窗口起点左侧 ``音效长度 × 倍速`` 内开始的音效也要回看：它们在本窗口
+        音效按自己的采样长度叠加（不参与歌曲的时间伸缩），所以慢放时
+        “滴”声依然是 45ms；输出位置 = (音效时刻 − 窗口起点) / 倍速。
+        窗口起点左侧 音效长度 × 倍速 内开始的音效也要回看：它们在本窗口
         里只剩尾巴，不回看就会被窗口边界截断。
         """
         if not self._effects or self._effect_factory is None or output.size == 0:
@@ -661,8 +659,8 @@ class StretchedSoundBackend:  # pragma: no cover - 依赖 pygame + numpy
     def poll(self) -> None:
         """每帧调用：维护“当前 + 一个排队”的窗口，保证连续、不重不漏。
 
-        关键：**必须等排队的那一段真的开始播了**，才把槽位让给下一段。
-        只看时间近似判断会让下一段还没开始播就被 ``Channel.queue()`` 顶掉，
+        关键：必须等排队的那一段真的开始播了，才把槽位让给下一段。
+        只看时间近似判断会让下一段还没开始播就被 Channel.queue() 顶掉，
         那一段就再也听不到（表现就是音乐漏片段），所以以实际播放位置为准。
         """
         if not self._playing or self._channel is None or self._anchor is None:
@@ -797,7 +795,7 @@ class AudioPlayer:
         return SilentBackend()
 
     def _select_backend(self, path: Optional[str] = None):
-        # ``path`` 传入“即将载入的歌曲”：load() 会先把 self.path 清空，
+        # path 传入“即将载入的歌曲”：load() 会先把 self.path 清空，
         # 只按 self.path 判断会把刚载入的歌曲误判成“没有歌曲”而退回静音时钟
         # （表现就是打开谱面后第一次播放没有声音）。
         target = self.path if path is None else path
@@ -824,7 +822,7 @@ class AudioPlayer:
     def enable_effects(self, factory) -> None:
         """启用“音效混音”路径：后端优先选择可混音的重采样后端。
 
-        ``factory(kind, sample_rate, channels)`` 按种类合成波形。
+        factory(kind, sample_rate, channels) 按种类合成波形。
         """
         self._effect_factory = factory
         backend = self._select_backend()
@@ -841,7 +839,7 @@ class AudioPlayer:
             self.play(position)
 
     def set_effects(self, events) -> None:
-        """设置**预先算好、已排序**的音效轨道：``events = [(歌曲毫秒, 种类)]``。"""
+        """设置预先算好、已排序的音效轨道：events = [(歌曲毫秒, 种类)]。"""
         self._effects = list(events)
         self._sync_effects()
 
@@ -975,7 +973,7 @@ class AudioPlayer:
 
     # ------------------------------------------------------------------ 倍速
     def set_rate(self, rate: float) -> None:
-        """设置播放倍速（下限 :data:`config.RATE_MIN`）：慢放通过重采样实现，音调随之变低。"""
+        """设置播放倍速（下限 config.RATE_MIN）：慢放通过重采样实现，音调随之变低。"""
         rate = round(max(config.RATE_MIN, min(config.RATE_LIMIT_MAX, float(rate))), 2)
         if abs(rate - self.rate) < 1e-9:
             return
@@ -1005,7 +1003,7 @@ class AudioPlayer:
         try:
             self.backend.play(start)
         except Exception as exc:  # pragma: no cover - 后端异常
-            # 拉伸合成失败时退回**普通播放**（听得见，只是不慢放），
+            # 拉伸合成失败时退回普通播放（听得见，只是不慢放），
             # 不静默切成静音时钟（那样音乐就“没了”）
             self._fallback_plain(f"慢放合成失败（{exc}），已回到 1.0x 播放")
             try:
@@ -1031,7 +1029,7 @@ class AudioPlayer:
         self._paused_at_ms = 0.0
 
     def _stop_all_backends(self) -> None:
-        """把**所有**后端都停掉。
+        """把所有后端都停掉。
 
         切换倍速（拉伸后端 ↔ 普通后端）时，被换下的后端也要停：只停当前后端的话
         它还会继续出声（听感是“按了暂停 / 停止以后声音还响一会儿”）。这里连同
@@ -1107,7 +1105,7 @@ class AudioPlayer:
         """耳朵实际听到的位置（考虑系统音频延迟）。"""
         position = self.position_ms()
         if self.usable_audio:
-            # 延迟是**真实时间**：慢放时真实 1ms 只推进 rate ms 的歌曲时间，
+            # 延迟是真实时间：慢放时真实 1ms 只推进 rate ms 的歌曲时间，
             # 所以要按倍速缩放，否则延迟补偿会被倍速放大/缩小。
             position -= self.latency_ms * self.rate
         return max(0.0, position)

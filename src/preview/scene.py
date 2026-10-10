@@ -1,18 +1,16 @@
 """演示视图的 3D 布局与透视投影（软件渲染，不依赖 OpenGL）。
 
-坐标约定（右手系，单位为“判定单位”）
-------------------------------------
-* ``x``：横向，向右为正，``0`` 在 6K 中央四条轨的中线。
-* ``y``：竖直向上，6K 平面在 ``y = 0``，鼠标平面在 ``y = MOUSE_PLANE_HEIGHT``。
-* ``z``：向**远处**为正；判定平面在 ``z = 0``，物件从 ``z = START_Z`` 向 ``z = 0`` 运动。
+坐标约定（右手系，单位为“判定单位”）：
+* x：横向，向右为正，0 在 6K 中央四条轨的中线。
+* y：竖直向上，6K 平面在 y = 0，鼠标平面在 y = MOUSE_PLANE_HEIGHT。
+* z：向远处为正；判定平面在 z = 0，物件从 z = START_Z 向 z = 0 运动。
 
-尺寸（与需求一致）
-------------------
-* **1 单位 = 鼠标合法区域宽度 = 6K 中间四条轨道的宽度**；
+尺寸（与需求一致）：
+* 1 单位 = 鼠标合法区域宽度 = 6K 中间四条轨道的宽度；
 * 6K 六条轨道总宽 = 1.5 单位（每条 0.25），中间四条 = 1 单位，左右各多 0.25；
-* 鼠标平面在 6K 平面上方 ``MOUSE_PLANE_HEIGHT``（≈0.286 单位）；
-* 两条判定线都在判定平面上：6K 线在 ``y = 0``、鼠标线在 ``y = MOUSE_PLANE_HEIGHT``；
-* 摄像头在判定平面**后方**（``z < 0``）、鼠标平面**上方**，
+* 鼠标平面在 6K 平面上方 MOUSE_PLANE_HEIGHT（≈0.286 单位）；
+* 两条判定线都在判定平面上：6K 线在 y = 0、鼠标线在 y = MOUSE_PLANE_HEIGHT；
+* 摄像头在判定平面后方（z < 0）、鼠标平面上方，
   因此鼠标平面离镜头更近、看上去更宽（近大远小）。
 """
 
@@ -22,7 +20,7 @@ import math
 from dataclasses import dataclass
 from typing import Dict, Optional, Tuple
 
-# **单位定义：鼠标合法区域宽度 = 6K 中间四轨宽 = 1 单位**（与编辑器一致）。
+# 单位定义：鼠标合法区域宽度 = 6K 中间四轨宽 = 1 单位（与编辑器一致）。
 # 编辑器里合法区域就是 0..1；演示视图的世界坐标也用同一套，免得两边换算。
 UNIT = 1.0
 # 布局尺寸（轨道长度 / 相机位置 / 平面高度 / 线宽…）按同一套参考比例书写，
@@ -76,7 +74,7 @@ class PreviewScene:
         # (水平缩放, 竖直缩放, dx, dy)：水平方向单独拉伸，竖直方向按整体比例
         self._fit_value: Tuple[float, float, float, float] = (1.0, 1.0, 0.0, 0.0)
         self._visible_near_cache: Dict[Tuple[float, int, int], float] = {}
-        # 鼠标平面的远端**在 6K 轨道远端之上**（它更靠近相机，同一个 z 投影更高）——
+        # 鼠标平面的远端在 6K 轨道远端之上（它更靠近相机，同一个 z 投影更高）——
         # 两个平面共用同一个 z 行程 START_Z。
 
     # ------------------------------------------------------------ 局部坐标
@@ -96,9 +94,9 @@ class PreviewScene:
 
     @staticmethod
     def note_z(progress: float, start_z: Optional[float] = None) -> float:
-        """``progress``：0 = 起点（远处），1 = 判定平面。
+        """progress：0 = 起点（远处），1 = 判定平面。
 
-        ``start_z`` 给定时用它当运动起点（鼠标平面用 ``mouse_start_z``）。
+        start_z 给定时用它当运动起点（鼠标平面用 mouse_start_z）。
         """
         span = START_Z if start_z is None else float(start_z)
         return span * (1.0 - max(0.0, min(1.0, progress)))
@@ -118,9 +116,9 @@ class PreviewScene:
                     yield (x, y, z)
 
     def _fit_transform(self, width: int, height: int) -> Tuple[float, float, float, float]:
-        """返回 ``(scale_x, scale_y, dx, dy)``：把相机投影缩放平移到铺满窗口。
+        """返回 (scale_x, scale_y, dx, dy)：把相机投影缩放平移到铺满窗口。
 
-        **水平方向单独拉伸**到可用宽度：宽窗口下 6K 平面会一直铺到接近左右
+        水平方向单独拉伸到可用宽度：宽窗口下 6K 平面会一直铺到接近左右
         窗口边缘（否则竖直方向限制整体比例，两侧会留很宽的黑边）；
         竖直方向仍是整体比例（不上下变形，顶部留 HUD 边距）。
         """
@@ -147,19 +145,19 @@ class PreviewScene:
     def point(self, x: float, y: float, z: float, width: int, height: int):
         sx, sy, view_scale = self.camera.project((x, y, z), width, height)
         scale_x, scale_y, dx, dy = self._fit_transform(width, height)
-        # 线宽 / 边界半宽按**水平**缩放换算（竖线、边界带都是横向定宽）
+        # 线宽 / 边界半宽按水平缩放换算（竖线、边界带都是横向定宽）
         return sx * scale_x + dx, sy * scale_y + dy, view_scale * scale_x
 
     def horizontal_stretch(self, width: int, height: int) -> float:
-        """当前窗口下的水平拉伸系数（``scale_x / scale_y``，≥ 1 表示被横向拉伸）。"""
+        """当前窗口下的水平拉伸系数（scale_x / scale_y，≥ 1 表示被横向拉伸）。"""
         scale_x, scale_y, _dx, _dy = self._fit_transform(width, height)
         return scale_x / max(1e-9, scale_y)
 
     def visible_z_near(self, y: float, width: int, height: int) -> float:
-        """平面 ``y`` 上“还在画面里”的**最近 z**（判定平面在 ``z = 0``，所以是负值）。
+        """平面 y 上“还在画面里”的最近 z（判定平面在 z = 0，所以是负值）。
 
-        相机在判定平面后方：``z`` 越小（越靠近镜头）投影的屏幕 y 越大，所以这里
-        二分求“投影正好落到画面下边界”的 z。物件可以出现在判定平面**之前**
+        相机在判定平面后方：z 越小（越靠近镜头）投影的屏幕 y 越大，所以这里
+        二分求“投影正好落到画面下边界”的 z。物件可以出现在判定平面之前
         （反向流速），可视下界就是这条边界；窗口尺寸变化时重算并缓存。
         """
         key = (round(float(y), 4), int(width), int(height))

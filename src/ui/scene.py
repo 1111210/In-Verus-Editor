@@ -1,6 +1,6 @@
 """带差分的 Tk 画布场景：按稳定 key 复用画布对象，避免每帧重建。
 
-用法::
+用法：
 
     scene.begin()
     scene.rect("lane0", x0, y0, x1, y1, fill="#123")

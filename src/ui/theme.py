@@ -1,6 +1,6 @@
 """配色与字体。
 
-Tk 画布不支持真正的 alpha 通道，半透明效果用 ``stipple``（点阵填充）来模拟。
+Tk 画布不支持真正的 alpha 通道，半透明效果用 stipple（点阵填充）来模拟。
 """
 
 from __future__ import annotations

@@ -1,6 +1,6 @@
 """工具状态机：放置、选择、粘贴、滚动与缩放。
 
-所有修改都通过 ``Document`` 进行，因此每一步都可撤销。
+所有修改都通过 Document 进行，因此每一步都可撤销。
 """
 
 from __future__ import annotations
@@ -247,7 +247,7 @@ class ToolController:
         lane_was = self.view.layout.lane_at(origin_x)
         if lane_now is not None and lane_was is not None:
             lane_delta = lane_now - lane_was
-        # 横向位移用**鼠标光标的真实位移**；吸附则在每个物件自己的“锚点”上做：
+        # 横向位移用鼠标光标的真实位移；吸附则在每个物件自己的“锚点”上做：
         # 滑键按起点、空域 / 禁区按起点（beat_start 处）左右边界的中点。
         # 这样即使物件是在另一套横向网格下创建的，拖动后锚点也一定落在当前网格线上，
         # 而且不会改变物件自身的长度 / 宽度。
@@ -487,9 +487,9 @@ class ToolController:
     def _norm_x(self, x: float) -> Optional[float]:
         """鼠标平面像素横坐标 -> 归一化位置。
 
-        * **启用横向辅助网格**时：吸附到最近的网格线，并夹进 ``0..1`` 合法区域内；
-        * **未启用**时：保留鼠标的真实位置 —— 即使超出合法区域（出界）也照常放置。
-        * 只有当点击落在鼠标平面区域之外（例如点在 6K 区域里）才返回 ``None``。
+        * 启用横向辅助网格时：吸附到最近的网格线，并夹进 0..1 合法区域内；
+        * 未启用时：保留鼠标的真实位置 —— 即使超出合法区域（出界）也照常放置。
+        * 只有当点击落在鼠标平面区域之外（例如点在 6K 区域里）才返回 None。
         """
         if not self.view.in_mouse_pane(x):
             return None
@@ -528,7 +528,7 @@ class ToolController:
             self.view.chart.settings.horizontal_divisions > 0
         ) else config.MIN_SLIDE_SPAN
         if abs(x_end - x_start) < 1e-9:
-            # 吸附后落在同一格：用**未吸附的点击位置**判断方向，再按方向补一个最小跨度，
+            # 吸附后落在同一格：用未吸附的点击位置判断方向，再按方向补一个最小跨度，
             # 这样“第二次点在左边就是向左滑”，不会一律变成向右。
             raw = self.view.x_to_norm(x)
             direction = -1.0 if raw < x_start else 1.0

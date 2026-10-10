@@ -43,14 +43,14 @@ def visible_y_band(view: ViewState, margin: float = 120.0) -> Tuple[float, float
     """纵向“值得保留采样点 / 需要参与叠加”的范围：游玩区上下各留一点余量。
 
     空域 / 禁区在屏幕外的连续段只用首尾两点表示（见
-    :func:`region_beat_samples`），这里就是判定“在不在屏幕内”的那条带。
+    region_beat_samples），这里就是判定“在不在屏幕内”的那条带。
     """
     layout = view.layout
     return (layout.play_top - margin, layout.play_bottom + margin)
 
 
 def clip_bounds(bounds: Bounds, rect: Bounds) -> Optional[Bounds]:
-    """两个矩形的交集；没有交集时返回 ``None``。"""
+    """两个矩形的交集；没有交集时返回 None。"""
     x0 = max(bounds[0], rect[0])
     y0 = max(bounds[1], rect[1])
     x1 = min(bounds[2], rect[2])
@@ -61,7 +61,7 @@ def clip_bounds(bounds: Bounds, rect: Bounds) -> Optional[Bounds]:
 
 
 def clip_segment(a: Point, b: Point, rect: Bounds) -> Optional[Tuple[Point, Point]]:
-    """Liang–Barsky：把线段裁剪到矩形内；完全在外时返回 ``None``。"""
+    """Liang–Barsky：把线段裁剪到矩形内；完全在外时返回 None。"""
     x0, y0 = a
     x1, y1 = b
     dx, dy = x1 - x0, y1 - y0
@@ -255,7 +255,7 @@ def region_edges(
 ) -> Tuple[List[Point], List[Point]]:
     """空域的左右边界点列（未裁剪，从开头到结尾）。
 
-    采样点只保留屏幕附近的部分（见 :func:`region_beat_samples`）：
+    采样点只保留屏幕附近的部分（见 region_beat_samples）：
     长空域 / 禁区加上大量速度段时，屏幕外的段不会产出成百上千个无用点。
     """
     left_edge: List[Point] = []
@@ -269,16 +269,16 @@ def region_edges(
 def region_beat_samples(
     note: MouseRegion, chart: Chart, view: ViewState, samples: int = REGION_SAMPLES
 ):
-    """逐点给出空域/禁区的 ``(beat, progress, y)``（按拍升序）。
+    """逐点给出空域/禁区的 (beat, progress, y)（按拍升序）。
 
     长空域 / 禁区 + 大量速度段的关键约束，以及这里的做法：
 
-    * **断点** = 两端 ∪ 速度段边界 ∪ BPM 段边界。段内流速与每拍秒数都是常数，
-      ``y`` 随拍**线性**，所以折线用这些点表示就是精确的（变速 / BPM 变化不糊）；
-    * 距离按拍**增量积分**（每段一次乘法），整体 O(段数)，与空域跨度无关；
+    * 断点 = 两端 ∪ 速度段边界 ∪ BPM 段边界。段内流速与每拍秒数都是常数，
+      y 随拍线性，所以折线用这些点表示就是精确的（变速 / BPM 变化不糊）；
+    * 距离按拍增量积分（每段一次乘法），整体 O(段数)，与空域跨度无关；
     * 与可视带不相交的连续段只保留首尾两个点（段内线性 ⇒ 连接的直线仍在该侧，
       形状不变），屏幕外的段边界不产生额外分点；
-    * 与可视带相交的段按**屏幕高度**细分，``samples`` 是所有细分点的总预算 ——
+    * 与可视带相交的段按屏幕高度细分，samples 是所有细分点的总预算 ——
       一个空域被流速推成多段、几段同时可见时，每段都会单独细分，不会丢。
     """
     group = chart.group_by_id(note.group)
@@ -379,7 +379,7 @@ def sample_beats(
     group: SpeedGroup,
     samples: int = REGION_SAMPLES,
 ) -> List[Tuple[float, float]]:
-    """给出采样点 ``(beat, progress)``：等分采样 + 速度段边界（保证折点精确）。
+    """给出采样点 (beat, progress)：等分采样 + 速度段边界（保证折点精确）。
 
     流速在速度段边界会发生跳变，物件轨迹在那里有折点。只在等分点上采样会把折点
     用直线糊掉，导致“看起来的位置”和“真实积分位置”不一致 —— 因此在采样时强制
@@ -410,10 +410,10 @@ def region_bounds(note: MouseRegion, chart: Chart, view: ViewState) -> Optional[
 
 
 def note_bounds(note: Note, chart: Chart, view: ViewState) -> Optional[Bounds]:
-    """物件在屏幕上的命中包围盒；完全被鼠标平面裁掉时返回 ``None``。
+    """物件在屏幕上的命中包围盒；完全被鼠标平面裁掉时返回 None。
 
     6K 物件不受裁剪；鼠标平面物件的真实几何可能超出显示范围，命中测试与渲染
-    一致地裁剪到 ``pane_mouse``。
+    一致地裁剪到 pane_mouse。
     """
     if isinstance(note, LaneNote):
         return lane_note_bounds(note, chart, view)
@@ -429,7 +429,7 @@ def note_bounds(note: Note, chart: Chart, view: ViewState) -> Optional[Bounds]:
 def polygon_row_intervals(
     points: Sequence[Point], y: float, eps: float = 1e-9
 ) -> List[Tuple[float, float]]:
-    """扫描线 ``y`` 与多边形的交点区间（奇偶规则；无交点时为空列表）。"""
+    """扫描线 y 与多边形的交点区间（奇偶规则；无交点时为空列表）。"""
     crossings: List[float] = []
     count = len(points)
     for index in range(count):
@@ -453,16 +453,16 @@ def polygon_overlap(
     step: float = 3.0,
     band: Optional[Tuple[float, float]] = None,
 ) -> Optional[List[Point]]:
-    """两个简单多边形的交集多边形；无法用单一区间表示时返回 ``None``。
+    """两个简单多边形的交集多边形；无法用单一区间表示时返回 None。
 
-    逐行扫描：每行取两个多边形的横向区间求交，交集必须**恰好一段**，
+    逐行扫描：每行取两个多边形的横向区间求交，交集必须恰好一段，
     结果拼成一个左右两条边的多边形。用于把两层半透明填充的重叠处补成合成色。
-    ``band`` 给出真正需要绘制的纵向范围（屏幕），扫描只在这个范围内进行 ——
+    band 给出真正需要绘制的纵向范围（屏幕），扫描只在这个范围内进行 ——
     长空域 / 禁区被速度组推到很远时，包围盒可能高达几万像素。
     """
     if len(first) < 3 or len(second) < 3:
         return None
-    # 交集只可能落在两个包围盒的**交集**里：先取包围盒交集，避免长空域 /
+    # 交集只可能落在两个包围盒的交集里：先取包围盒交集，避免长空域 /
     # 禁区被扫描几万行（那是纯粹的浪费，还会生成巨大的多边形）
     first_ys = [p[1] for p in first]
     second_ys = [p[1] for p in second]
@@ -535,10 +535,10 @@ def note_hit(note: Note, chart: Chart, view: ViewState, x: float, y: float) -> b
 def note_in_time(note: Note, current_beat: float, show_past: bool = False) -> bool:
     """物件是否还没到判定时间（或正在判定中）。
 
-    显示规则：**判定线越过物件的判定时刻后就不再显示**。
-    长按与空域按结束时刻（``tail_beat``）计算，
+    显示规则：判定线越过物件的判定时刻后就不再显示。
+    长按与空域按结束时刻（tail_beat）计算，
     因此按住期间整条长按 / 整个区域依然可见。
-    ``show_past=True`` 时（视图菜单「显示更早的物件」）不做这条过滤，
+    show_past=True 时（视图菜单「显示更早的物件」）不做这条过滤，
     已经判过的物件照样绘制在判定线下方。
     """
     if show_past:

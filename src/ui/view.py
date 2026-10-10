@@ -1,13 +1,12 @@
 """视图变换：屏幕 <-> 时间轴（拍）的换算、落位、吸附与缩放。
 
-两种布局模式
-------------
-* ``LAYOUT_SPLIT``（编辑器默认）：画布左右分成两个独立区域 ——
-  左边是 6K 下落式区域，右边是鼠标平面区域。两个区域**共用同一条判定线**
+两种布局模式：
+* LAYOUT_SPLIT（编辑器默认）：画布左右分成两个独立区域 ——
+  左边是 6K 下落式区域，右边是鼠标平面区域。两个区域共用同一条判定线
   （同一个 y）与同一套时间网格，所以滚动 / 缩放天然同步。
-* ``LAYOUT_OVERLAY``（演示模式）：只有一个区域，鼠标平面叠加在 6K 的中间四条轨道上。
+* LAYOUT_OVERLAY（演示模式）：只有一个区域，鼠标平面叠加在 6K 的中间四条轨道上。
 
-两个区域的时间映射完全一致（`beat_to_y`），因此切换模式不会改变时间位置。
+两个区域的时间映射完全一致（beat_to_y），因此切换模式不会改变时间位置。
 """
 
 from __future__ import annotations
@@ -206,11 +205,11 @@ class ViewState:
         return self.chart.timing.seconds_per_beat(self.current_beat)
 
     def px_per_second(self) -> float:
-        """纵向比例：判定线以上固定显示 ``zoom_seconds`` 秒，因此是常数。
+        """纵向比例：判定线以上固定显示 zoom_seconds 秒，因此是常数。
 
         这是“BPM 变更处时间轴立刻改变大小”的关键 —— 比例只由缩放决定，
         不随判定线所在的 BPM 段变化，所以判定线经过 BPM 变更时不会整屏突变；
-        每拍在屏幕上的长度则 = ``每秒像素 × 该段的每拍秒数``（BPM 越高格子越密）。
+        每拍在屏幕上的长度则 = 每秒像素 × 该段的每拍秒数（BPM 越高格子越密）。
         """
         above = max(40.0, self.layout.judgment_y - self.layout.play_top)
         return above / max(1e-6, self.zoom_seconds)
@@ -224,7 +223,7 @@ class ViewState:
         return self.px_per_beat_at(self.current_beat)
 
     def min_px_per_beat(self, beat_low: float, beat_high: float) -> float:
-        """可视范围内**最小**的每拍像素长度（最密的格子），用于决定画不画细分线。"""
+        """可视范围内最小的每拍像素长度（最密的格子），用于决定画不画细分线。"""
         fastest = self.chart.timing.min_seconds_per_beat(
             beat_low, beat_high, self.current_beat
         )
@@ -252,7 +251,7 @@ class ViewState:
     def beat_to_y(self, beat: float) -> float:
         """时间网格（默认流速）的映射：两个区域共用。
 
-        纵向按**秒**线性：`y = 判定线 − (两拍的秒数差) × 每秒像素`。
+        纵向按秒线性：y = 判定线 − (两拍的秒数差) × 每秒像素。
         于是 BPM 变更处之后的格子立刻按新 BPM 变密 / 变疏，判定线经过时不会整屏突变。
         """
         timing = self.chart.timing
@@ -281,7 +280,7 @@ class ViewState:
         )
 
     def candidate_notes(self, notes: List[Note]) -> List[Note]:
-        """按可视拍窗口粗筛候选物件（``notes`` 需已按开头拍排序）。
+        """按可视拍窗口粗筛候选物件（notes 需已按开头拍排序）。
 
         只在所有速度组都是默认流速时生效：此时位置对拍单调，窗口外的物件不可能
         落进屏幕；流速非 1 / 反向的组会把任意远处的物件推回屏幕，只能返回原列表
@@ -314,7 +313,7 @@ class ViewState:
 
     # ---------------------------------------------------------- 竖向滚动条
     def scroll_doc_range(self) -> Tuple[float, float]:
-        """滚动条代表的“文档范围”（**秒**）：谱面起点到终点，两端各留一点余量。"""
+        """滚动条代表的“文档范围”（秒）：谱面起点到终点，两端各留一点余量。"""
         timing = self.chart.timing
         low, high = self.chart.beat_bounds()
         low_s = timing.beat_to_seconds(min(0.0, low))
@@ -327,7 +326,7 @@ class ViewState:
     def scroll_fractions(self) -> Tuple[float, float]:
         """当前可视时间窗口在滚动条上的位置（0..1），用于设置滑块。
 
-        **方向是反的**：滚动条顶端 = 曲末、底端 = 曲首（往下拖是往回走）。
+        方向是反的：滚动条顶端 = 曲末、底端 = 曲首（往下拖是往回走）。
         """
         timing = self.chart.timing
         low, high = self.scroll_doc_range()
@@ -345,10 +344,10 @@ class ViewState:
         return min(1.0, self.visible_seconds() / span)
 
     def set_from_fraction(self, fraction: float) -> None:
-        """把滑块放到滚动条比例 ``fraction`` 处（方向同 :meth:`scroll_fractions`）。
+        """把滑块放到滚动条比例 fraction 处（方向同 scroll_fractions）。
 
-        ``fraction`` 是**滑块上边缘**的位置，而滑块长度等于可视窗口占比，
-        所以窗口的“低端”（较早的一侧）在 ``1 - fraction - 窗口占比`` 处 ——
+        fraction 是滑块上边缘的位置，而滑块长度等于可视窗口占比，
+        所以窗口的“低端”（较早的一侧）在 1 - fraction - 窗口占比 处 ——
         少减这一项，拖动时滑块就会先跳出去一个滑块长度再跟着鼠标走。
         """
         timing = self.chart.timing
@@ -359,7 +358,7 @@ class ViewState:
         self.set_beat(timing.seconds_to_beat(window_low + self.seconds_below()))
 
     def visible_seconds(self) -> float:
-        """可视窗口一共覆盖多少秒（判定线以上固定为 ``zoom_seconds``）。"""
+        """可视窗口一共覆盖多少秒（判定线以上固定为 zoom_seconds）。"""
         return (
             self.layout.play_bottom - self.layout.play_top
         ) / max(1e-6, self.px_per_second())
@@ -374,8 +373,8 @@ class ViewState:
     def norm_to_x(self, value: float) -> float:
         """0..1 的规范化横坐标 → 鼠标平面像素坐标（按真实值映射，不裁剪）。
 
-        鼠标平面的显示范围是 ``layout.pane_mouse``：超出它的部分由渲染层与命中
-        测试裁剪（见 ``ui/geometry.py`` 的裁剪工具）。把坐标夹到面板边界会让
+        鼠标平面的显示范围是 layout.pane_mouse：超出它的部分由渲染层与命中
+        测试裁剪（见 ui/geometry.py 的裁剪工具）。把坐标夹到面板边界会让
         物件的边界看起来落在屏幕边上。
         """
         return self.layout.mouse_left + float(value) * self.layout.mouse_width
