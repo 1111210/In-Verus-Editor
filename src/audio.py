@@ -96,7 +96,7 @@ def audio_setup_hint() -> str:
     if _PYGAME is None:
         detail = f"（{_PYGAME_ERROR}）" if _PYGAME_ERROR else ""
         return (
-            f"未检测到 pygame{detail}：用 run_editor.bat 启动（会自动使用项目里的 .venv），"
+            f"未检测到 pygame{detail}：用 run_editor.bat 启动，"
             f"或执行 pip install -r requirements.txt；"
             f"当前解释器：{sys.executable}"
         )
@@ -904,14 +904,14 @@ class AudioPlayer:
                 if audio_backend_state() == "ok":
                     return (
                         f"音频后端：{audio_backend_name()}"
-                        f"（未载入歌曲，播放为静音时钟）· {config.format_rate(self.rate)}"
+                        f"（未载入歌曲）· {config.format_rate(self.rate)}"
                     )
-                return f"音频后端：silent（{_silent_reason()}，静音）· {config.format_rate(self.rate)}"
+                return f"音频后端：silent（{_silent_reason()}）· {config.format_rate(self.rate)}"
             text = f"音频后端：{self.backend.name}（未载入歌曲）· {config.format_rate(self.rate)}"
             return f"{text} · {self.last_error}" if self.last_error else text
         base = os.path.basename(self.path)
         if not self.usable_audio:
-            return f"音频后端：silent（{_silent_reason()}，静音播放）· {base} · {config.format_rate(self.rate)}"
+            return f"音频后端：silent（{_silent_reason()}）· {base} · {config.format_rate(self.rate)}"
         tone = "· 变调" if self.stretch_active and abs(self.rate - 1.0) > 1e-9 else ""
         text = f"音频后端：{self.backend.name} · {base} · {config.format_rate(self.rate)}{tone}"
         return f"{text} · {self.last_error}" if self.last_error else text

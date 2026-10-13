@@ -244,6 +244,8 @@ class EditorApp:
         root.bind("<KeyPress>", lambda e: self.toolbar.mark_interaction(), add="+")
         # 点击菜单 / 分组按钮以外的地方 -> 自动收起菜单
         root.bind("<ButtonPress-1>", lambda e: self.toolbar.handle_outside_click(e.widget), add="+")
+        # 点击工具栏 / 菜单 / 侧边滚动条 -> 自动停止播放
+        root.bind("<ButtonPress-1>", self._on_global_press, add="+")
         root.bind("m", lambda e: self._shortcut(self.mirror_selection))
         root.bind("e", lambda e: self._shortcut(self.edit_selected))
         for index, tool in enumerate(config.TOOL_ORDER, start=1):
@@ -284,27 +286,35 @@ class EditorApp:
         state.demo = self.demo_mode
         state.playing = self.audio.is_playing
         state.divider_active = self._divider_drag or self._divider_cursor != ""
+        # 预览每帧重算：点击推进阶段后即使不移动鼠标，提示与边界也立即跟上
+        self.controller.refresh_preview()
         state.pending = self.controller.state.pending
         # 选择集只在版本号变化时重建（大选择集不必每帧复制一遍）
         selection_revision = self.document.selection_revision
         if selection_revision != self._selection_revision_seen:
             state.selection = set(self.document.selection)
             self._selection_revision_seen = selection_revision
-        # 画面指纹不变时跳过整帧重绘：空闲状态几乎零开销
+        # 放置层：画面指纹不变时跳过重绘（空闲、纯悬浮都几乎零开销）
         render_key = self._render_key()
         if render_key != self._last_render_key:
             self._last_render_key = render_key
             self.renderer.draw(self.document.chart, self.view, state)
+        # 预览层：每帧重画，内容没变的图元由 Scene 的差分比较跳过
+        self.renderer.draw_preview(self.document.chart, self.view, state)
         self._sync_ui()
         self._maybe_save_settings()
         self._schedule_next_tick()
 
     def _render_key(self) -> tuple:
-        """本帧画面是否变化的指纹（只比较廉价的键，不复制选择集 / 剪贴板）。"""
+        """放置层画面是否变化的指纹（只比较廉价的键，不复制选择集 / 剪贴板）。
+
+        只包含放置层的内容：鼠标位置、放置预览与框选橡皮筋属于预览层
+        （由 draw_preview 每帧重画），不进这个指纹，否则移动鼠标会连带
+        重算整张谱面。
+        """
         state = self.render_state
         layout = self.view.layout
         settings = self.document.chart.settings
-        pending = state.pending
         return (
             self.document.revision,
             self.document.selection_revision,
@@ -315,6 +325,7 @@ class EditorApp:
             settings.horizontal_divisions,
             bool(settings.side_lane_highlight),
             bool(settings.show_past_notes),
+            bool(settings.ignore_speed_groups),
             round(float(self.view.current_beat), 6),
             int(layout.width),
             int(layout.height),
@@ -324,22 +335,6 @@ class EditorApp:
             bool(state.playing),
             bool(state.divider_active),
             state.message,
-            state.rubber_band,
-            state.hover,
-            pending.tool,
-            pending.step,
-            pending.lane_start,
-            pending.lane_end,
-            pending.beat_start,
-            pending.beat_end,
-            pending.x_start,
-            pending.x_end,
-            pending.left.to_dict() if pending.left is not None else None,
-            pending.right.to_dict() if pending.right is not None else None,
-            pending.hint,
-            id(pending.clipboard),
-            len(pending.clipboard),
-            pending.clipboard_beat,
         )
 
     def _maybe_save_settings(self) -> None:
@@ -394,7 +389,7 @@ class EditorApp:
         ):
             self.pause()
             self.status(
-                f"播放结束（音乐与谱面都已播完 {config.PLAY_END_MARGIN_SECONDS:g} 秒）"
+                "播放结束"
             )
 
     def _refresh_effects(
@@ -470,14 +465,14 @@ class EditorApp:
             return
         detail = "每小节响一声" if mode == MODE_BAR else "每拍响一声"
         if not self.audio.usable_audio:
-            self.status(f"节拍音已开启（{detail}），但当前音频设备不可用，暂时听不到声音")
+            self.status(f"节拍音已开启：{detail}，但当前音频设备不可用")
         else:
-            self.status(f"节拍音已开启：{detail}（小节音比节拍音高一点）")
+            self.status(f"节拍音已开启：{detail}")
 
     def _sync_ui(self) -> None:
         self.toolbar.sync()
         counts = self.document.chart.note_counts()
-        layout_name = "分栏（6K / 鼠标）" if self.view.split_layout else "叠加（演示）"
+        layout_name = "分栏" if self.view.split_layout else "叠加"
         info = (
             f"布局：{layout_name}"
             f"　|　倍速 {config.format_rate(self.audio.rate)}"
@@ -503,11 +498,34 @@ class EditorApp:
         if hasattr(self, "status_var") and self.status_var.get() != text:
             self.status_var.set(text)
 
+    def stop_playback(self) -> None:
+        """正在播放时停下来（点击菜单栏按钮 / 侧边滚动条等操作前调用）。"""
+        if self.audio.is_playing:
+            self.pause()
+
+    def _on_global_press(self, event) -> None:
+        """点击菜单栏上的按钮 / 侧边滚动条时自动停止播放。
+
+        只有顶栏上的按钮才算“点击菜单栏”（点顶栏空白处、分隔条不算）；画布上的
+        点击不受影响（放置与选择照旧可以在播放中进行）。播放 / 倍速控件排除在
+        外：它们本身就带播放控制，先停下再执行命令会把状态来回切。
+        """
+        widget = getattr(event, "widget", None)
+        if widget is None or widget is self.canvas:
+            return
+        if widget is self.vscroll:
+            self.stop_playback()
+            return
+        if self.toolbar.is_menu_bar_button(widget):
+            self.stop_playback()
+            # 菜单项文字（播放 / 暂停）随播放状态变化：菜单弹出前刷一次
+            self.toolbar.sync()
+
     def _hover_status(self, x: float, y: float) -> None:
         if y >= self.view.layout.play_bottom:
             beat = self.view.y_to_beat(y)
             self.status(
-                f"画布下方空白（用右侧滚动条移动时间轴）· 第 {beat:.3f} 拍 · "
+                f"画布下方空白 · 第 {beat:.3f} 拍 · "
                 f"{self.view.time_label(beat)}"
             )
             return
@@ -532,6 +550,8 @@ class EditorApp:
         """ttk 滚动条回调：拖动滑块 / 点箭头 / 翻页。"""
         if not args:
             return
+        # 用滚动条找位置时先停下来，否则判定线一直在动
+        self.stop_playback()
         if args[0] == "moveto":
             self.view.set_from_fraction(float(args[1]))
             self.status(f"时间轴：第 {self.view.current_beat:.3f} 拍")
@@ -562,7 +582,7 @@ class EditorApp:
         if not self.demo_mode and self.view.divider_at(event.x):
             self._divider_drag = True
             self.canvas.configure(cursor="sb_h_double_arrow")
-            self.status("拖动分界线：左右两栏宽度实时调整（双击分界线可恢复 1:3）")
+            self.status("拖动分界线：左右两栏宽度实时调整")
             return
         if self.demo_mode:
             if event.y >= self.view.layout.play_bottom:
@@ -603,10 +623,19 @@ class EditorApp:
             self._schedule_next_tick()
 
     def _on_double_click(self, event) -> None:
-        """双击分界线：恢复默认 1:3 分栏。"""
-        if self.demo_mode or not self.view.divider_at(event.x):
+        """双击分界线：恢复默认 1:3 分栏；其他位置的双击按普通点击处理。
+
+        Tk 对「同一位置、系统双击间隔内的第二次按下」只派发 <Double-Button-1>，
+        不再派发 <ButtonPress-1>。若这里对非分界线位置直接返回，放置工具原地连点
+        的第二下就会被吞掉（必须移动鼠标或等双击间隔过去才生效）。因此非分界线
+        位置补发一次普通按下。
+        """
+        if self.demo_mode:
             return
-        self.reset_split_ratio()
+        if self.view.divider_at(event.x):
+            self.reset_split_ratio()
+            return
+        self._on_press(event)
 
     def _sync_divider_cursor(self, x: float) -> None:
         """悬停在分界线上时换成左右拖动光标。"""
@@ -658,7 +687,7 @@ class EditorApp:
         if self.fullscreen:
             self.maximized = False
         self.status(
-            "已进入全屏（F11 退出）" if self.fullscreen else "已退出全屏"
+            "已进入全屏" if self.fullscreen else "已退出全屏"
         )
 
     def set_fullscreen(self, enabled: bool) -> None:
@@ -702,10 +731,10 @@ class EditorApp:
             self.set_fullscreen(False)
         if self.maximized:
             self.restore_window()
-            self.status("窗口已还原（F10 可再次最大化）")
+            self.status("窗口已还原")
         else:
             self.maximize_window()
-            self.status("窗口已最大化（F10 可还原，F11 为无边框全屏）")
+            self.status("窗口已最大化")
 
     def reset_zoom(self) -> None:
         self.document.chart.settings.zoom_seconds = config.DEFAULT_ZOOM_SECONDS
@@ -724,9 +753,9 @@ class EditorApp:
         self.audio.set_rate(rate)
         paused = self.audio.paused_by_rate_change
         if announce:
-            tone = "（变调：重采样）" if self.audio.stretch_active else ""
-            extra = "" if self.audio.usable_audio else "（静音时钟）"
-            note = "，已自动暂停（按空格继续）" if paused else ""
+            tone = "（变调）" if self.audio.stretch_active else ""
+            extra = "" if self.audio.usable_audio else "（静音）"
+            note = "，已自动暂停" if paused else ""
             self.status(f"播放倍速：{config.format_rate(rate)}{tone}{extra}{note}")
         self.toolbar.sync()
 
@@ -869,9 +898,9 @@ class EditorApp:
         reason = audio_silent_reason()
         notes = []
         if self.audio.path is None:
-            notes.append("未载入歌曲：静音时钟推进，不会自动停止")
+            notes.append("未载入歌曲")
         if reason:
-            notes.append(f"静音播放：{reason}")
+            notes.append(f"静音：{reason}")
         note = f"（{'；'.join(notes)}）" if notes else ""
         self.status(f"从第 {self.view.current_beat:.3f} 拍开始播放{note}")
 
@@ -883,7 +912,7 @@ class EditorApp:
             self.audio.pause()
             self.view.current_beat = timing.song_ms_to_beat(heard)
             self._demo_dirty = True
-            self.status("已暂停（演示模式：空格继续播放）")
+            self.status("已暂停")
             return
         # 用听到的位置（已按倍速缩放延迟），保证暂停时的判定线与刚刚听到的一致
         beat = self.view.snap_beat(timing.song_ms_to_beat(heard))
@@ -1043,7 +1072,7 @@ class EditorApp:
         chart = self.document.chart
         value = not chart.settings.side_lane_highlight
         chart.settings.side_lane_highlight = value   # 视图设置：不进撤销栈
-        self.status("侧轨高亮：" + ("开启（第 1 / 6 轨暗紫）" if value else "关闭"))
+        self.status("侧轨高亮：" + ("开启" if value else "关闭"))
 
     def toggle_show_past_notes(self) -> None:
         """视图菜单：判定时刻已经过去的物件是否继续绘制（判定线下方）。"""
@@ -1051,9 +1080,20 @@ class EditorApp:
         value = not chart.settings.show_past_notes
         chart.settings.show_past_notes = value       # 视图设置：不进撤销栈
         self.status(
-            "显示更早的物件：开启（判定线下方继续绘制）"
-            if value
-            else "显示更早的物件：关闭（到判定时刻即消失）"
+            "显示更早的物件：开启" if value else "显示更早的物件：关闭"
+        )
+        self.toolbar.sync()
+
+    def toggle_ignore_speed_groups(self) -> None:
+        """视图菜单：忽略速度组，所有物件按 1 倍恒速绘制。
+
+        只影响编辑器里的显示与命中测试；速度组的编辑 / 保存完全不受影响。
+        """
+        chart = self.document.chart
+        value = not chart.settings.ignore_speed_groups
+        chart.settings.ignore_speed_groups = value   # 视图设置：不进撤销栈
+        self.status(
+            "忽略速度组：开启" if value else "忽略速度组：关闭"
         )
         self.toolbar.sync()
 
@@ -1088,7 +1128,7 @@ class EditorApp:
             self.root,
             self.theme,
             "自定义时间网格",
-            f"一拍细分为多少个音（不小于 {config.GRID_DIVISION_MIN}）：",
+            "一拍细分为多少个音：",
             str(settings.grid_division),
             kind="int",
             minimum=config.GRID_DIVISION_MIN,
@@ -1106,7 +1146,7 @@ class EditorApp:
             self.root,
             self.theme,
             "自定义横向辅助网格",
-            "0..1 合法区域几等分（0 = 关闭）：",
+            "0..1 合法区域几等分：",
             str(settings.horizontal_divisions),
             kind="int",
             minimum=0,
@@ -1270,7 +1310,7 @@ class EditorApp:
         self.status(
             "横向辅助网格已关闭"
             if settings.horizontal_divisions == 0
-            else f"横向辅助网格：0..1 合法区域 {settings.horizontal_divisions} 等分（滑键吸附到网格线）"
+            else f"横向辅助网格：0..1 合法区域 {settings.horizontal_divisions} 等分"
         )
 
     # ------------------------------------------------------------------ 演示
@@ -1303,7 +1343,7 @@ class EditorApp:
             self.canvas.focus_set()
         except tk.TclError:                     # pragma: no cover - 窗口正在销毁
             pass
-        self.status("进入演示模式（演示视图软件渲染）" if enabled else "退出演示模式")
+        self.status("进入演示模式" if enabled else "退出演示模式")
 
     def toggle_demo(self) -> None:
         self.set_demo_mode(not self.demo_mode)

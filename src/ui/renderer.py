@@ -8,7 +8,11 @@
 渲染顺序（自下而上）：
 背景 -> 区域底色 / 轨道 -> 时间网格 -> 合法区域边界 -> 横向辅助网格
 -> 物件（多轨长按 -> 单轨长按 -> 多轨单键 -> 单轨单键 -> 空域 / 禁区 -> 滑键）
--> 判定线 -> 区域标题 -> 预览幽灵 / 橡皮筋 -> HUD
+-> 判定线 -> 区域标题 -> HUD
+
+上面这一整层是"放置层"，只在内容变化时重画（Renderer.draw）；
+放置预览 / 框选橡皮筋 / 剪贴板幽灵另成"预览层"，每帧重画（Renderer.draw_preview），
+因此拖放过程中预览始终跟手，而已经放置的物件不会被反复重算。
 
 物件的七层顺序刻意“从大到小”摆放：即使谱面故意写成非法重叠，
 小按键也压在长按之上、半透明空域与滑键再压在 6K 物件之上，交叠处依然可读。
@@ -82,6 +86,10 @@ REGION_SAMPLES = 40
 HGRID_MIN_STEP_PX = 8.0
 HGRID_LABEL_MIN_PX = 44.0
 
+# Scene 的分组名：放置层只在内容变化时重画，预览层每帧重画
+LAYER_PLACED = "placed"
+LAYER_PREVIEW = "preview"
+
 
 @dataclass
 class PendingPreview:
@@ -134,9 +142,14 @@ class Renderer:
 
     # ------------------------------------------------------------------ 主入口
     def draw(self, chart: Chart, view: ViewState, state: RenderState) -> None:
+        """放置层：底色 / 网格 / 已放置物件 / 判定线 / HUD。
+
+        只在内容真正变化时调用（画面指纹比较），已放置的物件因此不会因为
+        鼠标移动而反复重算。放置过程中的预览由 draw_preview 每帧重画。
+        """
         scene = self.scene
         layout = view.layout
-        scene.begin()
+        scene.begin(LAYER_PLACED)
         scene.set_layer(0)
         scene.rect("bg", 0, 0, layout.width, layout.height, fill=self.theme.play_bg, outline="")
         beat_low, beat_high = view.beat_range()
@@ -146,7 +159,22 @@ class Renderer:
             self._draw_overlay_view(chart, view, state, beat_low, beat_high)
         scene.set_layer(13)
         self._draw_hud(chart, view, state)
-        scene.end()
+        scene.end(LAYER_PLACED)
+
+    def draw_preview(self, chart: Chart, view: ViewState, state: RenderState) -> None:
+        """预览层：放置预览 / 框选 / 剪贴板幽灵，每帧重画。
+
+        预览数据由交互层每帧重算（点击推进阶段后不必等鼠标移动），
+        这里照常声明一遍 —— 内容没变的图元由 Scene 的差分比较跳过。
+        """
+        scene = self.scene
+        scene.begin(LAYER_PREVIEW)
+        if not state.demo:
+            scene.set_layer(11)
+            self._draw_pending(chart, view, state)
+            scene.set_layer(12)
+            self._draw_rubber_band(state)
+        scene.end(LAYER_PREVIEW)
 
     # ------------------------------------------------------------------ 两种布局
     def _draw_split_view(
@@ -205,11 +233,6 @@ class Renderer:
             view, state, *layout.pane_mouse, "judge-mouse", accent=True, label="鼠标判定线"
         )
         self._draw_pane_titles(view)
-        if not state.demo:
-            self.scene.set_layer(11)
-            self._draw_pending(chart, view, state)
-            self.scene.set_layer(12)
-            self._draw_rubber_band(state)
 
     def _draw_overlay_view(
         self, chart: Chart, view: ViewState, state: RenderState, beat_low: float, beat_high: float
@@ -262,11 +285,6 @@ class Renderer:
         self._draw_judgment_line(
             view, state, layout.mouse_left, layout.mouse_right, "judge-mouse", accent=True
         )
-        if not state.demo:
-            self.scene.set_layer(11)
-            self._draw_pending(chart, view, state)
-            self.scene.set_layer(12)
-            self._draw_rubber_band(state)
 
     def _draw_pane_titles(self, view: ViewState) -> None:
         layout = view.layout
@@ -276,7 +294,7 @@ class Renderer:
             "pane6:title",
             layout.pane_6k[0] + 6,
             layout.play_top + 24,
-            "6K 下落式（轨道 1 - 6）",
+            "6K 下落式",
             fill=theme.text_dim,
             font=theme.font(theme.font_small, bold=True),
             anchor="nw",
@@ -285,7 +303,7 @@ class Renderer:
             "panem:title",
             layout.pane_mouse[0] + 6,
             layout.play_top + 24,
-            f"鼠标平面 · 合法区域 0 .. 1（显示 {layout.norm_min:.2f} .. {layout.norm_max:.2f}）",
+            "鼠标平面 · 合法区域 0 .. 1",
             fill=theme.legal_border,
             font=theme.font(theme.font_small, bold=True),
             anchor="nw",
@@ -512,8 +530,9 @@ class Renderer:
                 )
 
     # ------------------------------------------------------------------ 物件
-    def _group(self, chart: Chart, note: Note) -> SpeedGroup:
-        return chart.group_by_id(note.group)
+    def _group(self, chart: Chart, view: ViewState, note: Note) -> SpeedGroup:
+        """显示用速度组：开启「忽略速度组」时统一按 1 倍恒速（只影响显示）。"""
+        return view.display_group(note)
 
     def _group_color(self, group_id: int) -> str:
         return GROUP_COLORS[group_id % len(GROUP_COLORS)]
@@ -588,7 +607,7 @@ class Renderer:
     ) -> None:
         theme = self.theme
         layout = view.layout
-        group = self._group(chart, note)
+        group = self._group(chart, view, note)
         # 单键与长按（含长按开头）共用同一条横向范围：长按渲染宽度与单键一致
         x0, x1 = layout.lane_span(note.lane_start, note.lane_end)
         pad = 6 if note.is_multi else 9
@@ -752,18 +771,19 @@ class Renderer:
         return self.theme.forbidden_edge if self._region_is_forbidden(note) else self.theme.region_edge
 
     @staticmethod
-    def _blend_over_black(top: str, bottom: str) -> str:
-        """两层半透明填充重叠处的合成色（先画底层、再叠上层、背景纯黑）。
+    def _blend_glow(top: str, bottom: str) -> str:
+        """两层半透明填充重叠处的发光色（叠加后比任何一层单独时都亮）。
 
-        两层的填充都用 stipple_fill（50% 点阵，相位相同）：上层会把下层同位
-        置的点盖住，所以重叠处的正确颜色是 0.5×上层 + 0.25×下层。
+        单层填充用 stipple_fill（50% 点阵）铺满色，观感约等于 0.5×颜色；重叠处
+        换成两层颜色相加的点阵色，重叠区域的点明显更亮（达到上限就取 255），
+        也就是“两个发光体叠在一起”的效果。
         """
         def rgb(value: str) -> Tuple[int, int, int]:
             value = value.lstrip("#")
             return int(value[0:2], 16), int(value[2:4], 16), int(value[4:6], 16)
 
         mixed = tuple(
-            min(255, round(0.5 * top_channel + 0.25 * bottom_channel))
+            min(255, top_channel + bottom_channel)
             for top_channel, bottom_channel in zip(rgb(top), rgb(bottom))
         )
         return "#%02x%02x%02x" % mixed
@@ -778,7 +798,7 @@ class Renderer:
         samples: int,
     ):
         """空域 / 禁区的可见多边形、原始边界点与包围盒；完全在屏幕外时返回 None。"""
-        group = self._group(chart, note)
+        group = self._group(chart, view, note)
         if not self._region_may_be_visible(note, chart, group, view, y_min, y_max):
             return None
         samples = self._region_sample_count(note, group, view, samples)
@@ -803,11 +823,11 @@ class Renderer:
         y_max: float,
         samples: int,
     ) -> None:
-        """空域 / 禁区：先画半透明填充，再补两两重叠处的合成色，最后画边线。
+        """空域 / 禁区：先画半透明填充，再补两两重叠处的发光色，最后画边线。
 
         Tk 的点阵（stipple）相位固定：同相位的两层半透明填充会互相遮盖，
-        按顺序画会变成“只看见上面那层”。所以在重叠处补一块两层合成的颜色，
-        让叠加关系在编辑界面里也能看出来（与演示视图的 alpha 混合一致）。
+        按顺序画会变成“只看见上面那层”。所以在重叠处补一块两层相加的亮色，
+        让叠加处比任何一层单独时都更亮（发光叠加，与演示视图的叠加观感一致）。
         """
         theme = self.theme
         pane = mouse_pane_rect(view)
@@ -827,7 +847,7 @@ class Renderer:
                 stipple=theme.stipple_fill,
             )
             drawn.append((note, visible, points, bounds))
-        # 2) 重叠处：补“上层叠下层”的合成色（后来者在上）
+        # 2) 重叠处：发光叠加（两层颜色相加，比单独一层更亮）
         patches = 0
         for index, (note_a, poly_a, _points_a, bounds_a) in enumerate(drawn):
             if patches >= MAX_OVERLAP_PATCHES:
@@ -846,7 +866,7 @@ class Renderer:
                 self.scene.polygon(
                     f"region-overlap:{note_a.id}:{note_b.id}",
                     patch,
-                    fill=self._blend_over_black(
+                    fill=self._blend_glow(
                         self._region_fill_color(note_b), self._region_fill_color(note_a)
                     ),
                     outline="",
@@ -903,7 +923,7 @@ class Renderer:
         y_max: float = 1e9,
     ) -> None:
         theme = self.theme
-        group = self._group(chart, note)
+        group = self._group(chart, view, note)
         y = view.note_y(note.beat, group)
         if y < y_min or y > y_max:
             return
@@ -1291,7 +1311,7 @@ class Renderer:
                 "hud-demo",
                 layout.width / 2,
                 layout.play_top + 30,
-                "演示模式（不可编辑 · 两个平面叠加显示）",
+                "演示模式",
                 fill=theme.pending,
                 font=theme.font(theme.font_title, bold=True),
                 anchor="n",

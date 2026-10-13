@@ -235,7 +235,7 @@ class MetadataDialog(BaseDialog):
         self.e_title = labeled_entry(body, 0, "歌曲名称", self.metadata.title, width=30)
         self.e_artist = labeled_entry(body, 1, "歌手", self.metadata.artist, width=30)
         self.e_diff_name = labeled_entry(body, 2, "关卡难度名", self.metadata.difficulty_name, width=30)
-        self.e_diff_level = labeled_entry(body, 3, "难度等级（文本）", self.metadata.difficulty_level, width=30)
+        self.e_diff_level = labeled_entry(body, 3, "难度等级", self.metadata.difficulty_level, width=30)
         self.e_author = labeled_entry(body, 4, "作者", self.metadata.author, width=30)
 
         ttk.Label(body, text="音频文件名").grid(row=5, column=0, sticky="w", pady=3, padx=(0, 6))
@@ -246,17 +246,6 @@ class MetadataDialog(BaseDialog):
         self.e_audio.insert(0, self.metadata.audio_file)
         self.e_audio.grid(row=0, column=0, sticky="we")
         ttk.Button(audio_row, text="选择文件…", command=self._pick_audio).grid(row=0, column=1, padx=(6, 0))
-        ttk.Label(
-            body,
-            text="选择后会复制到谱面文件所在文件夹，谱面内只记录文件名。",
-            style="Dim.TLabel",
-        ).grid(row=6, column=0, columnspan=2, sticky="w", pady=(2, 0))
-        ttk.Label(
-            body,
-            text="提示：先保存谱面（Ctrl+S）再选择音频，复制位置会更明确；未保存时会先复制到 charts/unsaved/。",
-            style="Dim.TLabel",
-            wraplength=420,
-        ).grid(row=7, column=0, columnspan=2, sticky="w", pady=(2, 0))
 
     def _pick_audio(self) -> None:
         path = filedialog.askopenfilename(
@@ -306,12 +295,6 @@ class BpmDialog(BaseDialog):
         head.pack(fill="x")
         head.columnconfigure(1, weight=1)
         self.e_offset = labeled_entry(head, 0, "偏移（毫秒）", f"{self.timing.offset_ms:.3f}", width=16)
-        ttk.Label(
-            body,
-            text="偏移 = 歌曲需要提前播放以对应节拍的毫秒数；第 0 拍对应歌曲位置 offset 毫秒。",
-            style="Dim.TLabel",
-            wraplength=520,
-        ).pack(anchor="w", pady=(0, 6))
 
         table = ttk.Frame(body)
         table.pack(fill="both", expand=True)
@@ -319,8 +302,8 @@ class BpmDialog(BaseDialog):
         self.tree = ttk.Treeview(table, columns=columns, show="headings", height=9, selectmode="browse")
         for key, text, width in (
             ("start", "起始拍", 90),
-            ("bpm", "BPM（正数）", 110),
-            ("bar", "每小节拍数（0=关闭）", 150),
+            ("bpm", "BPM", 110),
+            ("bar", "每小节拍数", 150),
         ):
             self.tree.heading(key, text=text)
             self.tree.column(key, width=width, anchor="center")
@@ -338,17 +321,8 @@ class BpmDialog(BaseDialog):
         self.e_bar = labeled_entry(form, 0, "每小节拍数", "4", width=10, column=4)
         buttons = ttk.Frame(body)
         buttons.pack(fill="x", pady=(6, 0))
-        ttk.Button(buttons, text="新增", command=self._add).pack(side="left")
-        ttk.Button(buttons, text="更新选中", command=self._update).pack(side="left", padx=6)
+        ttk.Button(buttons, text="新增/更新", command=self._upsert).pack(side="left")
         ttk.Button(buttons, text="删除选中", command=self._delete).pack(side="left")
-        ttk.Label(
-            body,
-            text="从第 0 拍开始的一项不允许删除，只能修改；BPM 列表不影响物件运动速度。\n"
-                 "BPM 变更处一定新开一小节（上一段末尾的不完整小节也算一节，"
-                 "所以小节编号在变更处重新对齐）；「每小节拍数」填 0 表示这一段关闭小节线。",
-            style="Warn.TLabel",
-            wraplength=520,
-        ).pack(anchor="w", pady=(6, 0))
         if self.beat_hint:
             ttk.Label(body, text=self.beat_hint, style="Dim.TLabel").pack(anchor="w", pady=(2, 0))
         self._refresh()
@@ -390,37 +364,28 @@ class BpmDialog(BaseDialog):
         if index is not None and 0 <= index < len(self.segments):
             self._load(index)
 
-    def _read_form(self, index: int) -> Optional[BpmSegment]:
+    def _read_form(self) -> Optional[BpmSegment]:
         start = parse_float(self.e_start.get(), -1.0)
         bpm = parse_float(self.e_bpm.get(), -1.0)
         bar = parse_int(self.e_bar.get(), -1)
-        if index == 0:
-            start = 0.0
         if start < 0 or bpm <= 0 or bar < 0:
             messagebox.showerror(
                 "数值错误",
-                "起始拍需 ≥ 0，BPM 需 > 0，每小节拍数需 ≥ 0（0 = 关闭小节线）。",
+                "起始拍需 ≥ 0，BPM 需 > 0，每小节拍数需 ≥ 0。",
                 parent=self,
             )
             return None
         return BpmSegment(start, bpm, bar)
 
-    def _add(self) -> None:
-        index = len(self.segments)
-        seg = self._read_form(index)
+    def _upsert(self) -> None:
+        """新增 / 更新合成一个按钮（与速度组一致）：起始拍相同就覆盖，没有就追加。"""
+        seg = self._read_form()
         if seg is None:
             return
+        self.segments = [
+            s for s in self.segments if abs(s.start_beat - seg.start_beat) > 1e-9
+        ]
         self.segments.append(seg)
-        self._sort_and_refresh(seg.start_beat)
-
-    def _update(self) -> None:
-        index = self._selected_index()
-        if index is None:
-            return
-        seg = self._read_form(index)
-        if seg is None:
-            return
-        self.segments[index] = seg
         self._sort_and_refresh(seg.start_beat)
 
     def _delete(self) -> None:
@@ -475,7 +440,7 @@ class VolumeDialog(BaseDialog):
 
     def _build(self) -> None:
         body = self.body
-        box = ttk.LabelFrame(body, text="音量（0 ~ 100%）", padding=8)
+        box = ttk.LabelFrame(body, text="音量", padding=8)
         box.pack(fill="x")
         box.columnconfigure(1, weight=1)
         self._vars: Dict[str, tk.DoubleVar] = {}
@@ -500,13 +465,6 @@ class VolumeDialog(BaseDialog):
             label.grid(row=row, column=2, sticky="e", pady=3)
             self._vars[key] = var
             self._labels[key] = label
-        ttk.Label(
-            body,
-            text="打击音效：单键 / 多轨按键 / 滑键到达判定线，"
-                 "以及长按、空域开头到达判定线时的一声白噪声（在「音效」菜单里开关）。",
-            style="Dim.TLabel",
-            wraplength=460,
-        ).pack(anchor="w", pady=(8, 0))
 
     def _on_volume(self, key: str) -> None:
         value = float(self._vars[key].get())
@@ -548,7 +506,7 @@ class SettingsDialog(BaseDialog):
 
     def _build(self) -> None:
         body = self.body
-        group = ttk.LabelFrame(body, text="缩放（屏幕上同时显示的时间长度）", padding=8)
+        group = ttk.LabelFrame(body, text="缩放", padding=8)
         group.pack(fill="x")
         group.columnconfigure(1, weight=1)
         self.scale = ttk.Scale(group, from_=0.0, to=1.0, orient="horizontal", command=self._on_scale)
@@ -561,23 +519,14 @@ class SettingsDialog(BaseDialog):
         self.e_zoom.bind("<Return>", lambda _e: self._apply_zoom_entry())
         self.e_zoom.bind("<FocusOut>", lambda _e: self._apply_zoom_entry())
 
-        ttk.Label(
-            body,
-            text="网格设置在「视图」菜单里：时间网格细分 / 横向辅助网格 → 自定义…",
-            style="Dim.TLabel",
-            wraplength=420,
-        ).pack(anchor="w", pady=(8, 0))
-
         latency = ttk.LabelFrame(body, text="系统音频延迟", padding=8)
         latency.pack(fill="x", pady=(8, 0))
         self.e_latency = labeled_entry(
-            latency, 0, "延迟（毫秒，可为负）", f"{self.settings.audio_latency_ms:g}", width=12
+            latency, 0, "延迟（毫秒）", f"{self.settings.audio_latency_ms:g}", width=12
         )
         ttk.Label(
             latency,
-            text="从软件执行音频播放操作到电脑硬件放出声音的间隔；播放时用“后端位置 − 延迟”"
-                 f"对齐画面与声音。允许负数（{config.AUDIO_LATENCY_MIN_MS:g} ~ "
-                 f"{config.AUDIO_LATENCY_MAX_MS:g} ms），负值代表声音比软件位置更早。",
+            text="允许负数，负值代表声音比软件位置更早。",
             style="Dim.TLabel",
             wraplength=520,
         ).grid(row=1, column=0, columnspan=2, sticky="w", pady=(4, 0))
@@ -589,7 +538,7 @@ class SettingsDialog(BaseDialog):
         backend_box.pack(fill="x", pady=(8, 0))
         state = audio_backend_state()
         state_text = {
-            "ok": f"{audio_backend_name()}（可发声）",
+            "ok": f"{audio_backend_name()}",
             "missing": "silent · 未安装 pygame（用 run_editor.bat 或 pip install -r requirements.txt）",
             "device": "silent · pygame 已安装，但音频设备打不开（检查输出设备后点下面的按钮重试）",
         }.get(state, state)
@@ -659,7 +608,7 @@ class SettingsDialog(BaseDialog):
         seconds_per_beat = timing.seconds_per_beat(0.0)
         beats = self.settings.zoom_seconds / max(1e-6, seconds_per_beat)
         self.zoom_value.configure(
-            text=f"当前约 {self.settings.zoom_seconds:.3g} 秒 ≈ {beats:.2f} 拍（按第 0 拍 BPM 估算）"
+            text=f"当前约 {self.settings.zoom_seconds:.3g} 秒 ≈ {beats:.2f} 拍"
         )
 
     def _ok(self) -> None:
@@ -700,14 +649,7 @@ class DemoViewDialog(BaseDialog):
         body = self.body
         backend = ttk.LabelFrame(body, text="渲染后端", padding=8)
         backend.pack(fill="x")
-        ttk.Label(
-            backend,
-            text="软件渲染（固定）：演示模式把游玩视角的软件渲染画面贴到画布上；"
-                 "帧率由编辑器主循环自适应。",
-            style="Dim.TLabel",
-            wraplength=460,
-        ).pack(anchor="w")
-
+        ttk.Label(backend, text="软件渲染", style="Dim.TLabel").pack(anchor="w")
         thickness = ttk.LabelFrame(body, text="物件厚度（世界单位：鼠标合法区宽 = 1）", padding=8)
         thickness.pack(fill="x", pady=(8, 0))
         thickness.columnconfigure(1, weight=1)
@@ -731,13 +673,7 @@ class DemoViewDialog(BaseDialog):
 
         self.var_side = tk.BooleanVar(value=bool(self.settings.demo_side_lane_highlight))
         ttk.Checkbutton(
-            body, text="侧轨高亮（第 1 / 第 6 轨背景铺暗紫）", variable=self.var_side
-        ).pack(anchor="w", pady=(8, 0))
-        ttk.Label(
-            body,
-            text="演示模式里不画鼠标指针；这些设置随全局编辑器设置保存，不写进谱面。",
-            style="Dim.TLabel",
-            wraplength=460,
+            body, text="侧轨高亮", variable=self.var_side
         ).pack(anchor="w", pady=(8, 0))
         self._update_speed_hint()
 
@@ -792,7 +728,7 @@ class DemoViewDialog(BaseDialog):
 
     def _update_speed_hint(self, value: Optional[float] = None) -> None:
         speed = float(self._vars["demo_speed"].get()) if value is None else float(value)
-        self.speed_hint.configure(text=f"可视时长 = 1500 / 流速 ≈ {1500.0 / max(0.1, speed):.0f} 毫秒")
+        self.speed_hint.configure(text=f"可视时长 {1500.0 / max(0.1, speed):.0f} 毫秒")
 
     def _ok(self) -> None:
         def value(key: str, step: float) -> float:
@@ -855,7 +791,7 @@ class SpeedGroupDialog(BaseDialog):
                                         style="Dim.TLabel", wraplength=320)
         self.lbl_group_hint.pack(anchor="w", pady=(4, 0))
 
-        ttk.Label(right, text="流速列表（从某拍开始，流速 = 默认速度 × 倍率）", style="Head.TLabel").pack(anchor="w")
+        ttk.Label(right, text="流速列表", style="Head.TLabel").pack(anchor="w")
         self.seg_tree = ttk.Treeview(right, columns=("start", "mult"), show="headings", height=8,
                                      selectmode="browse")
         self.seg_tree.heading("start", text="起始拍")
@@ -1036,16 +972,10 @@ class NoteEditDialog(BaseDialog):
             ttk.Label(body, text=f"{note.id} · 6K 下落式物件", style="Head.TLabel").grid(
                 row=0, column=0, columnspan=2, sticky="w", pady=(0, 6)
             )
-            self.e_lane_start = labeled_spin(body, 1, "开始轨道（1-6）", note.lane_start + 1, 1, 6)
-            self.e_lane_end = labeled_spin(body, 2, "结束轨道（1-6）", note.lane_end + 1, 1, 6)
+            self.e_lane_start = labeled_spin(body, 1, "开始轨道", note.lane_start + 1, 1, 6)
+            self.e_lane_end = labeled_spin(body, 2, "结束轨道", note.lane_end + 1, 1, 6)
             self.e_beat_start = labeled_entry(body, 3, "开始拍", f"{note.beat_start:g}", width=14)
-            self.e_beat_end = labeled_entry(body, 4, "结束拍（长按）", f"{note.beat_end:g}", width=14)
-            ttk.Label(
-                body,
-                text="开始轨道编号必须小于或等于结束轨道；结束拍大于开始拍时即为长按。",
-                style="Dim.TLabel",
-                wraplength=380,
-            ).grid(row=5, column=0, columnspan=2, sticky="w", pady=(4, 0))
+            self.e_beat_end = labeled_entry(body, 4, "结束拍", f"{note.beat_end:g}", width=14)
         elif isinstance(note, MouseRegion):
             label = "禁区" if isinstance(note, ForbiddenRegion) else "空域"
             ttk.Label(body, text=f"{note.id} · {label}", style="Head.TLabel").grid(
@@ -1071,8 +1001,7 @@ class NoteEditDialog(BaseDialog):
             )
             ttk.Label(
                 body,
-                text="位置以合法区域最左侧为 0、最右侧为 1，允许超出（例如 -0.2 或 1.3）；\n"
-                     f"放置时{label}尚未点击的边界点按默认值显示：左边界 0、右边界 1。",
+                text="位置以合法区域最左侧为 0、最右侧为 1，允许超出。",
                 style="Dim.TLabel",
                 wraplength=420,
             ).grid(row=9, column=0, columnspan=4, sticky="w", pady=(4, 0))
@@ -1083,11 +1012,6 @@ class NoteEditDialog(BaseDialog):
             self.e_beat = labeled_entry(body, 1, "判定拍", f"{note.beat:g}", width=14)
             self.e_x_start = labeled_entry(body, 2, "起始位置", f"{note.x_start:g}", width=14)
             self.e_x_end = labeled_entry(body, 3, "结束位置", f"{note.x_end:g}", width=14)
-            ttk.Label(
-                body,
-                text="结束位置大于起始位置表示向右滑动，小于表示向左滑动。",
-                style="Dim.TLabel",
-            ).grid(row=4, column=0, columnspan=2, sticky="w", pady=(4, 0))
         else:  # pragma: no cover
             ttk.Label(body, text="未知物件类型").grid(row=0, column=0)
         if self.beat_hint:
@@ -1194,68 +1118,56 @@ class HelpDialog(BaseDialog):
 
 
 GUIDE_TEXT = """【界面】
-编辑器把两个平面左右分栏：左边 6K 下落式、右边鼠标平面，两者共用同一条判定线
-（同一个时间刻度）与同一套时间网格，所以滚动 / 缩放永远同步。
-按 Tab 进入演示模式后，两个平面叠加显示（鼠标平面压在中四条轨道上）并且不可编辑。
+编辑器把两个平面左右分栏：左边 6K 下落式、右边鼠标平面，两者共用同一条判定线与同一套时间网格，
+滚动与缩放同步。按 Tab 进入演示模式后两个平面叠加显示，并且不可编辑。
 
-【顶栏】从左到右：文件 / 编辑（合并）、谱面设置、放置物件、编辑物件、视图、速度组、
-音效、编辑器设置；最右端是 ▶ 播放 / 暂停 与播放倍速 ［−］［1.0x］［＋］。
-「操作指南 / 快捷键」在「编辑器设置」菜单里。
+【顶栏】从左到右：文件 / 编辑、谱面信息、放置物件、编辑物件、视图、速度组、音效、编辑器设置；
+最右端是 ▶ 播放 / 暂停 与播放倍速 ［−］［1.0x］［＋］。「操作指南 / 快捷键」在「编辑器设置」菜单里。
 
-【工具】（顶栏「放置物件 ▾」菜单，或按数字键 1-7 切换；下面的序号就是数字键）
-1 选择 / 区域选择（数字键 1）：拖动框选、点击选中，用于后续的剪切 / 复制 / 镜像 / 编辑 / 删除。
-2 单轨按键（数字键 2）：点击 6K 区域 -> 在对应轨道放置按键，时间自动吸附网格。
-3 多轨按键（数字键 3）：先点击一条轨道，再点击另一条轨道 -> 生成跨越这两条轨道的多轨按键；
-   时间以第一次点击为准。
-4 长按（含多轨）（数字键 4）：先点击起点（轨道 + 时间），再点击终点 —— 第二次点击的横坐标决定
-   结束轨道、纵坐标决定结束时间；点在鼠标区域内则只改时间、轨道不变。
-   可以滚动 / 缩放后再点终点，时间自动吸附网格。
-5 空域（数字键 5）：先点击开始时间、结束时间；再依次点击「左边界起点 / 左边界终点 /
-   右边界起点 / 右边界终点」四个位置（未点击的点按默认值预览：左边界 0、右边界 1）；
-   最后在弹出的对话框里选择两条边界的线型（线性 / 缓入 / 缓出），也可以微调位置。
-6 禁区（数字键 6）：放置、编辑、拖动的操作与空域完全相同，但绘制成红色
-   （半透明红底 + 红色边线），表示需要避开的区域。
-7 左右滑键（数字键 7）：先点击设定时间与横向位置，再点击第二次决定滑动方向；
-   开启横向辅助网格时会吸附到网格线上。
-    —— 鼠标部分的横向位置：启用横向辅助网格时吸附到网格线并夹进 0..1 合法区域；
-   未启用时按鼠标真实位置放置，即使超出合法区域（出界）也照常放置。
-Esc 取消当前放置流程；切换工具同样会放弃未完成的操作。放置过程中会显示幽灵预览。
+【工具】顶栏「放置物件 ▾」菜单或数字键 1-7 切换：
+1 选择 / 区域选择：拖动框选、点击选中，用于后续的剪切 / 复制 / 镜像 / 编辑 / 删除。
+2 单轨按键：点击 6K 区域，在对应轨道放置按键，时间自动吸附网格。
+3 多轨按键：先点击一条轨道再点击另一条轨道，生成跨越这两条轨道的多轨按键，时间以第一次点击为准。
+4 长按：先点击起点的轨道与时间，再点击终点。第二次点击的横坐标决定结束轨道、纵坐标决定结束时间；
+  点在鼠标区域内则只改时间、轨道不变。可以滚动或缩放后再点终点，时间自动吸附网格。
+5 空域：先点击开始时间与结束时间，再依次点击左边界起点、左边界终点、右边界起点、右边界终点，
+  最后在弹出的对话框里选择两条边界的线型，也可以微调位置。
+6 禁区：放置、编辑、拖动的操作与空域完全相同，绘制成红色半透明底与红色边线，表示需要避开的区域。
+7 左右滑键：先点击设定时间与横向位置，再点击第二次决定滑动方向，开启横向辅助网格时会吸附到网格线。
+  横向位置：启用横向辅助网格时吸附到网格线并夹进 0..1 合法区域；未启用时按鼠标真实位置放置。
+Esc 取消当前放置流程，切换工具同样会放弃未完成的操作。放置过程中会显示幽灵预览。
 
 【选择与编辑】
-选择工具下拖动 = 区域选择；Ctrl + 点击/框选 = 与上次选择做对称差（两次都选中的取消选择）。
-顶栏「文件 / 编辑 ▾」菜单里可以剪切、复制、粘贴（点击目标时间，轨道/横向位置保持不变）、
-沿游玩区中轴线镜像、编辑选中物件（仅单选时可用）、删除与全选。
+选择工具下拖动即区域选择；Ctrl + 点击或框选与上次选择做对称差，两次都选中的取消选择。
+顶栏「文件 / 编辑 ▾」菜单里可以剪切、复制、粘贴、沿游玩区中轴线镜像、编辑选中物件、删除与全选。
+粘贴后点击目标时间，轨道与横向位置保持不变；编辑物件仅在单选时可用。
 
 【视图】
-拖动两个平面中间的分界线可以实时调整左右宽度（悬停时光标变成左右箭头，
-双击分界线恢复默认 1:3）。
-滚轮：每次滚动时间网格的一格（1 / 网格细分 拍）；Shift + 滚轮一次滚动 1 拍。
-滚动后判定线会自动吸附回网格，不会停在格子之间。
-Ctrl + 滚轮、顶栏右侧的 − / + 按钮，或「视图 ▾ → 缩放」都能缩放：
-+ 放大（屏幕内时间变少、物件变大），− 缩小（屏幕内时间变多）。
-用右侧的竖向滚动条可以拖动/翻页移动时间轴（滑块长度 = 当前可视时间占比）；
-Home / End 跳到开头 / 结尾。
+拖动两个平面中间的分界线可以实时调整左右宽度，悬停时光标变成左右箭头，双击分界线恢复默认 1:3。
+滚轮每次滚动时间网格的一格，即 1 / 网格细分 拍；Shift + 滚轮一次滚动 1 拍。滚动后判定线自动吸附回网格。
+Ctrl + 滚轮、顶栏右侧的 − / + 按钮，或「视图 ▾ → 缩放」都能缩放：+ 放大，− 缩小。
+右侧竖向滚动条可以拖动或翻页移动时间轴，滑块长度即当前可视时间占比；Home / End 跳到开头 / 结尾。
 
 【速度组】
-顶栏「速度组」按钮里可新建/复制/删除组，编辑流速列表（从某拍开始，流速 = 默认速度 × 倍率，
-支持 0 与负数实现停留/反向），并把当前选择加入组。删除组时组内物件回到默认组。
+顶栏「速度组」按钮里可新建、复制、删除组，编辑流速列表，并把当前选择加入组。
+流速列表每项是从某拍开始的「流速 = 默认速度 × 倍率」，支持 0 与负数实现停留与反向。
+删除组时组内物件回到默认组。
 
 【BPM 与偏移】
-「谱面设置 → BPM 与偏移」里每项是：从哪一拍开始、BPM、每小节拍数。
+「谱面信息 → BPM 与偏移」里每项是：从哪一拍开始、BPM、每小节拍数。
 每逢 BPM 变更一定新开一小节：变更拍不必落在上一段的小节线上，但它自己就是小节线，
-上一段末尾不完整的小节按一整节计入编号（所以变更后第一拍就是新小节的第一拍）。
-「每小节拍数」填 0 表示这一段关闭小节线（只留拍线），之后填回正数即可恢复。
-流速可正可负并会叠加，因此物件位置不是判定时刻的单调函数：远处的物件也可能被推回
-判定线上，编辑器始终按 ∫v 的结果显示。
+上一段末尾不完整的小节按一整节计入编号。
+「每小节拍数」填 0 表示这一段关闭小节线，只留拍线；填回正数即可恢复。
+流速可正可负并会叠加，因此物件位置不是判定时刻的单调函数：远处的物件也可能被推回判定线上，
+编辑器始终按 ∫v 的结果显示。
 
 【播放与演示】
 空格播放 / 暂停；暂停时判定线会自动吸附到时间轴刻度上。
-「音效 → 节拍音」可以打开打拍器（关闭 / 小节音 / 节拍音）：播放时每到小节线或整拍响一声，
-慢放不会改变这一声的长度（只有间隔跟着音乐变慢）。
-「音效」菜单还能开关打击音效（物件到达判定线时的一声白噪声）并打开「音量…」窗口，
-分别调节音乐 / 节拍音 / 打击音。
-「编辑器设置」里的系统音频延迟用于对齐画面与声音（蓝牙耳机常见 120~250 ms）。
-演示模式在「视图 ▾」菜单里；进入后工具栏隐藏、画面只读，支持滚动、缩放与播放 / 暂停，
+「音效 → 节拍音」可以打开打拍器：播放时每到小节线或整拍响一声，慢放不会改变这一声的长度，
+只有间隔跟着音乐变慢。
+「音效」菜单还能开关打击音效，并打开「音量…」窗口分别调节音乐 / 节拍音 / 打击音。
+「编辑器设置」里的系统音频延迟用于对齐画面与声音，蓝牙耳机常见 120~250 ms。
+演示模式在「视图 ▾」菜单里，进入后工具栏隐藏、画面只读，支持滚动、缩放与播放 / 暂停，
 按 Tab 或 Esc 返回编辑。
 """
 
@@ -1263,22 +1175,22 @@ SHORTCUTS_TEXT = """【工具切换】
 1  选择 / 区域选择
 2  单轨按键
 3  多轨按键
-4  长按（含多轨）
+4  长按
 5  空域
 6  禁区
 7  左右滑键
-Esc  取消当前放置流程（演示模式下为退出演示）
+Esc  取消当前放置流程，演示模式下退出演示
 Tab  进入 / 退出演示模式
 
 【编辑】
-Ctrl+X  剪切选中物件（复制后删除，Ctrl+Z 一步恢复）
+Ctrl+X  剪切选中物件
 Ctrl+C  复制选中物件
-Ctrl+V  进入粘贴模式，点击目标时间完成粘贴（轨道 / 横向位置不变）
+Ctrl+V  进入粘贴模式，点击目标时间完成粘贴
 Ctrl+Z  撤销
 Ctrl+Y / Ctrl+Shift+Z  重做
 Ctrl+A  全选
 M  沿游玩区域中轴线镜像
-E  编辑选中物件（仅单选时可用）
+E  编辑选中物件
 Delete / Backspace  删除选中物件
 
 【文件】
@@ -1288,15 +1200,15 @@ Ctrl+S  保存
 Ctrl+Shift+S  另存为
 
 【视图与播放】
-滚轮  时间轴前进 / 后退一格（1 / 网格细分 拍，自动吸附网格）
+滚轮  时间轴前进 / 后退一格，自动吸附网格
 Shift + 滚轮  一次滚动 1 拍
 Ctrl + 滚轮  缩放
-+ / =  放大（屏幕内时间变少、物件变大）
--  缩小（屏幕内时间变多）
++ / =  放大
+-  缩小
 ← / →  按网格步进
 PageUp / PageDown  半屏滚动
 Home / End  跳到开头 / 结尾
-空格  播放 / 暂停（暂停时判定线吸附网格）
+空格  播放 / 暂停
 F10  最大化 / 还原窗口
 F11  无边框全屏切换
 """

@@ -4,9 +4,9 @@
 
 * 文件   —— 新建 / 打开 / 保存 / 另存为
 * 编辑   —— 撤销 / 重做 / 剪切 / 复制 / 粘贴 / 镜像 / 删除 / 全选（编辑物件是顶栏独立按钮）
-* 放置   —— 选择、单轨、多轨、长按（含多轨）、空域、禁区、左右滑键（二级菜单里可勾选）
+* 放置   —— 选择、单轨、多轨、长按、空域、禁区、左右滑键（二级菜单里可勾选）
 * 视图   —— 缩放、时间网格细分、横向辅助网格、跳转、全屏
-* 谱面设置 —— 元数据、BPM 与偏移
+* 谱面信息 —— 元数据、BPM 与偏移
 * 速度组 / 编辑器设置 —— 单击直接打开对应面板
 * 帮助   —— 操作指南、快捷键
 
@@ -104,20 +104,20 @@ class Toolbar(ttk.Frame):
             Entry("保存", lambda: app.save_chart(False), "Ctrl+S"),
             Entry("另存为…", lambda: app.save_chart(True), "Ctrl+Shift+S"),
             Entry(separator=True),
-            Entry("退出", app.on_close),
-            Entry(separator=True),
             self._undo_entry,
             self._redo_entry,
             Entry(separator=True),
             Entry("剪切", app.cut_selection, "Ctrl+X", enabled=has_selection),
             Entry("复制", app.copy_selection, "Ctrl+C", enabled=has_selection),
-            Entry("粘贴（点击目标时间）", app.begin_paste, "Ctrl+V", enabled=has_clipboard),
+            Entry("粘贴", app.begin_paste, "Ctrl+V", enabled=has_clipboard),
             Entry("沿中轴线镜像", app.mirror_selection, "M", enabled=has_selection),
             Entry(separator=True),
             Entry("删除", app.delete_selection, "Delete", enabled=has_selection),
             Entry("全选", app.select_all, "Ctrl+A", enabled=not_demo),
             Entry(separator=True),
-            Entry("自动检查（谱面合法性）…", app.run_auto_check, enabled=not_demo),
+            Entry("自动检查…", app.run_auto_check, enabled=not_demo),
+            Entry(separator=True),
+            Entry("退出", app.on_close),
         ])
 
         place_group = Group("放置物件", [
@@ -131,7 +131,7 @@ class Toolbar(ttk.Frame):
             for index, tool in enumerate(config.TOOL_ORDER, start=1)
         ] + [
             Entry(separator=True),
-            Entry("取消当前放置流程（Esc）", app.cancel_pending, "Esc"),
+            Entry("取消当前放置流程", app.cancel_pending, "Esc"),
             Entry("清空选择", app.clear_selection),
         ])
 
@@ -155,7 +155,7 @@ class Toolbar(ttk.Frame):
                 app.set_grid_division_custom,
                 checked=lambda: app.document.chart.settings.grid_division not in grid_choices,
                 label_fn=lambda: (
-                    f"自定义…（当前 1/{app.document.chart.settings.grid_division}）"
+                    f"自定义… · 当前 1/{app.document.chart.settings.grid_division}"
                 ),
             ),
         ]
@@ -182,7 +182,7 @@ class Toolbar(ttk.Frame):
             Entry("时间网格细分", options=grid_options),
             Entry("横向辅助网格", options=hgrid_options),
             Entry(
-                "侧轨高亮（第 1 / 6 轨 · 暗紫）",
+                "侧轨高亮",
                 app.toggle_side_lane_highlight,
                 checked=lambda: app.document.chart.settings.side_lane_highlight,
             ),
@@ -191,12 +191,18 @@ class Toolbar(ttk.Frame):
                 app.toggle_show_past_notes,
                 checked=lambda: app.document.chart.settings.show_past_notes,
             ),
+            Entry(
+                "忽略速度组",
+                app.toggle_ignore_speed_groups,
+                checked=lambda: app.document.chart.settings.ignore_speed_groups,
+            ),
             Entry(separator=True),
             Entry("跳到开头", lambda: app.jump(0.0), "Home"),
             Entry("跳到结尾", lambda: app.jump(app.document.chart.beat_bounds()[1]), "End"),
             Entry(separator=True),
-            Entry("播放 / 暂停", app.toggle_play, "空格"),
-            Entry("演示模式（叠加显示 · 只读）", app.toggle_demo, "Tab",
+            Entry("播放 / 暂停", app.toggle_play, "空格",
+                  label_fn=lambda: "暂停" if app.audio.is_playing else "播放"),
+            Entry("演示模式", app.toggle_demo, "Tab",
                   checked=lambda: app.demo_mode),
             Entry(separator=True),
             Entry("最大化 / 还原窗口", app.toggle_maximize, "F10",
@@ -205,17 +211,17 @@ class Toolbar(ttk.Frame):
                   checked=lambda: app.fullscreen),
         ])
 
-        # 顶栏顺序：文件/编辑 → 谱面设置 → 放置物件 → 编辑物件 → 视图 → 速度组
+        # 顶栏顺序：文件/编辑 → 谱面信息 → 放置物件 → 编辑物件 → 视图 → 速度组
         #           → 音效 → 编辑器设置（帮助收在这里）→ 播放（固定在右端）
         edit_note_group = Group("编辑物件", direct_command=app.edit_selected, enabled=single_selection)
-        chart_group = Group("谱面设置", [
+        chart_group = Group("谱面信息", [
             Entry("元数据设置…", app.edit_metadata, enabled=not_demo),
             Entry("BPM 与偏移…", app.edit_timing, enabled=not_demo),
         ])
         speed_group = Group("速度组", direct_command=app.edit_speed_groups, enabled=not_demo)
         sound_group = Group("音效", [
             Entry(
-                "打击音效（物件到达判定线）",
+                "打击音效",
                 app.toggle_hit_sound,
                 checked=lambda: app.document.chart.settings.hit_enabled,
             ),
@@ -442,6 +448,30 @@ class Toolbar(ttk.Frame):
             self.focus_canvas()
 
         return runner
+
+    def is_playback_control(self, widget) -> bool:
+        """播放 / 倍速控件（工具栏右侧固定区）本身不触发“点击即停止播放”。
+
+        点击「播放 / 暂停」按钮时若先被自动停止，紧接着的命令会把状态又切回播放，
+        结果就是按了暂停却停不下来。
+        """
+        cluster = str(self._right)
+        path = str(widget)
+        return path == cluster or path.startswith(cluster + ".")
+
+    def is_menu_bar_button(self, widget) -> bool:
+        """点击的是菜单栏（顶栏）上的按钮吗（分组入口 / 直接命令按钮）。
+
+        只有按钮才算“点击菜单栏”：点顶栏空白处、分隔条或顶栏里的滚动条都不算。
+        右侧播放 / 倍速控件另有语义，不在此列。
+        """
+        if not isinstance(widget, (ttk.Button, tk.Button)):
+            return False
+        if self.is_playback_control(widget):
+            return False
+        toolbar_path = str(self)
+        path = str(widget)
+        return path == toolbar_path or path.startswith(toolbar_path + ".")
 
     def focus_canvas(self) -> None:
         """把键盘焦点移回画布（演示模式下画布就是演示视图）。"""

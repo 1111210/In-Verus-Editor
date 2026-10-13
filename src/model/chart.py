@@ -67,6 +67,8 @@ class EditorSettings:
     * audio_latency_ms     —— 系统音频延迟：从执行播放到硬件出声的毫秒数。
     * metronome            —— 节拍音：off（默认）/ bar（小节）/ beat（节拍）。
     * show_past_notes      —— 判定时刻已过的物件是否继续绘制（默认关闭）。
+    * ignore_speed_groups  —— 忽略速度组：所有物件按 1 倍恒速绘制（默认关闭）。
+      只影响编辑器里的显示与命中测试，速度组的编辑 / 保存完全不受影响。
     * demo_*               —— 演示视图（软件渲染的游玩视角预览）的独立渲染参数：
       物件厚度 / 流速 / 侧轨高亮。
     """
@@ -79,6 +81,8 @@ class EditorSettings:
     hit_enabled: bool = True          # 打击音效开关
     side_lane_highlight: bool = False  # 6K 第 1 / 第 6 轨背景高亮（暗紫色）
     show_past_notes: bool = False      # 判定时刻已过的物件继续绘制（判定线下方）
+    # 忽略速度组：绘制时把流速当作 1 倍恒定（只影响显示，不动速度组本身）
+    ignore_speed_groups: bool = False
     # 音量（0..1）：音乐 / 节拍音 / 打击音效
     music_volume: float = 1.0
     metronome_volume: float = 0.6
@@ -107,6 +111,7 @@ class EditorSettings:
         self.hit_enabled = bool(self.hit_enabled)
         self.side_lane_highlight = bool(self.side_lane_highlight)
         self.show_past_notes = bool(self.show_past_notes)
+        self.ignore_speed_groups = bool(self.ignore_speed_groups)
         self.music_volume = max(0.0, min(1.0, float(self.music_volume)))
         self.metronome_volume = max(0.0, min(1.0, float(self.metronome_volume)))
         self.hit_volume = max(0.0, min(1.0, float(self.hit_volume)))
@@ -139,6 +144,7 @@ class EditorSettings:
             "hit_enabled": bool(self.hit_enabled),
             "side_lane_highlight": bool(self.side_lane_highlight),
             "show_past_notes": bool(self.show_past_notes),
+            "ignore_speed_groups": bool(self.ignore_speed_groups),
             "music_volume": self.music_volume,
             "metronome_volume": self.metronome_volume,
             "hit_volume": self.hit_volume,
@@ -163,6 +169,7 @@ class EditorSettings:
             hit_enabled=bool(data.get("hit_enabled", True)),
             side_lane_highlight=bool(data.get("side_lane_highlight", False)),
             show_past_notes=bool(data.get("show_past_notes", False)),
+            ignore_speed_groups=bool(data.get("ignore_speed_groups", False)),
             music_volume=float(data.get("music_volume", 1.0)),
             metronome_volume=float(data.get("metronome_volume", 0.6)),
             hit_volume=float(data.get("hit_volume", 0.6)),

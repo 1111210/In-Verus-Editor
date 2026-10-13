@@ -161,7 +161,7 @@ def clip_polygon(points: Sequence[Point], rect: Bounds) -> List[Point]:
 
 
 def hit_signature(view: ViewState) -> tuple:
-    """命中缓存的“有效性签名”：视图或物件数量一变就失效。"""
+    """命中缓存的“有效性签名”：视图、物件数量或显示模式一变就失效。"""
     layout = view.layout
     return (
         round(float(view.current_beat), 6),
@@ -172,6 +172,7 @@ def hit_signature(view: ViewState) -> tuple:
         len(view.chart.lane_notes),
         len(view.chart.mouse_notes),
         int(getattr(view.chart, "revision", 0)),
+        bool(view.chart.settings.ignore_speed_groups),
     )
 
 
@@ -222,7 +223,7 @@ def lane_note_pads(note: LaneNote) -> Tuple[float, float]:
 
 def lane_note_bounds(note: LaneNote, chart: Chart, view: ViewState) -> Bounds:
     layout = view.layout
-    group = chart.group_by_id(note.group)
+    group = view.display_group(note)
     x0, x1 = layout.lane_span(note.lane_start, note.lane_end)
     pad, _ = lane_note_pads(note)
     x0 += pad
@@ -240,7 +241,7 @@ def lane_note_bounds(note: LaneNote, chart: Chart, view: ViewState) -> Bounds:
 
 
 def slide_bounds(note: MouseSlide, chart: Chart, view: ViewState) -> Bounds:
-    group = chart.group_by_id(note.group)
+    group = view.display_group(note)
     y = view.note_y(note.beat, group)
     x0 = view.norm_to_x(note.x_start)
     x1 = view.norm_to_x(note.x_end)
@@ -281,7 +282,7 @@ def region_beat_samples(
     * 与可视带相交的段按屏幕高度细分，samples 是所有细分点的总预算 ——
       一个空域被流速推成多段、几段同时可见时，每段都会单独细分，不会丢。
     """
-    group = chart.group_by_id(note.group)
+    group = view.display_group(note)
     timing = chart.timing
     start, end = float(note.beat_start), float(note.beat_end)
     span = end - start
@@ -480,7 +481,14 @@ def polygon_overlap(
     started = False
     ended = False
     for index in range(rows + 1):
-        y = top + (bottom - top) * index / rows
+        if index >= rows:
+            # 最后一行贴着下沿取：扫描用半开区间 [low, high)，正好落在下沿的行会被
+            # 判成空，补丁因此比真实范围短一行（同时间同边界的空域 / 禁区叠加时，
+            # 补丁盖不满整个禁区，看起来禁区比实际短）。真实交集到不了下沿时，
+            # 这一行同样取不到区间，不会把补丁撑长。
+            y = bottom - 1e-6
+        else:
+            y = top + (bottom - top) * index / rows
         first_intervals = polygon_row_intervals(first, y)
         second_intervals = polygon_row_intervals(second, y)
         if len(first_intervals) > 1 or len(second_intervals) > 1:

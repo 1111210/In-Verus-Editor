@@ -104,6 +104,8 @@ class ToolController:
     # ------------------------------------------------------------------ 鼠标
     def on_press(self, x: float, y: float, ctrl: bool, shift: bool) -> None:
         self._press = (x, y)
+        # 点击也算一次“光标位置已知”：这样不移动鼠标时的预览也有基准点
+        self.hover = (x, y)
         layout = self.view.layout
         if y >= layout.play_bottom:
             hold_pending = (
@@ -157,7 +159,7 @@ class ToolController:
                         "拖动物件", before, after, self.document.selection, self.document.selection  # type: ignore[arg-type]
                     )
                 )
-                self.status(f"已拖动 {len(after)} 个物件（Ctrl+Z 可撤销）")
+                self.status(f"已拖动 {len(after)} 个物件")
             self._press = None
             return
         if self.tool == config.TOOL_SELECT and self._rubber_origin is not None:
@@ -193,7 +195,7 @@ class ToolController:
         # scroll_beats 默认 snap=True，即使有零碎滚动量也会落回网格，避免判定线偏离刻度。
         per_notch = config.SCROLL_WHEEL_FAST_BEATS if shift else self.view.grid_step()
         self.view.scroll_beats(-notches * per_notch, snap=config.SCROLL_WHEEL_SNAP)
-        unit = f"{config.SCROLL_WHEEL_FAST_BEATS:g} 拍（Shift 加速）" if shift else (
+        unit = f"{config.SCROLL_WHEEL_FAST_BEATS:g} 拍" if shift else (
             f"1/{self.view.grid_division} 拍"
         )
         self.status(
@@ -336,13 +338,13 @@ class ToolController:
             self._stage = 1
             self._first_lane = lane
             self._first_beat = self.view.snap_beat(self.view.y_to_beat(y))
-            hint = "多轨按键：请点击另一条轨道（时间以第一次点击为准，Esc 取消）"
+            hint = "多轨按键：请点击另一条轨道"
             self._set_hint(hint)
             self.status(hint)
             return
         start_lane = self._first_lane if self._first_lane is not None else lane
         if start_lane == lane:
-            self.status("请点击另一条轨道（或按 Esc 取消）")
+            self.status("请点击另一条轨道")
             return
         beat = self._first_beat or 0.0
         note = LaneNote(
@@ -368,7 +370,7 @@ class ToolController:
             self._stage = 1
             self._first_lane = lane
             self._first_beat = self.view.snap_beat(self.view.y_to_beat(y))
-            hint = "长按：请点击结束轨道与结束时刻（可滚动/缩放，也可只调时间，Esc 取消）"
+            hint = "长按：请点击结束轨道与结束时刻"
             self._set_hint(hint)
             self.status(hint)
             return
@@ -413,28 +415,28 @@ class ToolController:
                 self._first_beat = beat
                 # 结束时间还没选：保持为空，让预览跟着光标走（否则预览高度为 0，看不见）
                 self._region_end_beat = None
-                self._set_hint(f"{label}：请点击结束时间（Esc 取消）")
+                self._set_hint(f"{label}：请点击结束时间")
             else:
                 start = self._first_beat if self._first_beat is not None else beat
                 end = beat if beat > start else start + self.view.grid_step()
                 self._region_end_beat = end
                 self._stage = 2
                 self._set_hint(
-                    f"{label}：请点击左边界起点位置（未放置的左边界点按 0 显示，Esc 取消）"
+                    f"{label}：请点击左边界起点位置"
                 )
             self.status(self.state.pending.hint)
             return
 
         value = self._norm_x(x)
         if value is None:
-            self.status(f"{label}边界请点击鼠标平面区域（横向辅助网格关闭时允许超出合法区域）")
+            self.status(f"{label}边界请点击鼠标平面区域")
             return
         if self._stage == 2:
             self._region_left_start = value
-            self._set_hint(f"{label}：请点击左边界终点位置（未放置的左边界点按 0 显示）")
+            self._set_hint(f"{label}：请点击左边界终点位置")
         elif self._stage == 3:
             self._region_left_end = value
-            self._set_hint(f"{label}：请点击右边界起点位置（未放置的右边界点按 1 显示）")
+            self._set_hint(f"{label}：请点击右边界起点位置")
         elif self._stage == 4:
             self._region_right_start = value
             self._set_hint(f"{label}：请点击右边界终点位置，之后选择线型")
@@ -509,18 +511,18 @@ class ToolController:
         if self._stage == 0:
             value = self._slide_x(x)
             if value is None:
-                self.status("滑键请点击鼠标平面区域（横向辅助网格关闭时允许超出合法区域）")
+                self.status("滑键请点击鼠标平面区域")
                 return
             self._stage = 1
             self._first_beat = self.view.snap_beat(self.view.y_to_beat(y))
             self._first_x = value
-            hint = "滑键：请点击第二次确定滑动方向与终点（Esc 取消）"
+            hint = "滑键：请点击第二次确定滑动方向与终点"
             self._set_hint(hint)
             self.status(hint)
             return
         x_end_value = self._slide_x(x)
         if x_end_value is None:
-            self.status("滑键请点击鼠标平面区域（横向辅助网格关闭时允许超出合法区域）")
+            self.status("滑键请点击鼠标平面区域")
             return
         x_start = self._first_x if self._first_x is not None else x_end_value
         x_end = x_end_value
@@ -554,7 +556,7 @@ class ToolController:
         self.state.pending.tool = ""
         self.state.pending.clipboard = list(self.document.clipboard)
         self.state.pending.clipboard_beat = self.view.snap_beat(self.view.current_beat)
-        self.state.pending.hint = "粘贴：请点击目标开始时间（轨道/横向位置保持不变，Esc 取消）"
+        self.state.pending.hint = "粘贴：请点击目标开始时间"
         self.status(self.state.pending.hint)
 
     def _do_paste(self, x: float, y: float) -> None:
@@ -566,6 +568,17 @@ class ToolController:
     # ------------------------------------------------------------------ 预览
     def _set_hint(self, text: str) -> None:
         self.state.pending.hint = text
+
+    def refresh_preview(self) -> None:
+        """按最后一次光标位置重算预览（主循环每帧调用）。
+
+        预览以前只在鼠标移动时更新：点击推进阶段后只要不移动鼠标，左上角提示
+        与边界就停留在上一步，一动鼠标才“跳变”。现在点击也会记录光标位置，
+        预览每帧重算，因此点击后立即反映当前阶段，不需要移动鼠标。
+        """
+        if self.hover is None:
+            return
+        self._update_ghost(self.hover[0], self.hover[1])
 
     def _update_ghost(self, x: float, y: float) -> None:
         pending = self.state.pending
@@ -666,9 +679,9 @@ class ToolController:
             )
             pending.hint = {
                 1: f"{label}：点击结束时间",
-                2: f"{label}：点击左边界起点（未放置的点按 0 显示）",
+                2: f"{label}：点击左边界起点",
                 3: f"{label}：点击左边界终点",
-                4: f"{label}：点击右边界起点（未放置的点按 1 显示）",
+                4: f"{label}：点击右边界起点",
                 5: f"{label}：点击右边界终点，之后选择线型",
             }.get(self._stage, "")
         elif tool == config.TOOL_MOUSE_SLIDE:
@@ -679,7 +692,7 @@ class ToolController:
             cursor = self._slide_x(x)
             if cursor is None:
                 pending.tool = ""
-                pending.hint = "滑键请点击鼠标平面区域（网格关闭时允许超出合法区域）"
+                pending.hint = "滑键请点击鼠标平面区域"
                 return
             if self._stage == 0:
                 pending.beat_start = beat

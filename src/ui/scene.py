@@ -11,7 +11,7 @@
 from __future__ import annotations
 
 import tkinter as tk
-from typing import Any, Dict, Iterable, List, Sequence, Tuple
+from typing import Any, Dict, Iterable, List, Optional, Sequence, Tuple
 
 
 class Scene:
@@ -19,6 +19,11 @@ class Scene:
         self.canvas = canvas
         self._items: Dict[str, Tuple[int, str, tuple]] = {}
         self._used: set[str] = set()
+        # 分组：同一画布上「放置层 / 预览层」等各自独立增删，
+        # 这样预览可以每帧重画，而放置层只在内容变化时更新。
+        self._active_group = "main"
+        self._used_by_group: Dict[str, set[str]] = {"main": self._used}
+        self._group_of: Dict[str, str] = {}
         self._frames = 0
         self._unsupported: set[str] = set()
         # 图层：先声明的层在下面。切换布局时画布对象可能被重新创建，
@@ -64,14 +69,21 @@ class Scene:
         raise exc
 
     # ------------------------------------------------------------------ 帧控制
-    def begin(self) -> None:
+    def begin(self, group: str = "main") -> None:
+        self._active_group = str(group)
+        self._used = self._used_by_group.setdefault(self._active_group, set())
         self._used.clear()
         self.frame_stats = {"created": 0, "moved": 0, "configured": 0, "deleted": 0}
 
-    def end(self) -> None:
-        stale = [key for key in self._items if key not in self._used]
+    def end(self, group: Optional[str] = None) -> None:
+        name = self._active_group if group is None else str(group)
+        used = self._used_by_group.setdefault(name, set())
+        stale = [
+            key for key, owner in self._group_of.items() if owner == name and key not in used
+        ]
         for key in stale:
             item_id, _, _ = self._items.pop(key)
+            self._group_of.pop(key, None)
             self.canvas.delete(item_id)
             self.stats["deleted"] += 1
             self.frame_stats["deleted"] += 1
@@ -83,7 +95,11 @@ class Scene:
         for item_id, _, _ in self._items.values():
             self.canvas.delete(item_id)
         self._items.clear()
-        self._used.clear()
+        self._used_by_group.clear()
+        self._group_of.clear()
+        self._active_group = "main"
+        self._used = set()
+        self._used_by_group["main"] = self._used
 
     @property
     def item_count(self) -> int:
@@ -96,6 +112,7 @@ class Scene:
     # ------------------------------------------------------------------ 基础图元
     def _put(self, key: str, kind: str, coords: Sequence[float], options: Dict[str, Any]) -> None:
         self._used.add(key)
+        self._group_of[key] = self._active_group
         tags = tuple(options.get("tags") or ()) + (self._layer_tag(),)
         options["tags"] = tags
         new_coords = tuple(round(float(c), 2) for c in coords)

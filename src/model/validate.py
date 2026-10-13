@@ -301,17 +301,14 @@ def format_report(chart: Chart, issues: Sequence[Issue]) -> str:
     counts = chart.note_counts()
     lines = [
         "自动检查范围：",
-        f"  · 6K 下落式：{counts['lane']} 个物件（单轨 / 多轨 / 长按）",
+        f"  · 6K 下落式：{counts['lane']} 个物件",
         f"  · 空域：{counts['region']} 个   禁区：{counts['forbidden']} 个   "
         f"滑键：{counts['slide']} 个",
         "",
         "检查规则：",
         "  · 任意轨道在任意时刻只能存在一个按键；长按 / 多轨按键与其它按键重叠都算冲突",
-        "    （端点相接的“紧贴”不算冲突，但瞬时按键落在长按内部算冲突）",
-        "  · 滑键所在时刻若落在空域内部（开始 / 结束时刻不算），",
-        "    则滑键横向范围必须与该空域相交或紧贴",
+        "  · 滑键所在时刻若落在空域内部，则滑键横向范围必须与该空域相交或紧贴",
         "  · 滑键与空域的任意时刻都不能被禁区完全覆盖；多个禁区的横向范围会合并计算",
-        "    （禁区的开始 / 结束时刻同样计入）",
         "",
     ]
     lane_issues = [i for i in issues if i.kind == ISSUE_LANE]
@@ -320,7 +317,7 @@ def format_report(chart: Chart, issues: Sequence[Issue]) -> str:
     if not issues:
         lines.append("检查结果：未发现问题 ✓")
         return "\n".join(lines)
-    lines.append(f"检查结果：共发现 {len(issues)} 处问题（相关物件已在画布中选中）")
+    lines.append(f"检查结果：共发现 {len(issues)} 处问题")
     lines.append("")
     if lane_issues:
         lines.append(f"【6K 轨道冲突】共 {len(lane_issues)} 处")

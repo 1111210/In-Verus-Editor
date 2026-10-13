@@ -70,6 +70,7 @@ def adopt_chart_settings(settings: EditorSettings, data: Optional[Dict[str, Any]
         "hit_volume",
         "side_lane_highlight",
         "show_past_notes",
+        "ignore_speed_groups",
     ):
         setattr(settings, field, getattr(merged, field))
     settings.normalize()

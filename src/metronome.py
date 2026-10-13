@@ -22,9 +22,9 @@ MODE_BEAT = "beat"
 METRONOME_MODES = (MODE_OFF, MODE_BAR, MODE_BEAT)
 
 LABELS = {
-    MODE_OFF: "关闭（默认）",
-    MODE_BAR: "小节音（每小节响一声）",
-    MODE_BEAT: "节拍音（每拍响一声）",
+    MODE_OFF: "关闭",
+    MODE_BAR: "小节音",
+    MODE_BEAT: "节拍音",
 }
 
 # 声音参数

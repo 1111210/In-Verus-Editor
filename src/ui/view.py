@@ -18,12 +18,16 @@ from typing import List, Optional, Tuple
 import config
 from model.chart import Chart
 from model.notes import Note
-from model.speed import SpeedGroup
+from model.speed import SpeedGroup, SpeedSegment
 
 # 渲染 / 命中候选窗口的像素余量（与渲染器的剔除边界保持一致）：
 # RENDER_MARGIN_PX 是画布上下各留的绘制余量，CANDIDATE_PAD_PX 覆盖图形自身厚度。
 RENDER_MARGIN_PX = 80.0
 CANDIDATE_PAD_PX = 32.0
+
+# 「忽略速度组」显示模式使用的恒速组：流速恒为 1，位置与时间网格一致。
+# 共享只读实例，不参与任何编辑 / 保存，只在绘制与命中测试时顶替真实速度组。
+IDENTITY_GROUP = SpeedGroup(config.DEFAULT_GROUP_ID, "1x 恒速", [SpeedSegment(0.0, 1.0)])
 
 
 def _column_rects(bounds: Tuple[float, float], count: int, gap: float = 2.0) -> List[Tuple[float, float]]:
@@ -267,11 +271,26 @@ class ViewState:
         return timing.seconds_to_beat(target)
 
     def note_y(self, beat: float, group: SpeedGroup | None = None) -> float:
-        """物件映射：判定时刻一定落在判定线上，其余时刻由速度组反推。"""
-        if group is None or group.is_identity:
+        """物件映射：判定时刻一定落在判定线上，其余时刻由速度组反推。
+
+        开启「忽略速度组」后所有物件都按 1 倍恒速绘制（与时间网格一致）。
+        """
+        if group is None or self.ignore_speed_groups or group.is_identity:
             return self.beat_to_y(beat)
         distance = group.scroll_seconds(self.chart.timing, self.current_beat, float(beat))
         return self.layout.judgment_y - distance * self.px_per_second()
+
+    # ------------------------------------------------------------ 速度组显示
+    @property
+    def ignore_speed_groups(self) -> bool:
+        """视图选项「忽略速度组」：只影响显示，不改动速度组本身。"""
+        return bool(self.chart.settings.ignore_speed_groups)
+
+    def display_group(self, note: Note) -> SpeedGroup:
+        """绘制 / 命中该物件时使用的速度组（开启忽略时统一用恒速组）。"""
+        if self.ignore_speed_groups:
+            return IDENTITY_GROUP
+        return self.chart.group_by_id(note.group)
 
     def beat_range(self) -> Tuple[float, float]:
         return (
@@ -285,10 +304,13 @@ class ViewState:
         只在所有速度组都是默认流速时生效：此时位置对拍单调，窗口外的物件不可能
         落进屏幕；流速非 1 / 反向的组会把任意远处的物件推回屏幕，只能返回原列表
         让调用方逐个按真实位置判断。
+
+        开启「忽略速度组」后所有物件都按恒速显示，位置对拍单调，因此同样可以粗筛。
         """
-        for group in self.chart.speed_groups:
-            if not group.is_identity:
-                return notes
+        if not self.ignore_speed_groups:
+            for group in self.chart.speed_groups:
+                if not group.is_identity:
+                    return notes
         heads = self.chart.sorted_head_beats()
         if len(heads) != len(notes):       # 传进来的不是本谱面的排序列表：退回全量
             return notes

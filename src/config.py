@@ -3,7 +3,7 @@
 from __future__ import annotations
 
 APP_TITLE = "In Falsus 社区谱面编辑器"
-APP_SUBTITLE = "《In Falsus》的社区谱面编辑器（6K 下落式 + 鼠标平面）"
+APP_SUBTITLE = "《In Falsus》的社区谱面编辑器"
 VERSION = "0.1.0"
 
 # 谱面文件格式
@@ -36,9 +36,10 @@ DEFAULT_HORIZONTAL_DIVISIONS = 0   # 0 = 不启用横向辅助网格
 DEFAULT_AUDIO_LATENCY_MS = 0.0
 DEFAULT_ZOOM_SECONDS = 4.0
 
-# 允许放大到只看 0.2 秒（刻度更细，方便对微小的偏移）
-ZOOM_MIN_SECONDS = 0.2
-ZOOM_MAX_SECONDS = 40.0
+# 缩放范围：最大放大到 0.02 秒（当前最大放大程度的 10 倍），
+# 最缩小到 4 秒（= 默认缩放，时间网格最稀疏）
+ZOOM_MIN_SECONDS = 0.02
+ZOOM_MAX_SECONDS = 4.0
 ZOOM_STEP = 1.25
 GRID_DIVISION_MIN = 1
 
@@ -124,7 +125,7 @@ TOOL_LABELS = {
     TOOL_LANE_TAP: "单轨按键",
     TOOL_LANE_MULTI: "多轨按键",
     # 长按工具同时支持单轨与多轨
-    TOOL_LANE_HOLD: "长按（含多轨）",
+    TOOL_LANE_HOLD: "长按",
     TOOL_MOUSE_REGION: "空域",
     TOOL_MOUSE_FORBIDDEN: "禁区",
     TOOL_MOUSE_SLIDE: "左右滑键",
