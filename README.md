@@ -52,8 +52,10 @@ Windows 下也可以直接双击 `run_editor.bat`（会优先使用项目里的 
 
 * 谱面保存为 JSON，音频复制到谱面所在目录的 `audio/` 子目录并用相对路径引用，
   整个目录可以直接搬迁。
-* 视图 / 音效 / 演示视图等偏好与具体谱面无关，保存在用户配置目录
-  （Windows 为 `%APPDATA%/InFalsusEditor/settings.json`）。
+* 视图 / 音效 / 演示视图等偏好与具体谱面无关，保存在程序文件夹里的
+  `settings.json`（源码运行时是仓库根目录，打包后是 exe 所在目录），
+  跟着程序一起搬迁；该文件属于本机使用者、不入库。程序目录只读时退回
+  `%APPDATA%/InFalsusEditor/settings.json`。
 * `charts/` 属于用户内容、不入库，示例谱面可用
   `python run_editor.py --make-demo` 随时重新生成。
 

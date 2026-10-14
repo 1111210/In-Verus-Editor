@@ -1,18 +1,35 @@
-"""用户配置目录下的 JSON 设置文件：路径解析与容错读写。
+"""可写 JSON 设置文件：路径解析与容错读写。
 
-编辑器的 settings.json 存在用户目录，损坏 / 缺失 / 只读时一律退回默认值，
-绝不能影响启动。
+编辑器的 settings.json 放在程序 / 项目文件夹里（见 app_dir），整个文件夹拷贝到
+别处也能带着设置一起走；该目录只读时退回旧版的用户配置目录（见 user_config_dir）。
+文件损坏 / 缺失 / 只读时一律退回默认值，绝不能影响启动。
 """
 
 from __future__ import annotations
 
 import json
 import os
+import sys
 from typing import Any, Dict
 
 
+def app_dir() -> str:
+    """程序所在目录：源码运行时是仓库根目录，打包运行时是 exe 所在目录。
+
+    用来放「跟着程序走」的可写文件（settings.json 等），而不是用户配置目录；
+    与资源目录（打包后会解压到临时文件夹）区分开，这里始终是可写、可持久化的位置。
+    """
+    if getattr(sys, "frozen", False):
+        return os.path.dirname(os.path.abspath(sys.executable))
+    here = os.path.dirname(os.path.abspath(__file__))       # src/
+    root = os.path.dirname(here)                            # 仓库根目录
+    if os.path.isdir(os.path.join(root, "src")):
+        return root
+    return here                                             # 安装成包时没有 src/ 兄弟目录
+
+
 def user_config_dir() -> str:
-    """用户配置目录：Windows 为 %APPDATA%/InFalsusEditor，其它系统为 ~/.config/infalsus-editor。"""
+    """旧版位置：Windows 为 %APPDATA%/InFalsusEditor，其它系统为 ~/.config/infalsus-editor。"""
     if os.name == "nt":
         base = os.environ.get("APPDATA") or os.path.join(
             os.path.expanduser("~"), "AppData", "Roaming"
