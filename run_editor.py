@@ -11,7 +11,7 @@
     python run_editor.py --make-demo      # 只生成示例谱面
 
 脚本本身不检查、也不切换解释器：用哪个 Python 启动就用哪个（想要音频后端就装好
-``pygame-ce``，或激活 ``.venv`` 后再运行；``run_editor.bat`` 会优先使用 ``.venv``）。
+``pygame-ce``，或先激活虚拟环境再运行）。
 """
 
 from __future__ import annotations

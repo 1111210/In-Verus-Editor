@@ -96,8 +96,7 @@ def audio_setup_hint() -> str:
     if _PYGAME is None:
         detail = f"（{_PYGAME_ERROR}）" if _PYGAME_ERROR else ""
         return (
-            f"未检测到 pygame{detail}：用 run_editor.bat 启动，"
-            f"或执行 pip install -r requirements.txt；"
+            f"未检测到 pygame{detail}：执行 pip install -r requirements.txt；"
             f"当前解释器：{sys.executable}"
         )
     if _MIXER_ERROR:

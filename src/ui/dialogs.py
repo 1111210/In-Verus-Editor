@@ -539,7 +539,7 @@ class SettingsDialog(BaseDialog):
         state = audio_backend_state()
         state_text = {
             "ok": f"{audio_backend_name()}",
-            "missing": "silent · 未安装 pygame（用 run_editor.bat 或 pip install -r requirements.txt）",
+            "missing": "silent · 未安装 pygame（执行 pip install -r requirements.txt）",
             "device": "silent · pygame 已安装，但音频设备打不开（检查输出设备后点下面的按钮重试）",
         }.get(state, state)
         ttk.Label(

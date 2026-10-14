@@ -154,7 +154,7 @@ class EditorApp:
         self.status(f"欢迎使用 {config.APP_SUBTITLE}")
         hint = audio_setup_hint()
         if hint:
-            # 明确告诉用户是哪个解释器缺依赖、怎么修（启动器一般已经自动切到 .venv）
+            # 明确告诉用户是哪个解释器缺依赖、怎么修
             self.status(f"音频后端：{audio_backend_name()} · {hint}")
         else:
             self.status(f"音频后端：{audio_backend_name()}")

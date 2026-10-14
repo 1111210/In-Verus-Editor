@@ -29,7 +29,6 @@ python run_editor.py charts/demo/demo.json --windowed  # 普通窗口
 python run_editor.py charts/demo/demo.json --demo      # 直接进入演示模式
 ```
 
-Windows 下也可以直接双击 `run_editor.bat`（会优先使用项目里的 `.venv`）。
 没有安装 `pygame-ce` 时编辑器仍可完整编辑与播放（静音时钟），只是没有声音与
 演示模式。
 
