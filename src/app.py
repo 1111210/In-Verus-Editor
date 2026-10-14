@@ -51,8 +51,7 @@ from ui.dialogs import (
 from ui.interactions import ToolController
 from ui.renderer import RenderState, Renderer
 from ui.scene import Scene
-from ui.style import apply_theme
-from ui.theme import DARK
+from ui.theme import DARK, apply_theme
 from ui.toolbar import Toolbar
 from ui.view import ViewState
 
@@ -213,7 +212,6 @@ class EditorApp:
 
         root.bind("<space>", lambda e: self._shortcut(self.toggle_play))
         root.bind("<Escape>", lambda e: self._on_escape())
-        root.bind("<Tab>", lambda e: self.toggle_demo())
         root.bind("<Left>", lambda e: self._scroll_steps(-1))
         root.bind("<Right>", lambda e: self._scroll_steps(1))
         root.bind("<Prior>", lambda e: self._scroll_page(1))
@@ -1343,7 +1341,7 @@ class EditorApp:
             self.canvas.focus_set()
         except tk.TclError:                     # pragma: no cover - 窗口正在销毁
             pass
-        self.status("进入演示模式" if enabled else "退出演示模式")
+        self.status("进入演示模式（该功能已弃用）" if enabled else "退出演示模式")
 
     def toggle_demo(self) -> None:
         self.set_demo_mode(not self.demo_mode)
@@ -1442,9 +1440,9 @@ class EditorApp:
     def _update_demo_hint(self, width: int, height: int) -> None:
         """左上角的小提示（属于编辑器外壳，不在演示画面里）。"""
         text = (
-            "演示模式 · 空格 暂停 · Tab / Esc 返回编辑"
+            "演示模式（已弃用） · 空格 暂停 · Esc 返回编辑"
             if self.audio.is_playing
-            else "演示模式 · 空格 播放 · Tab / Esc 返回编辑"
+            else "演示模式（已弃用） · 空格 播放 · Esc 返回编辑"
         )
         if self._demo_hint_id is None:
             self._demo_hint_id = self.canvas.create_text(

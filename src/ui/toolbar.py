@@ -10,7 +10,7 @@
 * 速度组 / 编辑器设置 —— 单击直接打开对应面板
 * 帮助   —— 操作指南、快捷键
 
-不保留系统菜单栏；演示模式下工具栏会隐藏，此时可用 Tab / Esc 返回编辑。
+不保留系统菜单栏；演示模式下工具栏会隐藏，此时可用 Esc 返回编辑。
 """
 
 from __future__ import annotations
@@ -202,7 +202,7 @@ class Toolbar(ttk.Frame):
             Entry(separator=True),
             Entry("播放 / 暂停", app.toggle_play, "空格",
                   label_fn=lambda: "暂停" if app.audio.is_playing else "播放"),
-            Entry("演示模式", app.toggle_demo, "Tab",
+            Entry("演示模式（已弃用）", app.toggle_demo,
                   checked=lambda: app.demo_mode),
             Entry(separator=True),
             Entry("最大化 / 还原窗口", app.toggle_maximize, "F10",
@@ -242,7 +242,7 @@ class Toolbar(ttk.Frame):
         # 帮助（操作指南 / 快捷键）收进「编辑器设置」菜单里
         editor_group = Group("编辑器设置", [
             Entry("编辑器设置…", app.edit_settings),
-            Entry("演示视图设置…", app.edit_demo_view_settings),
+            Entry("演示视图设置…（已弃用）", app.edit_demo_view_settings),
             Entry(separator=True),
             Entry("操作指南…", app.show_guide),
             Entry("快捷键…", app.show_shortcuts),
