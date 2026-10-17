@@ -586,15 +586,12 @@ class EditorApp:
     def _sync_ui(self) -> None:
         self.toolbar.sync()
         counts = self.document.chart.note_counts()
-        layout_name = "分栏" if self.view.split_layout else "叠加"
         info = (
-            f"布局：{layout_name}"
-            f"　|　倍速 {config.format_rate(self.audio.rate)}"
+            f"倍速 {config.format_rate(self.audio.rate)}"
             f"　|　物件：6K {counts['lane']} · 区域 {counts['region']} · 滑键 {counts['slide']}"
             f" · 禁区 {counts['forbidden']}"
             f"　|　判定线：第 {self.view.current_beat:.3f} 拍"
             f"　|　{self.controller.selection_summary()}"
-            f"　|　{self.audio.status_text}"
         )
         if info != self._last_info:
             self.info_var.set(info)

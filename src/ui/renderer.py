@@ -23,7 +23,6 @@
 from __future__ import annotations
 
 import math
-import tkinter.font as tkfont
 from dataclasses import dataclass, field
 from typing import List, Optional, Set, Tuple
 
@@ -69,17 +68,6 @@ from .geometry import (
 from .scene import Scene
 from .theme import Theme
 from .view import ViewState
-
-GROUP_COLORS = (
-    "#59b0ff",
-    "#ffd166",
-    "#7ee787",
-    "#ff9de2",
-    "#c792ea",
-    "#ff8a65",
-    "#4dd0e1",
-    "#f4a259",
-)
 
 # 复杂交集无法用单多边形表示时，逐行兜底的条带高度。
 OVERLAP_STRIP_STEP = 2.0
@@ -146,15 +134,6 @@ class Renderer:
         self.scene = scene
         self.theme = theme
         self._hit_entries: List[Tuple[Note, Tuple[float, float, float, float], Optional[List]]] = []
-        try:
-            self._small_font = tkfont.Font(family=theme.font_family, size=theme.font_small)
-        except Exception:  # pragma: no cover - 无 Tk 环境
-            self._small_font = None
-
-    def _text_width(self, text: str, fallback_per_char: float = 7.5) -> float:
-        if self._small_font is None:
-            return len(text) * fallback_per_char
-        return float(self._small_font.measure(text))
 
     # ------------------------------------------------------------------ 主入口
     def draw(self, chart: Chart, view: ViewState, state: RenderState) -> None:
@@ -174,7 +153,7 @@ class Renderer:
         else:
             self._draw_overlay_view(chart, view, state, beat_low, beat_high)
         scene.set_layer(HUD_LAYER)
-        self._draw_hud(chart, view, state)
+        self._draw_hud(view, state)
         scene.end(LAYER_PLACED)
 
     def draw_preview(self, chart: Chart, view: ViewState, state: RenderState) -> None:
@@ -248,7 +227,7 @@ class Renderer:
         self._draw_judgment_line(
             view, state, *layout.pane_mouse, "judge-mouse", accent=True, label="鼠标判定线"
         )
-        self._draw_pane_titles(view)
+        self._draw_mouse_extent_labels(view)
 
     def _draw_overlay_view(
         self, chart: Chart, view: ViewState, state: RenderState, beat_low: float, beat_high: float
@@ -302,28 +281,9 @@ class Renderer:
             view, state, layout.mouse_left, layout.mouse_right, "judge-mouse", accent=True
         )
 
-    def _draw_pane_titles(self, view: ViewState) -> None:
+    def _draw_mouse_extent_labels(self, view: ViewState) -> None:
         layout = view.layout
         theme = self.theme
-        # 6K 区域的标题放在 HUD 下方，避免与 BPM 信息重叠
-        self.scene.text(
-            "pane6:title",
-            layout.pane_6k[0] + 6,
-            layout.play_top + 24,
-            "6K 下落式",
-            fill=theme.text_dim,
-            font=theme.font(theme.font_small, bold=True),
-            anchor="nw",
-        )
-        self.scene.text(
-            "panem:title",
-            layout.pane_mouse[0] + 6,
-            layout.play_top + 24,
-            "鼠标平面 · 合法区域 0 .. 1",
-            fill=theme.legal_border,
-            font=theme.font(theme.font_small, bold=True),
-            anchor="nw",
-        )
         # 两侧溢出余量的边界标注：合法区域之外也画得出来
         self.scene.text(
             "panem:edge-left",
@@ -546,9 +506,6 @@ class Renderer:
                 )
 
     # ------------------------------------------------------------------ 物件
-    def _group_color(self, group_id: int) -> str:
-        return GROUP_COLORS[group_id % len(GROUP_COLORS)]
-
     def _draw_notes(self, chart: Chart, view: ViewState, state: RenderState) -> None:
         """逐帧绘制物件。
 
@@ -665,11 +622,6 @@ class Renderer:
                 fill="",
                 outline=theme.select,
                 width=2,
-            )
-        if note.group != config.DEFAULT_GROUP_ID:
-            self.scene.line(
-                f"grp:{note.id}", x0 - 3, top, x0 - 3, bottom,
-                fill=self._group_color(note.group), width=3,
             )
         if selected:
             label = f"{note.id} · 轨道{note.lane_start + 1}-{note.lane_end + 1} · 组{note.group}"
@@ -1197,7 +1149,7 @@ class Renderer:
         self.scene.text(
             "pending:hint",
             layout.play_left + 8,
-            layout.play_top + 46,
+            layout.play_top + 8,
             pending.hint or config.TOOL_HINTS[config.TOOL_SELECT],
             fill=theme.pending,
             font=theme.font(theme.font_normal, bold=True),
@@ -1272,44 +1224,9 @@ class Renderer:
         )
 
     # ------------------------------------------------------------------ HUD
-    def _draw_hud(self, chart: Chart, view: ViewState, state: RenderState) -> None:
+    def _draw_hud(self, view: ViewState, state: RenderState) -> None:
         theme = self.theme
         layout = view.layout
-        timing = chart.timing
-        bar_index, beat_in_bar = timing.bar_index_at(view.current_beat)
-        position = (
-            f"小节 {bar_index + 1} 第 {beat_in_bar + 1:.2f} 拍 · "
-            f"第 {view.current_beat:.3f} 拍"
-        )
-        if not timing.has_bars_at(view.current_beat):
-            # 段内小节线已关闭：这一节从最近的 BPM 变更处一直延伸下来
-            position += "（段内小节线已关闭）"
-        text = (
-            f"{timing.bpm_at(view.current_beat):.2f} BPM · "
-            f"{position} · {view.time_label(view.current_beat)}"
-        )
-        if state.playing:
-            text = "▶ 播放中 · " + text
-        hud_w = self._text_width(text) + 12
-        self.scene.rect(
-            "hud-time-bg",
-            layout.play_left + 1,
-            layout.play_top + 2,
-            layout.play_left + 1 + hud_w,
-            layout.play_top + 19,
-            fill=theme.panel_alt,
-            outline=theme.lane_border,
-            width=1,
-        )
-        self.scene.text(
-            "hud-time",
-            layout.play_left + 6,
-            layout.play_top + 4,
-            text,
-            fill=theme.text_dim,
-            font=theme.font(theme.font_small),
-            anchor="nw",
-        )
         if state.demo:
             self.scene.text(
                 "hud-demo",
