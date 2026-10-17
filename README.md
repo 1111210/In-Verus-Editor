@@ -54,7 +54,7 @@ python run_editor.py --make-demo             # 生成示例谱面后退出
 ├─ requirements.txt             # 安装 pyproject.toml 中定义的完整可选依赖
 ├─ pyproject.toml               # 包元数据与入口点
 ├─ LICENSE                      # MIT 许可
-├─ assets/textures/preview/     # 演示视图用的贴图（缺失时自动生成占位图）
+├─ assets/                       # 演示视图贴图（缺失时自动生成占位图）
 └─ src/
    ├─ __main__.py               # `python src` 入口
    ├─ app.py                    # 主程序：窗口、工具栏、画布、播放循环与全部命令

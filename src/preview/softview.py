@@ -58,7 +58,7 @@ LANE_PRESS_TINT = (44, 86, 150)     # 按下轨道时的高亮底色
 # 空域左右边线的半宽（世界单位）：按 REGION_EDGE_HALF_WORLD × 透视缩放绘制，
 # 远近粗细与贴图一致。0.006 是与 scene.UNIT_SCALE 配套的基准比例。
 REGION_EDGE_HALF_WORLD = 0.006 * UNIT_SCALE
-DEFAULT_TEXTURE_DIR = os.path.join(ROOT, "assets", "textures", "preview")
+DEFAULT_TEXTURE_DIR = os.path.join(ROOT, "assets")
 
 
 class SoftwareView:
