@@ -56,12 +56,15 @@ from .geometry import (
     clip_polyline,
     clip_segment,
     hit_signature,
+    lane_note_geometry,
     mouse_pane_rect,
     note_in_time,
     polygon_overlap,
+    polygon_overlap_strips,
     region_edges,
     region_beat_samples,
     sample_beats,
+    slide_geometry,
 )
 from .scene import Scene
 from .theme import Theme
@@ -78,8 +81,21 @@ GROUP_COLORS = (
     "#f4a259",
 )
 
-# 每帧最多补几块“两层半透明填充重叠”的合成色（重叠本身很少见，设上限避免极端谱面卡顿）
-MAX_OVERLAP_PATCHES = 8
+# 复杂交集无法用单多边形表示时，逐行兜底的条带高度。
+OVERLAP_STRIP_STEP = 2.0
+
+# 空域 / 禁区相关图层。补丁颜色按优先级分到独立图层，确保增量重绘时
+# 高优先级颜色不会因为新建图元较晚而被低优先级补丁盖住。
+REGION_FILL_LAYER = 8
+REGION_MULTI_LAYER = 9
+FORBIDDEN_MULTI_LAYER = 10
+MIXED_OVERLAP_LAYER = 11
+REGION_EDGE_LAYER = 12
+SLIDE_LAYER = 13
+JUDGE_LAYER = 14
+PREVIEW_PENDING_LAYER = 15
+PREVIEW_RUBBER_LAYER = 16
+HUD_LAYER = 17
 
 REGION_SAMPLES = 40
 # 横向辅助网格：线距小于这个值就抽稀（等分没有上限，不能逐条画）
@@ -157,7 +173,7 @@ class Renderer:
             self._draw_split_view(chart, view, state, beat_low, beat_high)
         else:
             self._draw_overlay_view(chart, view, state, beat_low, beat_high)
-        scene.set_layer(13)
+        scene.set_layer(HUD_LAYER)
         self._draw_hud(chart, view, state)
         scene.end(LAYER_PLACED)
 
@@ -170,9 +186,9 @@ class Renderer:
         scene = self.scene
         scene.begin(LAYER_PREVIEW)
         if not state.demo:
-            scene.set_layer(11)
+            scene.set_layer(PREVIEW_PENDING_LAYER)
             self._draw_pending(chart, view, state)
-            scene.set_layer(12)
+            scene.set_layer(PREVIEW_RUBBER_LAYER)
             self._draw_rubber_band(state)
         scene.end(LAYER_PREVIEW)
 
@@ -217,7 +233,7 @@ class Renderer:
 
         self.scene.set_layer(1)
         self._draw_lanes(
-            view, theme, "lane", chart.settings.side_lane_highlight
+            view, theme, "lane", view.settings.side_lane_highlight
         )
         self.scene.set_layer(2)
         self._draw_time_grid(chart, view, beat_low, beat_high, *layout.pane_6k, "grid6", True, False)
@@ -227,7 +243,7 @@ class Renderer:
         self._draw_horizontal_grid(chart, view)
         self.scene.set_layer(4)
         self._draw_notes(chart, view, state)
-        self.scene.set_layer(10)
+        self.scene.set_layer(JUDGE_LAYER)
         self._draw_judgment_line(view, state, *layout.pane_6k, "judge", accent=False, label="判定线")
         self._draw_judgment_line(
             view, state, *layout.pane_mouse, "judge-mouse", accent=True, label="鼠标判定线"
@@ -253,7 +269,7 @@ class Renderer:
             width=1,
         )
         self._draw_lanes(
-            view, theme, "lane", chart.settings.side_lane_highlight
+            view, theme, "lane", view.settings.side_lane_highlight
         )
         self.scene.set_layer(2)
         self._draw_time_grid(
@@ -272,7 +288,7 @@ class Renderer:
         self._draw_horizontal_grid(chart, view)
         self.scene.set_layer(4)
         self._draw_notes(chart, view, state)
-        self.scene.set_layer(10)
+        self.scene.set_layer(JUDGE_LAYER)
         self._draw_judgment_line(
             view,
             state,
@@ -397,11 +413,11 @@ class Renderer:
 
     def _draw_horizontal_grid(self, chart: Chart, view: ViewState) -> None:
         # 只要设置了横向等分就必然显示（没有单独的开关）
-        if not chart.settings.horizontal_grid_enabled:
+        if not view.settings.horizontal_grid_enabled:
             return
         theme = self.theme
         layout = view.layout
-        divisions = max(1, int(chart.settings.horizontal_divisions))
+        divisions = max(1, int(view.settings.horizontal_divisions))
         # 等分数量没有上限：太密时隔若干条画一条，只保留有限条线与标签
         spacing = layout.mouse_width / divisions
         stride = max(1, int(math.ceil(HGRID_MIN_STEP_PX / max(1e-9, spacing))))
@@ -530,10 +546,6 @@ class Renderer:
                 )
 
     # ------------------------------------------------------------------ 物件
-    def _group(self, chart: Chart, view: ViewState, note: Note) -> SpeedGroup:
-        """显示用速度组：开启「忽略速度组」时统一按 1 倍恒速（只影响显示）。"""
-        return view.display_group(note)
-
     def _group_color(self, group_id: int) -> str:
         return GROUP_COLORS[group_id % len(GROUP_COLORS)]
 
@@ -563,7 +575,7 @@ class Renderer:
         self._hit_entries = cache.entries
         self._hit_entries.clear()
         cache.signature = hit_signature(view)
-        show_past = bool(chart.settings.show_past_notes) and not state.demo
+        show_past = bool(view.settings.show_past_notes) and not state.demo
         current_beat = view.current_beat
         # 一遍扫过候选物件，按图层分桶（避免逐图层各扫一遍全表）
         buckets: List[List[Note]] = [[] for _ in range(LAYER_MAX + 1)]
@@ -574,21 +586,21 @@ class Renderer:
         # 图层顺序（自下而上）：多轨长按 → 单轨长按 → 多轨单键 → 单轨单键 → 空域 → 滑键
         # 这样即使谱面故意写成非法重叠，小按键也压在长按之上、空域与滑键再压在最上面，交叠处依然可读。
         layers = (
-            (LAYER_MULTI_HOLD, lambda n, s: self._draw_lane_note(n, chart, view, s, y_min, y_max)),
-            (LAYER_SINGLE_HOLD, lambda n, s: self._draw_lane_note(n, chart, view, s, y_min, y_max)),
-            (LAYER_MULTI_TAP, lambda n, s: self._draw_lane_note(n, chart, view, s, y_min, y_max)),
-            (LAYER_SINGLE_TAP, lambda n, s: self._draw_lane_note(n, chart, view, s, y_min, y_max)),
+            (LAYER_MULTI_HOLD, lambda n, s: self._draw_lane_note(n, view, s, y_min, y_max)),
+            (LAYER_SINGLE_HOLD, lambda n, s: self._draw_lane_note(n, view, s, y_min, y_max)),
+            (LAYER_MULTI_TAP, lambda n, s: self._draw_lane_note(n, view, s, y_min, y_max)),
+            (LAYER_SINGLE_TAP, lambda n, s: self._draw_lane_note(n, view, s, y_min, y_max)),
             (LAYER_REGION, None),          # 单独处理：填充 / 重叠合成 / 边线三遍
-            (LAYER_SLIDE, lambda n, s: self._draw_slide(n, chart, view, s, y_min, y_max)),
+            (LAYER_SLIDE, lambda n, s: self._draw_slide(n, view, s, y_min, y_max)),
         )
         for rank, draw in layers:
-            self.scene.set_layer(4 + rank)
             visible = buckets[rank]
             if rank == LAYER_REGION:
                 self._draw_region_layer(
                     visible, chart, view, state, y_min, y_max, region_samples
                 )
                 continue
+            self.scene.set_layer(SLIDE_LAYER if rank == LAYER_SLIDE else 4 + rank)
             if rank in (LAYER_MULTI_HOLD, LAYER_MULTI_TAP):
                 # 多轨物件：跨的轨道越多越先画（越靠下层），同跨度保持时间顺序
                 visible.sort(key=lambda n: n.lane_end - n.lane_start, reverse=True)
@@ -599,37 +611,19 @@ class Renderer:
     def _draw_lane_note(
         self,
         note: LaneNote,
-        chart: Chart,
         view: ViewState,
         selected: bool,
         y_min: float = -1e9,
         y_max: float = 1e9,
     ) -> None:
         theme = self.theme
-        layout = view.layout
-        group = self._group(chart, view, note)
-        # 单键与长按（含长按开头）共用同一条横向范围：长按渲染宽度与单键一致
-        x0, x1 = layout.lane_span(note.lane_start, note.lane_end)
-        pad = 6 if note.is_multi else 9
-        x0 += pad
-        x1 -= pad
-        y_head = view.note_y(note.beat_start, group)
-        y_tail = view.note_y(note.beat_end, group) if note.is_hold else y_head
-        top = min(y_head, y_tail)
-        bottom = max(y_head, y_tail)
-        if note.is_hold:
-            if abs(bottom - top) < TAP_MIN_PX:
-                # 退化成一个点时向上补足：起始位置始终贴在它的时间网格线上
-                top = bottom - TAP_MIN_PX
-            style = "hold"
-        else:
-            # 单键：细矩形以判定时刻为垂直中点，白色横线正好压在节拍线上
-            top = y_head - TAP_MIN_PX / 2.0
-            bottom = y_head + TAP_MIN_PX / 2.0
-            style = "tap"
+        shape = lane_note_geometry(note, view)
+        x0, x1 = shape.x0, shape.x1
+        y_head, top, bottom = shape.y_head, shape.top, shape.bottom
+        style = "hold" if note.is_hold else "tap"
         if bottom < y_min or top > y_max:
             return
-        self._hit_entries.append((note, (x0, top, x1, bottom), None))
+        self._hit_entries.append((note, shape.bounds, None))
         if style == "hold":
             # 长按：实心蓝色矩形打底，上面画白色竖线（粗细固定）+ 开头白横线
             self.scene.rect(
@@ -770,23 +764,15 @@ class Renderer:
     def _region_edge_color(self, note: MouseRegion) -> str:
         return self.theme.forbidden_edge if self._region_is_forbidden(note) else self.theme.region_edge
 
-    @staticmethod
-    def _blend_glow(top: str, bottom: str) -> str:
-        """两层半透明填充重叠处的发光色（叠加后比任何一层单独时都亮）。
-
-        单层填充用 stipple_fill（50% 点阵）铺满色，观感约等于 0.5×颜色；重叠处
-        换成两层颜色相加的点阵色，重叠区域的点明显更亮（达到上限就取 255），
-        也就是“两个发光体叠在一起”的效果。
-        """
-        def rgb(value: str) -> Tuple[int, int, int]:
-            value = value.lstrip("#")
-            return int(value[0:2], 16), int(value[2:4], 16), int(value[4:6], 16)
-
-        mixed = tuple(
-            min(255, top_channel + bottom_channel)
-            for top_channel, bottom_channel in zip(rgb(top), rgb(bottom))
-        )
-        return "#%02x%02x%02x" % mixed
+    def _overlap_color(self, first: MouseRegion, second: MouseRegion) -> Tuple[int, str]:
+        """返回一对可见区域的补丁优先级和图元图层对应的预设颜色。"""
+        first_forbidden = self._region_is_forbidden(first)
+        second_forbidden = self._region_is_forbidden(second)
+        if first_forbidden != second_forbidden:
+            return MIXED_OVERLAP_LAYER, self.theme.mixed_overlap_fill
+        if first_forbidden:
+            return FORBIDDEN_MULTI_LAYER, self.theme.forbidden_multi_fill
+        return REGION_MULTI_LAYER, self.theme.region_multi_fill
 
     def _region_geometry(
         self,
@@ -798,7 +784,7 @@ class Renderer:
         samples: int,
     ):
         """空域 / 禁区的可见多边形、原始边界点与包围盒；完全在屏幕外时返回 None。"""
-        group = self._group(chart, view, note)
+        group = view.display_group(note)
         if not self._region_may_be_visible(note, chart, group, view, y_min, y_max):
             return None
         samples = self._region_sample_count(note, group, view, samples)
@@ -823,15 +809,16 @@ class Renderer:
         y_max: float,
         samples: int,
     ) -> None:
-        """空域 / 禁区：先画半透明填充，再补两两重叠处的发光色，最后画边线。
+        """空域 / 禁区：先画单层填充，再补两两重叠色，最后画边线。
 
         Tk 的点阵（stipple）相位固定：同相位的两层半透明填充会互相遮盖，
-        按顺序画会变成“只看见上面那层”。所以在重叠处补一块两层相加的亮色，
-        让叠加处比任何一层单独时都更亮（发光叠加，与演示视图的叠加观感一致）。
+        按顺序画会变成“只看见上面那层”。所以简单遍历全部实际显示的可见区域，
+        在重叠处按预设优先级选择空禁混合 / 多重禁区 / 多重空域颜色。
         """
         theme = self.theme
         pane = mouse_pane_rect(view)
         # 1) 半透明填充：登记命中区域，并留下多边形供重叠处使用
+        self.scene.set_layer(REGION_FILL_LAYER)
         drawn = []
         for note in notes:
             item = self._region_geometry(note, chart, view, y_min, y_max, samples)
@@ -847,33 +834,58 @@ class Renderer:
                 stipple=theme.stipple_fill,
             )
             drawn.append((note, visible, points, bounds))
-        # 2) 重叠处：发光叠加（两层颜色相加，比单独一层更亮）
-        patches = 0
+        # 2) 重叠处：简单遍历所有实际显示的可见对象。补丁按预设优先级
+        # 从低到高分图层绘制，复杂交集用逐行条带兜底。
+        patches: List[Tuple[int, str, str, str, object]] = []
         for index, (note_a, poly_a, _points_a, bounds_a) in enumerate(drawn):
-            if patches >= MAX_OVERLAP_PATCHES:
-                break
             for note_b, poly_b, _points_b, bounds_b in drawn[index + 1:]:
-                if patches >= MAX_OVERLAP_PATCHES:
-                    break
                 if (
                     bounds_a[0] > bounds_b[2] or bounds_b[0] > bounds_a[2]
                     or bounds_a[1] > bounds_b[3] or bounds_b[1] > bounds_a[3]
                 ):
                     continue
+                layer, color = self._overlap_color(note_a, note_b)
                 patch = polygon_overlap(poly_a, poly_b, band=(y_min, y_max))
-                if patch is None:
+                if patch is not None:
+                    patches.append((layer, color, note_a.id, note_b.id, patch))
                     continue
-                self.scene.polygon(
-                    f"region-overlap:{note_a.id}:{note_b.id}",
-                    patch,
-                    fill=self._blend_glow(
-                        self._region_fill_color(note_b), self._region_fill_color(note_a)
-                    ),
+                for strip_index, rect in enumerate(
+                    polygon_overlap_strips(
+                        poly_a, poly_b, step=OVERLAP_STRIP_STEP, band=(y_min, y_max)
+                    )
+                ):
+                    patches.append(
+                        (layer, color, note_a.id, note_b.id, (strip_index, rect))
+                    )
+        patches.sort(key=lambda item: item[0])
+        current_layer = None
+        for layer, color, note_a, note_b, geometry in patches:
+            if layer != current_layer:
+                self.scene.set_layer(layer)
+                current_layer = layer
+            if (
+                isinstance(geometry, tuple)
+                and len(geometry) == 2
+                and isinstance(geometry[0], int)
+            ):
+                strip_index, rect = geometry
+                self.scene.rect(
+                    f"region-overlap:{note_a}:{note_b}:strip:{strip_index}",
+                    *rect,
+                    fill=color,
                     outline="",
                     stipple=theme.stipple_fill,
                 )
-                patches += 1
+            else:
+                self.scene.polygon(
+                    f"region-overlap:{note_a}:{note_b}",
+                    geometry,
+                    fill=color,
+                    outline="",
+                    stipple=theme.stipple_fill,
+                )
         # 3) 边界线 / 选中框 / 标签
+        self.scene.set_layer(REGION_EDGE_LAYER)
         for note, _visible, points, bounds in drawn:
             half = len(points) // 2
             left_edge = points[:half]
@@ -916,33 +928,27 @@ class Renderer:
     def _draw_slide(
         self,
         note: MouseSlide,
-        chart: Chart,
         view: ViewState,
         selected: bool,
         y_min: float = -1e9,
         y_max: float = 1e9,
     ) -> None:
         theme = self.theme
-        group = self._group(chart, view, note)
-        y = view.note_y(note.beat, group)
+        shape = slide_geometry(note, view)
+        if shape is None:
+            return
+        y = shape.y
         if y < y_min or y > y_max:
             return
         leftward = note.direction < 0
         fill = theme.slide_left_fill if leftward else theme.slide_fill
         edge = theme.slide_left_edge if leftward else theme.slide_edge
-        x_start = view.norm_to_x(note.x_start)
-        x_end = view.norm_to_x(note.x_end)
+        x_start = shape.x_start
+        x_end = shape.x_end
         min_dx = max(18.0, config.MIN_SLIDE_SPAN * view.layout.mouse_width)
-        # 方框按实际长度显示（只留 1.5px 的可见下限）
-        x0, x1 = min(x_start, x_end), max(x_start, x_end)
-        if x1 - x0 < 3.0:
-            x1 = x0 + 3.0
+        x0, x1 = shape.x0, shape.x1
         pane = mouse_pane_rect(view)
-        bounds = clip_bounds(
-            (x0 - 1.5, y - SLIDE_MIN_PX / 2, x1 + 1.5, y + SLIDE_MIN_PX / 2), pane
-        )
-        if bounds is None:
-            return
+        bounds = shape.bounds
         self._hit_entries.append((note, bounds, None))
         self.scene.rect(
             f"slide:{note.id}",
@@ -959,9 +965,8 @@ class Renderer:
         # 箭头按真实位置裁剪到显示范围：Tk 会把箭头头画在（裁剪后）最后一个坐标上，
         # 所以只有真实的箭头端在显示范围内时才带头，否则只画可见的线段部分，
         # 避免在面板边上出现一个假的箭头头。
-        direction = 1.0 if x_end >= x_start else -1.0
         arrow_from = x_start
-        arrow_to = x_start + direction * max(abs(x_end - x_start), min_dx)
+        arrow_to = x_start + shape.direction * max(abs(x_end - x_start), min_dx)
         if not (pane[0] - 0.5 <= arrow_to <= pane[2] + 0.5):
             # 最小长度补足伸出显示范围：退回真实终点（真实终点在内时仍能看见箭头头）
             arrow_to = x_end
@@ -1189,16 +1194,15 @@ class Renderer:
                         arrow="last" if head_inside else "none",
                         arrowshape=(12, 14, 5),
                     )
-        if pending.hint:
-            self.scene.text(
-                "pending:hint",
-                layout.play_left + 8,
-                layout.play_top + 46,
-                pending.hint,
-                fill=theme.pending,
-                font=theme.font(theme.font_normal, bold=True),
-                anchor="nw",
-            )
+        self.scene.text(
+            "pending:hint",
+            layout.play_left + 8,
+            layout.play_top + 46,
+            pending.hint or config.TOOL_HINTS[config.TOOL_SELECT],
+            fill=theme.pending,
+            font=theme.font(theme.font_normal, bold=True),
+            anchor="nw",
+        )
         if pending.clipboard and pending.clipboard_beat is not None:
             self._draw_clipboard_ghost(chart, view, pending)
 

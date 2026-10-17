@@ -52,6 +52,11 @@ class Theme:
     # 禁区：几何与空域相同，画成红色（半透明红底 + 红色边线）
     forbidden_fill: str = "#e0392b"
     forbidden_edge: str = "#ff5140"
+    # 空域 / 禁区重叠色，按优先级从高到低：
+    # 空域 + 禁区 > 多重禁区 > 多重空域 > 单层禁区 > 单层空域
+    mixed_overlap_fill: str = "#ffa6ff"
+    forbidden_multi_fill: str = "#ff7256"
+    region_multi_fill: str = "#5edaff"
     slide_fill: str = "#25c06b"
     slide_edge: str = "#25e07f"
     # 向左滑键：半透明黄色（与向右的绿色区分开）
@@ -132,7 +137,7 @@ def apply_theme(root: tk.Misc, theme: Theme) -> ttk.Style:
         "Tool.TButton",
         background=theme.panel_alt,
         foreground=theme.text,
-        padding=(10, 6),
+        padding=(5, 3),
         font=font,
     )
     style.map(
@@ -143,7 +148,7 @@ def apply_theme(root: tk.Misc, theme: Theme) -> ttk.Style:
         "Active.Tool.TButton",
         background=theme.accent,
         foreground=theme.bg,
-        padding=(10, 6),
+        padding=(5, 3),
         font=theme.font(theme.font_normal, bold=True),
     )
     style.map("Active.Tool.TButton", background=[("active", theme.judge_glow)])
@@ -153,7 +158,7 @@ def apply_theme(root: tk.Misc, theme: Theme) -> ttk.Style:
         foreground=theme.text,
         bordercolor=theme.lane_border,
         arrowcolor=theme.text,
-        padding=(10, 5),
+        padding=(6, 3),
         font=font,
     )
     style.map(
@@ -176,6 +181,14 @@ def apply_theme(root: tk.Misc, theme: Theme) -> ttk.Style:
         font=theme.font(theme.font_normal, bold=True),
     )
     style.map("Accent.TButton", background=[("active", theme.judge_glow)])
+    style.configure(
+        "Toolbar.Accent.TButton",
+        background=theme.accent,
+        foreground=theme.bg,
+        padding=(6, 3),
+        font=theme.font(theme.font_small, bold=True),
+    )
+    style.map("Toolbar.Accent.TButton", background=[("active", theme.judge_glow)])
     style.configure(
         "TEntry",
         fieldbackground=theme.bg,

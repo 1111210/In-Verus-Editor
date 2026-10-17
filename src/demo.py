@@ -13,7 +13,8 @@ from typing import List, Tuple
 
 import config
 from chart_io import load_chart, save_chart
-from model.chart import Chart, EditorSettings, Metadata
+from editor_settings import EditorSettings
+from model.chart import Chart, Metadata
 from model.document import Document
 from model.notes import BoundaryCurve, LaneNote, MouseRegion, MouseSlide
 from model.speed import SpeedSegment

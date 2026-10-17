@@ -50,7 +50,7 @@ class Scene:
                 pass
         self._z_dirty = False
 
-    # ------------------------------------------------------------------ 兼容
+    # ------------------------------------------------------------ 平台选项降级
     _OPTIONAL_OPTIONS = ("dash", "stipple", "arrowshape", "smooth", "outlineoffset")
 
     def _safe(self, options: Dict[str, Any]) -> Dict[str, Any]:

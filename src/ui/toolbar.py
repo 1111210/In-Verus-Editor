@@ -1,14 +1,13 @@
 """顶部工具栏：把相似的工具合并成分组，具体功能收进二级菜单。
 
-顶栏只保留几个分组入口 + 播放/暂停 + 快速缩放（全部是黑底按钮，弹出的二级菜单也是黑底）：
+顶栏只保留几个分组入口 + 网格 / 倍速输入 + 播放（全部是黑底，二级菜单也是黑底）：
 
 * 文件   —— 新建 / 打开 / 保存 / 另存为
 * 编辑   —— 撤销 / 重做 / 剪切 / 复制 / 粘贴 / 镜像 / 删除 / 全选（编辑物件是顶栏独立按钮）
 * 放置   —— 选择、单轨、多轨、长按、空域、禁区、左右滑键（二级菜单里可勾选）
 * 视图   —— 缩放、时间网格细分、横向辅助网格、跳转、全屏
-* 谱面信息 —— 元数据、BPM 与偏移
-* 速度组 / 编辑器设置 —— 单击直接打开对应面板
-* 帮助   —— 操作指南、快捷键
+* 谱面信息 —— 元数据、BPM 与偏移、速度组
+* 其他设置 —— 设置、演示设置、修改快捷键
 
 不保留系统菜单栏；演示模式下工具栏会隐藏，此时可用 Esc 返回编辑。
 """
@@ -23,6 +22,7 @@ from typing import Callable, Dict, List, Optional, Tuple
 import config
 from metronome import LABELS as METRONOME_LABELS
 from metronome import MODE_BAR, MODE_BEAT, MODE_OFF
+from shortcuts import normalize_shortcut
 from .theme import Theme
 
 
@@ -33,6 +33,7 @@ class Entry:
     label: str = ""
     command: Optional[Callable[[], None]] = None
     accelerator: str = ""
+    accelerator_fn: Optional[Callable[[], str]] = None
     enabled: Optional[Callable[[], bool]] = None
     checked: Optional[Callable[[], bool]] = None
     separator: bool = False
@@ -54,7 +55,7 @@ class Group:
 
 class Toolbar(ttk.Frame):
     def __init__(self, parent, app, theme: Theme) -> None:
-        super().__init__(parent, padding=(8, 6, 8, 6), style="TFrame")
+        super().__init__(parent, padding=(6, 3, 6, 3), style="TFrame")
         self.app = app
         self.theme = theme
         self.root: tk.Misc = app.root
@@ -71,10 +72,12 @@ class Toolbar(ttk.Frame):
         # 缓存上一次真正写入菜单/按钮的值：每帧无脑 entryconfigure 会导致菜单频闪
         self._last_entry_state: List[Optional[Tuple[str, Optional[bool]]]] = []
         self._last_entry_labels: List[Optional[str]] = []
+        self._last_entry_accelerators: List[Optional[str]] = []
         self._last_labels: Dict[int, str] = {}
         self._last_play_text: Optional[str] = None
-        self._last_place_text: Optional[str] = None
         self._last_rate_text: Optional[str] = None
+        self._rate_editing = False
+        self._grid_editing = False
         # 原生弹出菜单期间暂停画布重绘（见 is_menu_posted 的说明）
         self._menu_open = False
         self._groups = self._build_groups()
@@ -93,27 +96,80 @@ class Toolbar(ttk.Frame):
         has_clipboard = lambda: bool(app.document.clipboard) and not app.demo_mode  # noqa: E731
 
         # 撤销 / 重做保留引用：菜单文字随动作名动态更新（见 sync / _set_entry_label）
-        self._undo_entry = Entry("撤销", app.undo, "Ctrl+Z", enabled=can_undo)
-        self._redo_entry = Entry("重做", app.redo, "Ctrl+Y", enabled=can_redo)
+        self._undo_entry = Entry(
+            "撤销", app.undo, accelerator_fn=lambda: app.shortcut_text("undo"),
+            enabled=can_undo,
+        )
+        self._redo_entry = Entry(
+            "重做", app.redo, accelerator_fn=lambda: app.shortcut_text("redo"),
+            enabled=can_redo,
+        )
 
         # 「文件」与「编辑」整合成一个一级菜单
         document_group = Group("文件 / 编辑", [
-            Entry("新建谱面", app.new_chart, "Ctrl+N"),
-            Entry("打开谱面…", app.open_chart, "Ctrl+O"),
+            Entry(
+                "新建谱面", app.new_chart,
+                accelerator_fn=lambda: app.shortcut_text("new"),
+            ),
+            Entry(
+                "打开谱面…", app.open_chart,
+                accelerator_fn=lambda: app.shortcut_text("open"),
+            ),
+            Entry(
+                "快速打开上次谱面", app.open_last_chart,
+                accelerator_fn=lambda: app.shortcut_text("open_last"),
+            ),
             Entry(separator=True),
-            Entry("保存", lambda: app.save_chart(False), "Ctrl+S"),
-            Entry("另存为…", lambda: app.save_chart(True), "Ctrl+Shift+S"),
+            Entry(
+                "保存", lambda: app.save_chart(False),
+                accelerator_fn=lambda: app.shortcut_text("save"),
+            ),
+            Entry(
+                "另存为…", lambda: app.save_chart(True),
+                accelerator_fn=lambda: app.shortcut_text("save_as"),
+            ),
             Entry(separator=True),
             self._undo_entry,
             self._redo_entry,
             Entry(separator=True),
-            Entry("剪切", app.cut_selection, "Ctrl+X", enabled=has_selection),
-            Entry("复制", app.copy_selection, "Ctrl+C", enabled=has_selection),
-            Entry("粘贴", app.begin_paste, "Ctrl+V", enabled=has_clipboard),
-            Entry("沿中轴线镜像", app.mirror_selection, "M", enabled=has_selection),
+            Entry(
+                "剪切", app.cut_selection,
+                accelerator_fn=lambda: app.shortcut_text("cut"),
+                enabled=has_selection,
+            ),
+            Entry(
+                "复制", app.copy_selection,
+                accelerator_fn=lambda: app.shortcut_text("copy"),
+                enabled=has_selection,
+            ),
+            Entry(
+                "粘贴", app.begin_paste,
+                accelerator_fn=lambda: app.shortcut_text("paste"),
+                enabled=has_clipboard,
+            ),
+            Entry(
+                "沿中轴线镜像",
+                app.mirror_selection,
+                enabled=has_selection,
+                accelerator_fn=lambda: app.shortcut_text("mirror"),
+            ),
+            Entry(
+                "编辑选中物件",
+                app.edit_selected,
+                enabled=single_selection,
+                accelerator_fn=lambda: app.shortcut_text("edit_selected"),
+            ),
             Entry(separator=True),
-            Entry("删除", app.delete_selection, "Delete", enabled=has_selection),
-            Entry("全选", app.select_all, "Ctrl+A", enabled=not_demo),
+            Entry(
+                "删除", app.delete_selection,
+                accelerator_fn=lambda: app.shortcut_text("delete"),
+                enabled=has_selection,
+            ),
+            Entry(
+                "全选", app.select_all,
+                accelerator_fn=lambda: app.shortcut_text("select_all"),
+                enabled=not_demo,
+            ),
             Entry(separator=True),
             Entry("自动检查…", app.run_auto_check, enabled=not_demo),
             Entry(separator=True),
@@ -124,20 +180,31 @@ class Toolbar(ttk.Frame):
             Entry(
                 config.TOOL_LABELS[tool],
                 (lambda t=tool: app.set_tool(t)),
-                str(index),
                 enabled=not_demo,
                 checked=(lambda t=tool: app.controller.tool == t),
+                accelerator_fn=lambda t=tool: app.shortcut_text(f"tool:{t}"),
             )
-            for index, tool in enumerate(config.TOOL_ORDER, start=1)
+            for tool in config.TOOL_ORDER
         ] + [
             Entry(separator=True),
-            Entry("取消当前放置流程", app.cancel_pending, "Esc"),
+            Entry(
+                "取消当前放置流程", app.cancel_pending,
+                accelerator_fn=lambda: app.shortcut_text("escape"),
+            ),
             Entry("清空选择", app.clear_selection),
         ])
 
         zoom_options = [
-            Entry("放大", lambda: app.zoom(1 / config.ZOOM_STEP), "+"),
-            Entry("缩小", lambda: app.zoom(config.ZOOM_STEP), "-"),
+            Entry(
+                "放大",
+                lambda: app.zoom(1 / config.ZOOM_STEP),
+                accelerator_fn=lambda: app.shortcut_text("zoom_in"),
+            ),
+            Entry(
+                "缩小",
+                lambda: app.zoom(config.ZOOM_STEP),
+                accelerator_fn=lambda: app.shortcut_text("zoom_out"),
+            ),
             Entry("重置缩放", app.reset_zoom),
         ]
         grid_choices = (1, 2, 3, 4, 6, 8, 12, 16, 24, 32, 48, 64)
@@ -145,7 +212,7 @@ class Toolbar(ttk.Frame):
             Entry(
                 f"1/{value}",
                 (lambda v=value: app.set_grid_division(str(v))),
-                checked=(lambda v=value: app.document.chart.settings.grid_division == v),
+                checked=(lambda v=value: app.editor_settings.grid_division == v),
             )
             for value in grid_choices
         ] + [
@@ -153,19 +220,19 @@ class Toolbar(ttk.Frame):
             Entry(
                 "",
                 app.set_grid_division_custom,
-                checked=lambda: app.document.chart.settings.grid_division not in grid_choices,
+                checked=lambda: app.editor_settings.grid_division not in grid_choices,
                 label_fn=lambda: (
-                    f"自定义… · 当前 1/{app.document.chart.settings.grid_division}"
+                    f"自定义… · 当前 1/{app.editor_settings.grid_division}"
                 ),
             ),
         ]
         hgrid_options = [Entry("关闭", lambda: app.set_horizontal_divisions("0"),
-                               checked=lambda: app.document.chart.settings.horizontal_divisions == 0)]
+                               checked=lambda: app.editor_settings.horizontal_divisions == 0)]
         hgrid_options += [
             Entry(
                 f"{value} 等分",
                 (lambda v=value: app.set_horizontal_divisions(str(v))),
-                checked=(lambda v=value: app.document.chart.settings.horizontal_divisions == v),
+                checked=(lambda v=value: app.editor_settings.horizontal_divisions == v),
             )
             for value in (2, 3, 4, 6, 8, 10, 12, 16)
         ]
@@ -184,46 +251,59 @@ class Toolbar(ttk.Frame):
             Entry(
                 "侧轨高亮",
                 app.toggle_side_lane_highlight,
-                checked=lambda: app.document.chart.settings.side_lane_highlight,
+                checked=lambda: app.editor_settings.side_lane_highlight,
             ),
             Entry(
                 "显示更早的物件",
                 app.toggle_show_past_notes,
-                checked=lambda: app.document.chart.settings.show_past_notes,
+                checked=lambda: app.editor_settings.show_past_notes,
             ),
             Entry(
                 "忽略速度组",
                 app.toggle_ignore_speed_groups,
-                checked=lambda: app.document.chart.settings.ignore_speed_groups,
+                checked=lambda: app.editor_settings.ignore_speed_groups,
             ),
             Entry(separator=True),
-            Entry("跳到开头", lambda: app.jump(0.0), "Home"),
-            Entry("跳到结尾", lambda: app.jump(app.document.chart.beat_bounds()[1]), "End"),
+            Entry(
+                "播放 / 暂停",
+                app.toggle_play,
+                label_fn=lambda: "暂停" if app.audio.is_playing else "播放",
+                accelerator_fn=lambda: app.shortcut_text("play"),
+            ),
+            Entry(
+                "演示模式（已弃用）",
+                app.toggle_demo,
+                checked=lambda: app.demo_mode,
+                accelerator_fn=lambda: app.shortcut_text("demo"),
+            ),
             Entry(separator=True),
-            Entry("播放 / 暂停", app.toggle_play, "空格",
-                  label_fn=lambda: "暂停" if app.audio.is_playing else "播放"),
-            Entry("演示模式（已弃用）", app.toggle_demo,
-                  checked=lambda: app.demo_mode),
-            Entry(separator=True),
-            Entry("最大化 / 还原窗口", app.toggle_maximize, "F10",
-                  checked=lambda: app.maximized),
-            Entry("全屏切换", app.toggle_fullscreen, "F11",
-                  checked=lambda: app.fullscreen),
+            Entry(
+                "最大化 / 还原窗口",
+                app.toggle_maximize,
+                checked=lambda: app.maximized,
+                accelerator_fn=lambda: app.shortcut_text("maximize"),
+            ),
+            Entry(
+                "全屏切换",
+                app.toggle_fullscreen,
+                checked=lambda: app.fullscreen,
+                accelerator_fn=lambda: app.shortcut_text("fullscreen"),
+            ),
         ])
 
-        # 顶栏顺序：文件/编辑 → 谱面信息 → 放置物件 → 编辑物件 → 视图 → 速度组
-        #           → 音效 → 编辑器设置（帮助收在这里）→ 播放（固定在右端）
+        # 顶栏顺序：文件/编辑 → 谱面信息 → 放置物件 → 编辑物件 → 视图
+        #           → 音效 → 其他设置；播放与数值输入固定在右端。
         edit_note_group = Group("编辑物件", direct_command=app.edit_selected, enabled=single_selection)
         chart_group = Group("谱面信息", [
             Entry("元数据设置…", app.edit_metadata, enabled=not_demo),
             Entry("BPM 与偏移…", app.edit_timing, enabled=not_demo),
+            Entry("速度组设置…", app.edit_speed_groups, enabled=not_demo),
         ])
-        speed_group = Group("速度组", direct_command=app.edit_speed_groups, enabled=not_demo)
         sound_group = Group("音效", [
             Entry(
                 "打击音效",
                 app.toggle_hit_sound,
-                checked=lambda: app.document.chart.settings.hit_enabled,
+                checked=lambda: app.editor_settings.hit_enabled,
             ),
             Entry(
                 "节拍音",
@@ -231,7 +311,7 @@ class Toolbar(ttk.Frame):
                     Entry(
                         METRONOME_LABELS[mode],
                         (lambda m=mode: app.set_metronome(m)),
-                        checked=(lambda m=mode: app.document.chart.settings.metronome == m),
+                        checked=(lambda m=mode: app.editor_settings.metronome == m),
                     )
                     for mode in (MODE_OFF, MODE_BAR, MODE_BEAT)
                 ],
@@ -239,13 +319,10 @@ class Toolbar(ttk.Frame):
             Entry(separator=True),
             Entry("音量…", app.edit_volumes),
         ])
-        # 帮助（操作指南 / 快捷键）收进「编辑器设置」菜单里
-        editor_group = Group("编辑器设置", [
+        editor_group = Group("其他设置", [
             Entry("编辑器设置…", app.edit_settings),
             Entry("演示视图设置…（已弃用）", app.edit_demo_view_settings),
-            Entry(separator=True),
-            Entry("操作指南…", app.show_guide),
-            Entry("快捷键…", app.show_shortcuts),
+            Entry("修改快捷键…", app.edit_shortcuts),
         ])
 
         return [
@@ -254,7 +331,6 @@ class Toolbar(ttk.Frame):
             place_group,
             edit_note_group,
             view_group,
-            speed_group,
             sound_group,
             editor_group,
         ]
@@ -262,36 +338,88 @@ class Toolbar(ttk.Frame):
     # ------------------------------------------------------------------ 构建
     def _build_widgets(self) -> None:
         app = self.app
-        # 右侧固定区（不参与横向滚动）：快速缩放 + 帮助，保证窗口再窄也不会被挤掉
+        # 右侧固定区（不参与横向滚动）：时间网格 / 倍速 / 播放。
         self._right = ttk.Frame(self)
         self._right.pack(side="right", fill="y")
         # 播放按钮固定在工具栏最右端
         self.btn_play = ttk.Button(
-            self._right, text="▶ 播放", style="Accent.TButton",
+            self._right, text="▶ 播放", style="Toolbar.Accent.TButton",
             command=self._with_focus(app.toggle_play),
         )
         self.btn_play.pack(side="right", padx=(8, 0))
-        # 播放倍速：［−］［当前倍速］［＋］；0.1x 一档，0.1x 以下细到 0.01x
-        # （范围 0.01 ~ 1.0x，慢放音调变低）
+        # 播放倍速：［−］［当前倍速输入］x［＋］
         ttk.Button(
-            self._right, text="+", width=3,
+            self._right, text="+", width=2, style="Tool.TButton",
             command=self._with_focus(app.increase_playback_rate),
         ).pack(side="right", padx=(4, 0))
-        self.lbl_rate = ttk.Label(
+        ttk.Label(
+            self._right, text="x", font=self.theme.font(self.theme.font_small)
+        ).pack(side="right")
+        self.entry_rate = tk.Entry(
             self._right,
-            text=config.format_rate(config.DEFAULT_RATE),
-            width=5,
-            anchor="center",
+            width=4,
+            justify="center",
+            relief="flat",
+            bd=0,
+            highlightthickness=0,
+            background="#000000",
+            foreground=self.theme.text,
+            insertbackground=self.theme.text,
+            font=self.theme.font(self.theme.font_small),
         )
-        self.lbl_rate.pack(side="right", padx=4)
+        self.entry_rate.pack(side="right", padx=2)
+        self._rate_var = tk.StringVar(value=config.format_rate_value(config.DEFAULT_RATE))
+        self.entry_rate.configure(textvariable=self._rate_var)
+        self.entry_rate.bind("<FocusIn>", lambda _e: setattr(self, "_rate_editing", True))
+        self.entry_rate.bind("<FocusOut>", self._commit_rate_entry)
+        self.entry_rate.bind("<Return>", self._commit_rate_entry)
         ttk.Button(
-            self._right, text="−", width=3,
+            self._right, text="−", width=2, style="Tool.TButton",
             command=self._with_focus(app.decrease_playback_rate),
+        ).pack(side="right")
+
+        # 时间网格：［−］1/［输入］［＋］，整体位于倍速左侧。
+        ttk.Button(
+            self._right,
+            text="+",
+            width=2,
+            style="Tool.TButton",
+            command=self._with_focus(app.increase_grid_division),
+        ).pack(side="right", padx=(8, 0))
+        self.entry_grid = tk.Entry(
+            self._right,
+            width=4,
+            justify="center",
+            relief="flat",
+            bd=0,
+            highlightthickness=0,
+            background="#000000",
+            foreground=self.theme.text,
+            insertbackground=self.theme.text,
+            font=self.theme.font(self.theme.font_small),
+        )
+        self.entry_grid.pack(side="right", padx=1)
+        self._grid_var = tk.StringVar(
+            value=str(app.editor_settings.grid_division)
+        )
+        self.entry_grid.configure(textvariable=self._grid_var)
+        self.entry_grid.bind("<FocusIn>", lambda _e: setattr(self, "_grid_editing", True))
+        self.entry_grid.bind("<FocusOut>", self._commit_grid_entry)
+        self.entry_grid.bind("<Return>", self._commit_grid_entry)
+        ttk.Label(
+            self._right, text="1/", font=self.theme.font(self.theme.font_small)
+        ).pack(side="right")
+        ttk.Button(
+            self._right,
+            text="−",
+            width=2,
+            style="Tool.TButton",
+            command=self._with_focus(app.decrease_grid_division),
         ).pack(side="right")
 
         # 左侧分组放在可横向滚动的视口里：窗口宽度不足时自动出现横向滚动条
         self._strip_canvas = tk.Canvas(
-            self, height=34, highlightthickness=0, background=self.theme.panel, bd=0
+            self, height=30, highlightthickness=0, background=self.theme.panel, bd=0
         )
         self._strip_canvas.pack(side="top", fill="x", expand=True)
         self._strip = ttk.Frame(self._strip_canvas)
@@ -307,9 +435,6 @@ class Toolbar(ttk.Frame):
         self._updating_scroll = False
         self._strip_canvas.bind("<Configure>", lambda _e: self._update_scrollbar())
         self._strip.bind("<Configure>", lambda _e: self._update_scrollbar())
-        self._strip_canvas.bind("<MouseWheel>", self._on_strip_wheel)
-        self._strip_canvas.bind("<Button-4>", lambda _e: self._strip_canvas.xview_scroll(-1, "units"))
-        self._strip_canvas.bind("<Button-5>", lambda _e: self._strip_canvas.xview_scroll(1, "units"))
 
         for group in self._groups:
             if group.direct_command is not None:
@@ -325,12 +450,48 @@ class Toolbar(ttk.Frame):
                 button = self._make_menubutton(self._strip, group)
                 self._group_buttons[group.label] = button
             button.pack(side="left", padx=(0, 4))
+        self._bind_toolbar_wheel(self)
 
     # ------------------------------------------------------------------ 滚动
     def _on_strip_wheel(self, event) -> None:
         delta = event.delta
         notches = delta / 120.0 if abs(delta) >= 120 else float(delta)
         self._strip_canvas.xview_scroll(int(-notches), "units")
+
+    def _on_strip_wheel_linux(self, event, direction: int) -> str:
+        self._strip_canvas.xview_scroll(direction, "units")
+        return "break"
+
+    def _bind_toolbar_wheel(self, widget: tk.Misc) -> None:
+        """工具栏任意子控件上滚轮都驱动横向滑条。"""
+        widget.bind("<MouseWheel>", self._on_strip_wheel, add="+")
+        widget.bind(
+            "<Button-4>",
+            lambda event: self._on_strip_wheel_linux(event, -1),
+            add="+",
+        )
+        widget.bind(
+            "<Button-5>",
+            lambda event: self._on_strip_wheel_linux(event, 1),
+            add="+",
+        )
+        for child in widget.winfo_children():
+            self._bind_toolbar_wheel(child)
+
+    def _commit_rate_entry(self, _event=None) -> None:
+        self._rate_editing = False
+        try:
+            value = float(self._rate_var.get().strip())
+        except ValueError:
+            self._rate_var.set(config.format_rate_value(self.app.audio.rate))
+            return
+        self.app.set_playback_rate(value)
+        self.sync()
+
+    def _commit_grid_entry(self, _event=None) -> None:
+        self._grid_editing = False
+        self.app.set_grid_division(self._grid_var.get())
+        self.sync()
 
     def _update_scrollbar(self) -> None:
         """内容比视口宽时显示横向滚动条（窗口变窄时自动出现）。"""
@@ -367,7 +528,7 @@ class Toolbar(ttk.Frame):
             activebackground=self.theme.accent,
             activeforeground=self.theme.bg,
             disabledforeground=self.theme.text_dim,
-            font=self.theme.font(self.theme.font_normal),
+            font=self.theme.font(self.theme.font_small),
             borderwidth=1,
             relief="flat",
         )
@@ -404,7 +565,7 @@ class Toolbar(ttk.Frame):
                 menu.add_cascade(label=entry.label, menu=submenu)
                 continue
             label = entry.label_fn() if entry.label_fn is not None else entry.label
-            accelerator = entry.accelerator or None
+            accelerator = self._entry_accelerator(entry) or None
             if entry.checked is not None:
                 var = tk.BooleanVar(value=bool(entry.checked()))
                 index = menu.index("end")
@@ -426,6 +587,12 @@ class Toolbar(ttk.Frame):
                 )
                 self._registered.append((menu, position, entry, None, False))
             self._entry_positions[id(entry)] = (menu, position)
+
+    @staticmethod
+    def _entry_accelerator(entry: Entry) -> str:
+        if entry.accelerator_fn is not None:
+            return normalize_shortcut(entry.accelerator_fn())
+        return normalize_shortcut(entry.accelerator)
 
     def _wrap_command(self, command: Optional[Callable[[], None]]):
         """菜单项被点击时先收起菜单（并记录状态），再执行动作。"""
@@ -585,6 +752,8 @@ class Toolbar(ttk.Frame):
             self._last_entry_state = [None] * len(self._registered)
         if len(self._last_entry_labels) != len(self._registered):
             self._last_entry_labels = [None] * len(self._registered)
+        if len(self._last_entry_accelerators) != len(self._registered):
+            self._last_entry_accelerators = [None] * len(self._registered)
         for position, (menu, index, entry, var, is_check) in enumerate(self._registered):
             state = "normal"
             if entry.enabled is not None and not entry.enabled():
@@ -595,6 +764,10 @@ class Toolbar(ttk.Frame):
                 if self._last_entry_labels[position] != text:
                     menu.entryconfigure(index, label=text)
                     self._last_entry_labels[position] = text
+            accelerator = self._entry_accelerator(entry)
+            if self._last_entry_accelerators[position] != accelerator:
+                menu.entryconfigure(index, accelerator=accelerator)
+                self._last_entry_accelerators[position] = accelerator
             desired = (state, checked)
             previous = self._last_entry_state[position]
             if previous == desired:
@@ -615,22 +788,20 @@ class Toolbar(ttk.Frame):
             f"重做 {document.redo_label()}".strip() if document.can_redo() else "重做",
         )
 
-        place_button = self._group_buttons.get("放置")
-        if place_button is not None:
-            text = f"放置：{config.TOOL_LABELS.get(app.controller.tool, '')} ▾"
-            if text != self._last_place_text:
-                place_button.configure(text=text)
-                self._last_place_text = text
-
         if hasattr(self, "btn_play"):
             text = "⏸ 暂停" if app.audio.is_playing else "▶ 播放"
             if text != self._last_play_text:
                 self.btn_play.configure(text=text)
                 self._last_play_text = text
-        rate_text = config.format_rate(app.audio.rate)
+        rate_text = config.format_rate_value(app.audio.rate)
         if rate_text != self._last_rate_text:
-            self.lbl_rate.configure(text=rate_text)
+            if not self._rate_editing:
+                self._rate_var.set(rate_text)
             self._last_rate_text = rate_text
+        if not self._grid_editing:
+            grid_text = str(app.editor_settings.grid_division)
+            if self._grid_var.get() != grid_text:
+                self._grid_var.set(grid_text)
         if len(self._last_direct_state) != len(self._direct_buttons):
             self._last_direct_state = [None] * len(self._direct_buttons)
         for position, (button, enabled) in enumerate(self._direct_buttons):

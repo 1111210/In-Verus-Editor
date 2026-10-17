@@ -1,12 +1,13 @@
-"""谱面：元数据 + BPM/偏移 + 编辑器设置 + 速度组 + 物件集合。"""
+"""谱面：元数据 + BPM/偏移 + 速度组 + 物件集合。"""
 
 from __future__ import annotations
 
+import copy
 from dataclasses import dataclass
 from typing import Any, Dict, Iterable, List, Optional, Sequence, Set
 
 import config
-from metronome import METRONOME_MODES, MODE_OFF
+from editor_settings import EditorSettings
 from .notes import (
     ForbiddenRegion,
     LaneNote,
@@ -46,7 +47,7 @@ class Metadata:
 
     @classmethod
     def from_dict(cls, data: Dict[str, Any] | None) -> "Metadata":
-        data = data or {}
+        data = data if isinstance(data, dict) else {}
         return cls(
             title=str(data.get("title", "未命名曲目")),
             artist=str(data.get("artist", "未知歌手")),
@@ -57,136 +58,45 @@ class Metadata:
         )
 
 
-@dataclass
-class EditorSettings:
-    """全局编辑器设置。
+def _list_item_key(item: Any) -> Optional[tuple]:
+    if not isinstance(item, dict):
+        return None
+    if "id" in item:
+        return ("id", str(item.get("id")))
+    if "start_beat" in item:
+        try:
+            return ("start_beat", round(float(item.get("start_beat")), 9))
+        except (TypeError, ValueError):
+            return None
+    return None
 
-    * zoom_seconds         —— 屏幕上同时显示多长时间内出现的物件（缩放）。
-    * grid_division        —— 时间网格：一拍细分为多少个音（正整数）。
-    * horizontal_divisions —— 鼠标平面横向辅助网格：0..1 合法区域几等分，0 表示关闭。
-    * audio_latency_ms     —— 系统音频延迟：从执行播放到硬件出声的毫秒数。
-    * metronome            —— 节拍音：off（默认）/ bar（小节）/ beat（节拍）。
-    * show_past_notes      —— 判定时刻已过的物件是否继续绘制（默认关闭）。
-    * ignore_speed_groups  —— 忽略速度组：所有物件按 1 倍恒速绘制（默认关闭）。
-      只影响编辑器里的显示与命中测试，速度组的编辑 / 保存完全不受影响。
-    * demo_*               —— 演示视图（软件渲染的游玩视角预览）的独立渲染参数：
-      物件厚度 / 流速 / 侧轨高亮。
-    """
 
-    zoom_seconds: float = config.DEFAULT_ZOOM_SECONDS
-    grid_division: int = config.DEFAULT_GRID_DIVISION
-    horizontal_divisions: int = config.DEFAULT_HORIZONTAL_DIVISIONS
-    audio_latency_ms: float = config.DEFAULT_AUDIO_LATENCY_MS
-    metronome: str = "off"
-    hit_enabled: bool = True          # 打击音效开关
-    side_lane_highlight: bool = False  # 6K 第 1 / 第 6 轨背景高亮（暗紫色）
-    show_past_notes: bool = False      # 判定时刻已过的物件继续绘制（判定线下方）
-    # 忽略速度组：绘制时把流速当作 1 倍恒定（只影响显示，不动速度组本身）
-    ignore_speed_groups: bool = False
-    # 音量（0..1）：音乐 / 节拍音 / 打击音效
-    music_volume: float = 1.0
-    metronome_volume: float = 0.6
-    hit_volume: float = 0.6
-    # 演示视图（编辑器演示模式）：软件渲染的渲染参数，随全局设置保存
-    demo_note_thickness: float = config.DEMO_NOTE_THICKNESS
-    demo_multi_thickness: float = config.DEMO_MULTI_THICKNESS
-    demo_slide_thickness: float = config.DEMO_SLIDE_THICKNESS
-    demo_speed: float = config.DEMO_SPEED
-    demo_side_lane_highlight: bool = False
-
-    def normalize(self) -> None:
-        self.zoom_seconds = min(
-            config.ZOOM_MAX_SECONDS, max(config.ZOOM_MIN_SECONDS, float(self.zoom_seconds))
-        )
-        # 没有上限：只保证时间网格至少 1 等分、横向网格不为负（0 = 关闭）
-        self.grid_division = max(config.GRID_DIVISION_MIN, int(self.grid_division))
-        self.horizontal_divisions = max(0, int(self.horizontal_divisions))
-        # 允许负数：负延迟表示声音比软件位置更早，需要反向补偿
-        self.audio_latency_ms = min(
-            config.AUDIO_LATENCY_MAX_MS,
-            max(config.AUDIO_LATENCY_MIN_MS, float(self.audio_latency_ms)),
-        )
-        if self.metronome not in METRONOME_MODES:
-            self.metronome = MODE_OFF
-        self.hit_enabled = bool(self.hit_enabled)
-        self.side_lane_highlight = bool(self.side_lane_highlight)
-        self.show_past_notes = bool(self.show_past_notes)
-        self.ignore_speed_groups = bool(self.ignore_speed_groups)
-        self.music_volume = max(0.0, min(1.0, float(self.music_volume)))
-        self.metronome_volume = max(0.0, min(1.0, float(self.metronome_volume)))
-        self.hit_volume = max(0.0, min(1.0, float(self.hit_volume)))
-        note_low, note_high, _ = config.DEMO_NOTE_THICKNESS_RANGE
-        pattern_low, pattern_high, _ = config.DEMO_PATTERN_THICKNESS_RANGE
-        speed_low, speed_high, _ = config.DEMO_SPEED_RANGE
-        self.demo_note_thickness = min(
-            note_high, max(note_low, float(self.demo_note_thickness))
-        )
-        self.demo_multi_thickness = min(
-            note_high, max(note_low, float(self.demo_multi_thickness))
-        )
-        self.demo_slide_thickness = min(
-            pattern_high, max(pattern_low, float(self.demo_slide_thickness))
-        )
-        self.demo_speed = round(min(speed_high, max(speed_low, float(self.demo_speed))), 3)
-        self.demo_side_lane_highlight = bool(self.demo_side_lane_highlight)
-
-    @property
-    def horizontal_grid_enabled(self) -> bool:
-        return self.horizontal_divisions > 0
-
-    def to_dict(self) -> Dict[str, Any]:
-        return {
-            "zoom_seconds": self.zoom_seconds,
-            "grid_division": self.grid_division,
-            "horizontal_divisions": self.horizontal_divisions,
-            "audio_latency_ms": self.audio_latency_ms,
-            "metronome": self.metronome,
-            "hit_enabled": bool(self.hit_enabled),
-            "side_lane_highlight": bool(self.side_lane_highlight),
-            "show_past_notes": bool(self.show_past_notes),
-            "ignore_speed_groups": bool(self.ignore_speed_groups),
-            "music_volume": self.music_volume,
-            "metronome_volume": self.metronome_volume,
-            "hit_volume": self.hit_volume,
-            "demo_note_thickness": self.demo_note_thickness,
-            "demo_multi_thickness": self.demo_multi_thickness,
-            "demo_slide_thickness": self.demo_slide_thickness,
-            "demo_speed": self.demo_speed,
-            "demo_side_lane_highlight": self.demo_side_lane_highlight,
-        }
-
-    @classmethod
-    def from_dict(cls, data: Dict[str, Any] | None) -> "EditorSettings":
-        data = data or {}
-        obj = cls(
-            zoom_seconds=float(data.get("zoom_seconds", config.DEFAULT_ZOOM_SECONDS)),
-            grid_division=int(data.get("grid_division", config.DEFAULT_GRID_DIVISION)),
-            horizontal_divisions=int(
-                data.get("horizontal_divisions", config.DEFAULT_HORIZONTAL_DIVISIONS)
-            ),
-            audio_latency_ms=float(data.get("audio_latency_ms", config.DEFAULT_AUDIO_LATENCY_MS)),
-            metronome=str(data.get("metronome", "off")),
-            hit_enabled=bool(data.get("hit_enabled", True)),
-            side_lane_highlight=bool(data.get("side_lane_highlight", False)),
-            show_past_notes=bool(data.get("show_past_notes", False)),
-            ignore_speed_groups=bool(data.get("ignore_speed_groups", False)),
-            music_volume=float(data.get("music_volume", 1.0)),
-            metronome_volume=float(data.get("metronome_volume", 0.6)),
-            hit_volume=float(data.get("hit_volume", 0.6)),
-            demo_note_thickness=float(
-                data.get("demo_note_thickness", config.DEMO_NOTE_THICKNESS)
-            ),
-            demo_multi_thickness=float(
-                data.get("demo_multi_thickness", config.DEMO_MULTI_THICKNESS)
-            ),
-            demo_slide_thickness=float(
-                data.get("demo_slide_thickness", config.DEMO_SLIDE_THICKNESS)
-            ),
-            demo_speed=float(data.get("demo_speed", config.DEMO_SPEED)),
-            demo_side_lane_highlight=bool(data.get("demo_side_lane_highlight", False)),
-        )
-        obj.normalize()
-        return obj
+def _merge_preserved(generated: Any, raw: Any) -> Any:
+    """把原始 JSON 中未识别的字段合回规范输出，不复活已删除的已知对象。"""
+    if isinstance(generated, dict) and isinstance(raw, dict):
+        merged = copy.deepcopy(generated)
+        for key, value in raw.items():
+            if key in merged:
+                merged[key] = _merge_preserved(merged[key], value)
+            else:
+                merged[key] = copy.deepcopy(value)
+        return merged
+    if isinstance(generated, list) and isinstance(raw, list):
+        raw_by_key = {}
+        for item in raw:
+            key = _list_item_key(item)
+            if key is not None:
+                raw_by_key[key] = item
+        merged = []
+        for index, item in enumerate(generated):
+            key = _list_item_key(item)
+            source = raw_by_key.get(key) if key is not None else None
+            if source is None and len(generated) == len(raw) and index < len(raw):
+                # 标识字段被编辑（例如 BPM 起始拍变化）时，结构数量不变仍按位置保留附加值。
+                source = raw[index]
+            merged.append(_merge_preserved(item, source))
+        return merged
+    return copy.deepcopy(generated)
 
 
 class Chart:
@@ -200,10 +110,16 @@ class Chart:
     ) -> None:
         self.metadata = metadata or Metadata()
         self.timing = timing or TimingMap([BpmSegment(0.0, config.DEFAULT_BPM, config.DEFAULT_BEATS_PER_BAR)])
+        # Editor state is owned by EditorApp.editor_settings; this attribute
+        # can reference the same object for callers that use Chart directly.
         self.settings = settings or EditorSettings()
         self.lane_notes: List[LaneNote] = []
         self.mouse_notes: List[MouseNote] = []
         self.speed_groups: List[SpeedGroup] = [SpeedGroup.default()]
+        # 读取时保留未识别 / 类型异常的字段，保存时合回到规范结构。
+        self._source_data: Optional[Dict[str, Any]] = None
+        self._unparsed_entries: Dict[str, List[Any]] = {}
+        self.load_warnings: List[str] = []
         self._id_counters: Dict[str, int] = {"L": 0, "M": 0}
         # 按判定时刻排好序的物件列表缓存：只在增删 / 编辑后重建，避免每帧排序
         self._sorted_cache: Optional[List[Note]] = None
@@ -213,7 +129,6 @@ class Chart:
         self._beat_bounds: Optional[tuple[float, float]] = None
         self._beat_bounds_for: Optional[TimingMap] = None
         self._beat_bounds_key: Optional[tuple] = None
-        self._order_revision = 0
         # 谱面内容版本号（物件增删 / 编辑 / 时间变动都会 +1；渲染与命中缓存用）
         self.revision = 0
         # 下列都是派生索引（不参与序列化）：按需建立，增删物件时同步维护
@@ -266,7 +181,6 @@ class Chart:
         self._max_note_span = None
         self._note_counts = None
         self._beat_bounds = None
-        self._order_revision += 1
         self.revision += 1
 
     def notes_by_id(self) -> Dict[str, Note]:
@@ -416,7 +330,7 @@ class Chart:
 
     # ------------------------------------------------------------------ 统计
     def beat_bounds(self) -> tuple[float, float]:
-        key = (self.timing.revision, self._order_revision)
+        key = (self.timing.revision, self.revision)
         if (
             self._beat_bounds is None
             or self._beat_bounds_for is not self.timing
@@ -450,38 +364,89 @@ class Chart:
 
     # ------------------------------------------------------------------ 序列化
     def to_dict(self) -> Dict[str, Any]:
-        return {
+        data = {
             "format": config.CHART_FORMAT,
             "version": config.CHART_FORMAT_VERSION,
             "metadata": self.metadata.to_dict(),
             "timing": self.timing.to_dict(),
-            # 注意：编辑器设置（视图 / 音效 / 编辑器设置）不写进谱面，
+            # 注意：其他设置（视图 / 音效 / 其他设置）不写进谱面，
             # 它们保存在全局配置文件里（见 global_settings.py）。
             "speed_groups": [g.to_dict() for g in self.speed_groups],
             "lanes": [n.to_dict() for n in self.sorted_notes() if isinstance(n, LaneNote)],
             "mouse": [n.to_dict() for n in self.sorted_notes() if isinstance(n, MouseNote)],
         }
+        if self._source_data is not None:
+            data = _merge_preserved(data, self._source_data)
+        for section, entries in self._unparsed_entries.items():
+            target = data.get(section)
+            if isinstance(target, list):
+                target.extend(copy.deepcopy(entries))
+        return data
 
     @classmethod
     def from_dict(cls, data: Dict[str, Any] | None) -> "Chart":
-        data = data or {}
-        chart = cls(
-            metadata=Metadata.from_dict(data.get("metadata")),  # type: ignore[arg-type]
-            timing=TimingMap.from_dict(data.get("timing")),  # type: ignore[arg-type]
-            # editor 段：读取时迁移到全局设置，保存时不写进谱面
-            settings=EditorSettings(),
-        )
-        groups_data = data.get("speed_groups") or [SpeedGroup.default().to_dict()]
-        chart.replace_speed_groups(
-            [SpeedGroup.from_dict(g) for g in groups_data]  # type: ignore[arg-type]
-        )
+        raw = data if isinstance(data, dict) else {}
+        chart = cls()
+        chart._source_data = copy.deepcopy(raw)
+
+        metadata = raw.get("metadata")
+        if isinstance(metadata, dict):
+            chart.metadata = Metadata.from_dict(metadata)
+        elif metadata is not None:
+            chart.load_warnings.append("metadata 不是对象，已使用默认元数据。")
+
+        timing = raw.get("timing")
+        if isinstance(timing, dict):
+            try:
+                chart.timing = TimingMap.from_dict(timing)
+            except Exception as exc:
+                chart.load_warnings.append(f"timing 无法解析，已使用默认时间轴：{exc}")
+        elif timing is not None:
+            chart.load_warnings.append("timing 不是对象，已使用默认时间轴。")
+
+        groups_raw = raw.get("speed_groups")
+        if groups_raw is None:
+            groups_raw = [SpeedGroup.default().to_dict()]
+        if not isinstance(groups_raw, list):
+            chart.load_warnings.append("speed_groups 不是数组，已使用默认速度组。")
+            groups_raw = [SpeedGroup.default().to_dict()]
+
+        groups = []
+        for index, group_data in enumerate(groups_raw):
+            if not isinstance(group_data, dict):
+                chart._unparsed_entries.setdefault("speed_groups", []).append(group_data)
+                chart.load_warnings.append(f"speed_groups[{index}] 不是对象，已跳过。")
+                continue
+            try:
+                groups.append(SpeedGroup.from_dict(group_data))
+            except Exception as exc:
+                chart._unparsed_entries.setdefault("speed_groups", []).append(group_data)
+                chart.load_warnings.append(f"speed_groups[{index}] 无法解析：{exc}")
+        chart.replace_speed_groups(groups or [SpeedGroup.default()])
         if not any(g.id == config.DEFAULT_GROUP_ID for g in chart.speed_groups):
             chart.speed_groups.insert(0, SpeedGroup.default())
         chart.speed_groups.sort(key=lambda g: g.id)
 
-        for raw in list(data.get("lanes", [])) + list(data.get("mouse", [])):  # type: ignore[arg-type]
-            note = note_from_dict(raw)
-            note = chart._attach(note)  # type: ignore[assignment]
+        for section in ("lanes", "mouse"):
+            section_raw = raw.get(section, [])
+            if section_raw is None:
+                section_raw = []
+            if not isinstance(section_raw, list):
+                chart.load_warnings.append(f"{section} 不是数组，已跳过。")
+                continue
+            for index, note_data in enumerate(section_raw):
+                if not isinstance(note_data, dict):
+                    chart._unparsed_entries.setdefault(section, []).append(note_data)
+                    chart.load_warnings.append(f"{section}[{index}] 不是对象，已跳过。")
+                    continue
+                try:
+                    note = note_from_dict(note_data)
+                    chart._attach(note)
+                except Exception as exc:
+                    chart._unparsed_entries.setdefault(section, []).append(note_data)
+                    chart.load_warnings.append(
+                        f"{section}[{index}] 无法解析，已跳过：{exc}"
+                    )
         chart._repair_groups()
         return chart
 

@@ -5,6 +5,7 @@
 
 from __future__ import annotations
 
+import math
 from dataclasses import dataclass, field
 from typing import List, Optional, Sequence, Tuple
 
@@ -24,13 +25,41 @@ from .view import ViewState
 TAP_MIN_PX = 9.0
 SLIDE_MIN_PX = 22.0
 REGION_SAMPLES = 40
-MIN_SLIDE_PX = 18.0
 # 半透明重叠补丁的行扫描上限：正常输入远低于它（多边形已裁剪到鼠标平面），
 # 这里只是兜底，避免异常输入生成上万多边形点
 MAX_OVERLAP_ROWS = 600
 
 Bounds = Tuple[float, float, float, float]
 Point = Tuple[float, float]
+
+
+@dataclass(frozen=True)
+class LaneNoteGeometry:
+    """6K 物件的唯一屏幕几何，供渲染与命中测试共同使用。"""
+
+    x0: float
+    x1: float
+    y_head: float
+    y_tail: float
+    top: float
+    bottom: float
+
+    @property
+    def bounds(self) -> Bounds:
+        return (self.x0, self.top, self.x1, self.bottom)
+
+
+@dataclass(frozen=True)
+class SlideGeometry:
+    """鼠标滑键的屏幕位置与已裁剪的可见包围盒。"""
+
+    y: float
+    x_start: float
+    x_end: float
+    x0: float
+    x1: float
+    direction: float
+    bounds: Bounds
 
 
 def mouse_pane_rect(view: ViewState) -> Bounds:
@@ -169,10 +198,8 @@ def hit_signature(view: ViewState) -> tuple:
         int(layout.width),
         int(layout.height),
         round(float(layout.judgment_y), 6),
-        len(view.chart.lane_notes),
-        len(view.chart.mouse_notes),
         int(getattr(view.chart, "revision", 0)),
-        bool(view.chart.settings.ignore_speed_groups),
+        bool(view.settings.ignore_speed_groups),
     )
 
 
@@ -221,7 +248,9 @@ def lane_note_pads(note: LaneNote) -> Tuple[float, float]:
     return pad, pad
 
 
-def lane_note_bounds(note: LaneNote, chart: Chart, view: ViewState) -> Bounds:
+def lane_note_geometry(note: LaneNote, view: ViewState) -> LaneNoteGeometry:
+    """计算单键 / 长按的屏幕几何，供渲染和命中测试共同使用。"""
+
     layout = view.layout
     group = view.display_group(note)
     x0, x1 = layout.lane_span(note.lane_start, note.lane_end)
@@ -229,26 +258,46 @@ def lane_note_bounds(note: LaneNote, chart: Chart, view: ViewState) -> Bounds:
     x0 += pad
     x1 -= pad
     y_head = view.note_y(note.beat_start, group)
+    y_tail = view.note_y(note.beat_end, group) if note.is_hold else y_head
+    top = min(y_head, y_tail)
+    bottom = max(y_head, y_tail)
     if note.is_hold:
-        y_tail = view.note_y(note.beat_end, group)
-        top, bottom = min(y_head, y_tail), max(y_head, y_tail)
         if bottom - top < TAP_MIN_PX:
-            bottom = top + TAP_MIN_PX
+            # 退化成一个点时向上补足：起始位置始终贴在它的时间网格线上
+            top = bottom - TAP_MIN_PX
     else:
-        # 单键：与渲染一致，以判定时刻为垂直中点
-        top, bottom = y_head - TAP_MIN_PX / 2.0, y_head + TAP_MIN_PX / 2.0
-    return x0, top, x1, bottom
+        top = y_head - TAP_MIN_PX / 2.0
+        bottom = y_head + TAP_MIN_PX / 2.0
+    return LaneNoteGeometry(x0, x1, y_head, y_tail, top, bottom)
 
 
-def slide_bounds(note: MouseSlide, chart: Chart, view: ViewState) -> Bounds:
+def lane_note_bounds(note: LaneNote, chart: Chart, view: ViewState) -> Bounds:
+    return lane_note_geometry(note, view).bounds
+
+
+def slide_geometry(note: MouseSlide, view: ViewState) -> Optional[SlideGeometry]:
+    """计算滑键的屏幕几何；完全落在鼠标平面横向范围外时返回 None。"""
+
     group = view.display_group(note)
     y = view.note_y(note.beat, group)
-    x0 = view.norm_to_x(note.x_start)
-    x1 = view.norm_to_x(note.x_end)
-    if abs(x1 - x0) < MIN_SLIDE_PX:
-        center = (x0 + x1) / 2
-        x0, x1 = center - MIN_SLIDE_PX / 2, center + MIN_SLIDE_PX / 2
-    return min(x0, x1) - 4, y - SLIDE_MIN_PX / 2, max(x0, x1) + 4, y + SLIDE_MIN_PX / 2
+    x_start = view.norm_to_x(note.x_start)
+    x_end = view.norm_to_x(note.x_end)
+    x0, x1 = min(x_start, x_end), max(x_start, x_end)
+    if x1 - x0 < 3.0:
+        x1 = x0 + 3.0
+    bounds = clip_bounds(
+        (x0 - 1.5, y - SLIDE_MIN_PX / 2, x1 + 1.5, y + SLIDE_MIN_PX / 2),
+        mouse_pane_rect(view),
+    )
+    if bounds is None:
+        return None
+    direction = 1.0 if x_end >= x_start else -1.0
+    return SlideGeometry(y, x_start, x_end, x0, x1, direction, bounds)
+
+
+def slide_bounds(note: MouseSlide, chart: Chart, view: ViewState) -> Optional[Bounds]:
+    geometry = slide_geometry(note, view)
+    return geometry.bounds if geometry is not None else None
 
 
 def region_edges(
@@ -511,6 +560,59 @@ def polygon_overlap(
     return left_points + list(reversed(right_points))
 
 
+def polygon_overlap_strips(
+    first: Sequence[Point],
+    second: Sequence[Point],
+    step: float = 2.0,
+    band: Optional[Tuple[float, float]] = None,
+) -> List[Bounds]:
+    """逐行扫描两个多边形的全部交集，返回矩形条。
+
+    这是 ``polygon_overlap`` 的通用兜底：一个扫描行允许多段交集，交集也可以
+    在纵向断开。只需要结果的正确性，不做跨行合并等性能优化。
+    """
+    if len(first) < 3 or len(second) < 3:
+        return []
+    first_ys = [p[1] for p in first]
+    second_ys = [p[1] for p in second]
+    top = max(min(first_ys), min(second_ys))
+    bottom = min(max(first_ys), max(second_ys))
+    if band is not None:
+        top = max(top, float(band[0]))
+        bottom = min(bottom, float(band[1]))
+    if bottom <= top:
+        return []
+
+    row_height = max(1e-6, float(step))
+    rows = max(1, int(math.ceil((bottom - top) / row_height)))
+    strips: List[Bounds] = []
+    for index in range(rows):
+        y0 = top + (bottom - top) * index / rows
+        y1 = top + (bottom - top) * (index + 1) / rows
+        y = (y0 + y1) / 2.0
+        first_intervals = polygon_row_intervals(first, y)
+        second_intervals = polygon_row_intervals(second, y)
+        intersections: List[Tuple[float, float]] = []
+        for a0, a1 in first_intervals:
+            for b0, b1 in second_intervals:
+                x0 = max(a0, b0)
+                x1 = min(a1, b1)
+                if x1 - x0 > 0.25:
+                    intersections.append((x0, x1))
+        if not intersections:
+            continue
+        intersections.sort()
+        merged: List[Tuple[float, float]] = []
+        for x0, x1 in intersections:
+            if merged and x0 <= merged[-1][1] + 1e-6:
+                merged[-1] = (merged[-1][0], max(merged[-1][1], x1))
+            else:
+                merged.append((x0, x1))
+        for x0, x1 in merged:
+            strips.append((x0, y0, x1, y1))
+    return strips
+
+
 def point_in_rect(px: float, py: float, bounds: Bounds, pad: float = 0.0) -> bool:
     x0, y0, x1, y1 = bounds
     return (x0 - pad) <= px <= (x1 + pad) and (y0 - pad) <= py <= (y1 + pad)
@@ -566,7 +668,7 @@ def notes_at(
     if cache is not None and cache.valid_for(view):
         hits = cache.query_point(x, y)
         return hits[:limit] if limit is not None else hits
-    show_past = bool(getattr(view.chart.settings, "show_past_notes", False))
+    show_past = bool(getattr(view.settings, "show_past_notes", False))
     hits = [
         n
         for n in view.candidate_notes(chart.sorted_notes())
@@ -591,7 +693,7 @@ def notes_in_box(
         return cache.query_box(x0, y0, x1, y1)
     left, right = min(x0, x1), max(x0, x1)
     top, bottom = min(y0, y1), max(y0, y1)
-    show_past = bool(getattr(view.chart.settings, "show_past_notes", False))
+    show_past = bool(getattr(view.settings, "show_past_notes", False))
     found: List[Note] = []
     for note in view.candidate_notes(chart.sorted_notes()):
         if not note_in_time(note, view.current_beat, show_past):

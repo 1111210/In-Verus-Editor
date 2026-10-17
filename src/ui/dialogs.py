@@ -11,10 +11,11 @@ import os
 import sys
 import tkinter as tk
 from tkinter import filedialog, messagebox, ttk
-from typing import Any, Callable, Dict, List, Optional, Sequence
+from typing import Any, Callable, Dict, List, Optional, Sequence, Tuple
 
 import config
-from model.chart import Chart, EditorSettings, Metadata
+from editor_settings import EditorSettings
+from model.chart import Chart, Metadata
 from model.document import Document
 from model.notes import (
     BoundaryCurve,
@@ -26,6 +27,16 @@ from model.notes import (
 )
 from model.speed import SpeedGroup, SpeedSegment
 from model.timing import BpmSegment, TimingMap
+from shortcuts import (
+    EDITABLE_ACTIONS,
+    FIXED_SHORTCUTS,
+    MODIFIER_TOKENS,
+    event_token,
+    format_modifiers,
+    normalize_shortcut,
+    normalize_shortcuts,
+    shortcut_signature,
+)
 from .theme import Theme
 
 
@@ -67,9 +78,10 @@ class BaseDialog(tk.Toplevel):
         buttons.pack(fill="x")
         self.buttons = buttons
         self._extra_buttons(buttons)
-        ttk.Button(buttons, text=self.ok_text, style="Accent.TButton", command=self._ok).pack(
-            side="right"
+        self.ok_button = ttk.Button(
+            buttons, text=self.ok_text, style="Accent.TButton", command=self._ok
         )
+        self.ok_button.pack(side="right")
         self.bind("<Escape>", lambda _e: self._cancel())
         self.protocol("WM_DELETE_WINDOW", self._cancel)
         self.update_idletasks()
@@ -430,11 +442,18 @@ class VolumeDialog(BaseDialog):
 
     title_text = "音量"
 
-    def __init__(self, parent: tk.Misc, theme: Theme, chart: Chart) -> None:
+    def __init__(
+        self,
+        parent: tk.Misc,
+        theme: Theme,
+        chart: Chart,
+        settings: Optional[EditorSettings] = None,
+    ) -> None:
+        source = settings or chart.settings
         self.settings = EditorSettings(
-            music_volume=chart.settings.music_volume,
-            metronome_volume=chart.settings.metronome_volume,
-            hit_volume=chart.settings.hit_volume,
+            music_volume=source.music_volume,
+            metronome_volume=source.metronome_volume,
+            hit_volume=source.hit_volume,
         )
         super().__init__(parent, theme)
 
@@ -489,18 +508,20 @@ class SettingsDialog(BaseDialog):
         parent: tk.Misc,
         theme: Theme,
         chart: Chart,
-        on_retry_audio: Optional[Callable[[], bool]] = None,
+        settings: Optional[EditorSettings] = None,
     ) -> None:
         self.chart = chart
-        self.on_retry_audio = on_retry_audio
+        source = settings or chart.settings
         self.settings = EditorSettings(
-            zoom_seconds=chart.settings.zoom_seconds,
-            grid_division=chart.settings.grid_division,
-            horizontal_divisions=chart.settings.horizontal_divisions,
-            audio_latency_ms=chart.settings.audio_latency_ms,
-            music_volume=chart.settings.music_volume,
-            metronome_volume=chart.settings.metronome_volume,
-            hit_volume=chart.settings.hit_volume,
+            zoom_seconds=source.zoom_seconds,
+            grid_division=source.grid_division,
+            horizontal_divisions=source.horizontal_divisions,
+            audio_latency_ms=source.audio_latency_ms,
+            music_volume=source.music_volume,
+            metronome_volume=source.metronome_volume,
+            hit_volume=source.hit_volume,
+            invert_wheel_scroll=source.invert_wheel_scroll,
+            invert_wheel_zoom=source.invert_wheel_zoom,
         )
         super().__init__(parent, theme)
 
@@ -531,7 +552,36 @@ class SettingsDialog(BaseDialog):
             wraplength=520,
         ).grid(row=1, column=0, columnspan=2, sticky="w", pady=(4, 0))
 
-        # 音频后端诊断：状态栏显示 silent 时可以在这里看清原因并重试
+        wheel = ttk.LabelFrame(body, text="滚轮方向", padding=8)
+        wheel.pack(fill="x", pady=(8, 0))
+        self.var_invert_wheel_scroll = tk.BooleanVar(
+            value=bool(self.settings.invert_wheel_scroll)
+        )
+        self.var_invert_wheel_zoom = tk.BooleanVar(
+            value=bool(self.settings.invert_wheel_zoom)
+        )
+        ttk.Checkbutton(
+            wheel,
+            text="反转滚轮",
+            variable=self.var_invert_wheel_scroll,
+            command=lambda: setattr(
+                self.settings,
+                "invert_wheel_scroll",
+                bool(self.var_invert_wheel_scroll.get()),
+            ),
+        ).pack(anchor="w")
+        ttk.Checkbutton(
+            wheel,
+            text="反转滚轮缩放",
+            variable=self.var_invert_wheel_zoom,
+            command=lambda: setattr(
+                self.settings,
+                "invert_wheel_zoom",
+                bool(self.var_invert_wheel_zoom.get()),
+            ),
+        ).pack(anchor="w", pady=(4, 0))
+
+        # 音频后端诊断：状态栏显示 silent 时可以在这里看清原因。
         from audio import audio_backend_name, audio_backend_state
 
         backend_box = ttk.LabelFrame(body, text="音频后端", padding=8)
@@ -540,7 +590,7 @@ class SettingsDialog(BaseDialog):
         state_text = {
             "ok": f"{audio_backend_name()}",
             "missing": "silent · 未安装 pygame（执行 pip install -r requirements.txt）",
-            "device": "silent · pygame 已安装，但音频设备打不开（检查输出设备后点下面的按钮重试）",
+            "device": "silent · pygame 已安装，但音频设备打不开（请检查系统输出设备或关闭独占声卡的软件）",
         }.get(state, state)
         ttk.Label(
             backend_box,
@@ -548,31 +598,8 @@ class SettingsDialog(BaseDialog):
             style="Dim.TLabel",
             wraplength=520,
         ).pack(anchor="w")
-        self.audio_retry_status = ttk.Label(backend_box, text="", style="Dim.TLabel", wraplength=520)
-        self.audio_retry_status.pack(anchor="w", pady=(4, 0))
-        self.btn_retry_audio = ttk.Button(
-            backend_box, text="重新初始化音频设备", command=self._retry_audio
-        )
-        self.btn_retry_audio.pack(anchor="w", pady=(6, 0))
 
         self._sync_scale_from_value()
-
-    def _retry_audio(self) -> None:
-        """重新初始化音频设备（插好耳机 / 释放独占声卡后无需重启编辑器）。"""
-        from audio import audio_backend_name, audio_setup_hint
-
-        if self.on_retry_audio is None:
-            return
-        ok = bool(self.on_retry_audio())
-        if ok:
-            self.audio_retry_status.configure(
-                text=f"✓ 已启用：{audio_backend_name()}", style="Dim.TLabel"
-            )
-        else:
-            self.audio_retry_status.configure(
-                text="✗ 仍然不可用 · " + (audio_setup_hint() or "音频后端不可用"),
-                style="Warn.TLabel",
-            )
 
     # -------------------------------------------------------------- 缩放
     @staticmethod
@@ -619,18 +646,262 @@ class SettingsDialog(BaseDialog):
             "music_volume": self.settings.music_volume,
             "metronome_volume": self.settings.metronome_volume,
             "hit_volume": self.settings.hit_volume,
+            "invert_wheel_scroll": bool(self.var_invert_wheel_scroll.get()),
+            "invert_wheel_zoom": bool(self.var_invert_wheel_zoom.get()),
         }
+        self.destroy()
+
+
+# ---------------------------------------------------------------- 快捷键设置
+class ShortcutDialog(BaseDialog):
+    """逐项录制组合键；切换项、保存和关闭窗口都会提交当前录制。"""
+
+    title_text = "修改快捷键"
+    ok_text = "保存"
+
+    def __init__(
+        self,
+        parent: tk.Misc,
+        theme: Theme,
+        shortcuts: Dict[str, str],
+    ) -> None:
+        self.shortcuts = normalize_shortcuts(shortcuts)
+        self._active_action: Optional[str] = None
+        self._captured_modifiers: set[str] = set()
+        self._labels: Dict[str, ttk.Label] = {}
+        self._buttons: Dict[str, ttk.Button] = {}
+        super().__init__(parent, theme)
+        self.cancel_button = ttk.Button(
+            self.buttons, text="取消", command=self._cancel
+        )
+        self.cancel_button.pack(side="right", padx=(0, 6))
+        self.protocol("WM_DELETE_WINDOW", self._ok)
+        self.update_idletasks()
+        self._center(parent)
+
+    def _build(self) -> None:
+        frame = ttk.Frame(self.body)
+        frame.pack(fill="both", expand=True)
+        canvas = tk.Canvas(
+            frame,
+            width=680,
+            height=480,
+            background=self.theme.panel,
+            highlightthickness=0,
+            bd=0,
+            yscrollincrement=24,
+        )
+        self._shortcut_canvas = canvas
+        scroll = ttk.Scrollbar(frame, orient="vertical", command=canvas.yview)
+        canvas.configure(yscrollcommand=scroll.set)
+        canvas.pack(side="left", fill="both", expand=True)
+        scroll.pack(side="right", fill="y")
+
+        rows = ttk.Frame(canvas)
+        self._shortcut_rows = rows
+        window = canvas.create_window((0, 0), window=rows, anchor="nw")
+        rows.columnconfigure(0, weight=1)
+        rows.columnconfigure(1, weight=0, minsize=210)
+        rows.columnconfigure(2, weight=0, minsize=80)
+
+        row = 0
+        ttk.Label(rows, text="可修改功能", style="Head.TLabel").grid(
+            row=row, column=0, columnspan=3, sticky="w", pady=(0, 4)
+        )
+        row += 1
+        for action_id, label in EDITABLE_ACTIONS:
+            ttk.Label(rows, text=label).grid(row=row, column=0, sticky="w", padx=(0, 8), pady=2)
+            value = ttk.Label(
+                rows,
+                text=self.shortcuts.get(action_id) or "未启用",
+                anchor="w",
+            )
+            value.grid(row=row, column=1, sticky="w", padx=(0, 8), pady=2)
+            button = ttk.Button(rows, text="设置", width=8)
+            button.configure(command=lambda action=action_id: self._toggle_capture(action))
+            button.grid(row=row, column=2, sticky="e", pady=1)
+            self._labels[action_id] = value
+            self._buttons[action_id] = button
+            row += 1
+
+        ttk.Separator(rows).grid(row=row, column=0, columnspan=3, sticky="ew", pady=8)
+        row += 1
+        ttk.Label(rows, text="固定快捷键", style="Head.TLabel").grid(
+            row=row, column=0, columnspan=3, sticky="w", pady=(0, 4)
+        )
+        row += 1
+        for label, value in FIXED_SHORTCUTS:
+            ttk.Label(rows, text=label).grid(row=row, column=0, sticky="w", padx=(0, 8), pady=1)
+            ttk.Label(rows, text=value, anchor="w").grid(
+                row=row, column=1, sticky="w", padx=(0, 8), pady=1
+            )
+            ttk.Label(rows, text="不可修改", style="Dim.TLabel").grid(
+                row=row, column=2, sticky="e", pady=1
+            )
+            row += 1
+
+        def update_scrollregion(_event=None) -> None:
+            canvas.configure(scrollregion=canvas.bbox("all"))
+
+        rows.bind("<Configure>", update_scrollregion)
+        canvas.bind(
+            "<Configure>",
+            lambda event: canvas.itemconfigure(window, width=event.width),
+        )
+
+        def bind_rows_wheel(widget) -> None:
+            widget.bind("<MouseWheel>", self._on_shortcut_wheel, add="+")
+            widget.bind(
+                "<Button-4>",
+                lambda event: self._on_shortcut_wheel_linux(event, -1),
+                add="+",
+            )
+            widget.bind(
+                "<Button-5>",
+                lambda event: self._on_shortcut_wheel_linux(event, 1),
+                add="+",
+            )
+            for child in widget.winfo_children():
+                bind_rows_wheel(child)
+
+        bind_rows_wheel(self)
+        self.bind("<KeyPress>", self._capture_key, add="+")
+
+    def _on_shortcut_wheel(self, event) -> str:
+        delta = event.delta
+        notches = delta / 120.0 if abs(delta) >= 120 else float(delta)
+        self._shortcut_canvas.yview_scroll(int(-notches), "units")
+        return "break"
+
+    def _on_shortcut_wheel_linux(self, _event, direction: int) -> str:
+        self._shortcut_canvas.yview_scroll(direction, "units")
+        return "break"
+
+    def _show_value(self, action_id: str) -> None:
+        value = self.shortcuts.get(action_id, "")
+        self._labels[action_id].configure(text=value or "未启用")
+        self._buttons[action_id].configure(text="设置")
+
+    def _commit_capture(self) -> None:
+        if self._active_action is None:
+            return
+        action_id = self._active_action
+        self._active_action = None
+        self._captured_modifiers.clear()
+        self._show_value(action_id)
+
+    def _toggle_capture(self, action_id: str) -> None:
+        if self._active_action == action_id:
+            self._commit_capture()
+            return
+        if self._active_action is not None:
+            self._commit_capture()
+        self._active_action = action_id
+        self._captured_modifiers.clear()
+        self._labels[action_id].configure(text="按下组合键…")
+        self._buttons[action_id].configure(text="保存此项")
+        try:
+            self.focus_set()
+        except tk.TclError:  # pragma: no cover
+            pass
+
+    def _capture_key(self, event) -> Optional[str]:
+        if self._active_action is None:
+            return None
+        if event.keysym == "Escape":
+            action_id = self._active_action
+            self._active_action = None
+            self._captured_modifiers.clear()
+            self._show_value(action_id)
+            return "break"
+        token = event_token(event.keysym)
+        if token in MODIFIER_TOKENS:
+            self._captured_modifiers.add(token)
+            text = format_modifiers(self._captured_modifiers) or "按下组合键…"
+            self._labels[self._active_action].configure(text=text)
+            return "break"
+
+        modifiers = set(self._captured_modifiers)
+        if token == "+":
+            modifiers.discard("Shift")
+        parts = [format_modifiers(modifiers), token]
+        action_id = self._active_action
+        self.shortcuts[action_id] = normalize_shortcut(
+            " ".join(part for part in parts if part)
+        )
+        self._active_action = None
+        self._captured_modifiers.clear()
+        self._show_value(action_id)
+        return "break"
+
+    def _conflict_lines(self) -> List[str]:
+        """按固定快捷键优先、其余按默认顺序列出完全相同的组合。"""
+        entries: List[Tuple[Tuple[Tuple[str, ...], str], str]] = []
+        seen: set[Tuple[Tuple[Tuple[str, ...], str], str]] = set()
+
+        def add(label: str, value: str) -> None:
+            for variant in value.split(" / "):
+                if "滚轮" in variant:
+                    continue
+                signature = shortcut_signature(variant)
+                if signature is None:
+                    continue
+                item = (signature, label)
+                if item not in seen:
+                    seen.add(item)
+                    entries.append(item)
+
+        # 固定绑定由 Tk 的具体 sequence 优先匹配。
+        for label, value in FIXED_SHORTCUTS:
+            add(label, value)
+        editable_labels = dict(EDITABLE_ACTIONS)
+        for action_id in normalize_shortcuts(self.shortcuts):
+            add(editable_labels.get(action_id, action_id), self.shortcuts[action_id])
+
+        groups: Dict[Tuple[Tuple[str, ...], str], List[str]] = {}
+        for signature, label in entries:
+            groups.setdefault(signature, []).append(label)
+
+        lines = []
+        for labels in groups.values():
+            if len(labels) < 2:
+                continue
+            winner = labels[0]
+            for other in labels[1:]:
+                lines.append(f"{winner}与{other}冲突，只会触发{winner}")
+        return lines
+
+    def _ok(self) -> None:
+        self._commit_capture()
+        conflicts = self._conflict_lines()
+        if conflicts:
+            confirmed = messagebox.askyesno(
+                "快捷键冲突",
+                "现有以下按键冲突：\n"
+                + "\n".join(conflicts)
+                + "\n确定要保存吗？",
+                parent=self,
+            )
+            if not confirmed:
+                return
+        self.result = {key: normalize_shortcut(value) for key, value in self.shortcuts.items()}
+        self.destroy()
+
+    def _cancel(self) -> None:
+        self._active_action = None
+        self._captured_modifiers.clear()
+        self.result = None
         self.destroy()
 
 
 # ---------------------------------------------------------------- 演示视图
 class DemoViewDialog(BaseDialog):
-    """编辑器设置菜单「演示视图设置…」。
+    """其他设置菜单「演示视图设置…」。
 
     只包含与画面有关的演示渲染参数（物件厚度 / 流速 / 侧轨高亮）；
     演示模式固定用软件渲染，所以这里不提供渲染后端选择。
 
-    该功能已弃用：这里只为兼容既有设置而保留，界面上会注明。
+    该对话框编辑已弃用演示视图的现有参数，界面上会注明弃用状态。
     """
 
     title_text = "演示视图设置"
@@ -1086,15 +1357,15 @@ class NoteEditDialog(BaseDialog):
 
 # ---------------------------------------------------------------- 帮助
 class HelpDialog(BaseDialog):
-    """纯文本帮助窗口（操作指南 / 快捷键共用同一套界面）。"""
+    """纯文本帮助窗口。"""
 
-    title_text = "操作指南"
+    title_text = "帮助"
     ok_text = "关闭"
 
-    def __init__(self, parent: tk.Misc, theme: Theme, title: str = "操作指南",
+    def __init__(self, parent: tk.Misc, theme: Theme, title: str = "帮助",
                  content: str = "") -> None:
         self.title_text = title
-        self.content = content or GUIDE_TEXT
+        self.content = content or ""
         super().__init__(parent, theme)
 
     def _build(self) -> None:
@@ -1125,60 +1396,6 @@ class HelpDialog(BaseDialog):
         self.destroy()
 
 
-GUIDE_TEXT = """【界面】
-编辑器把两个平面左右分栏：左边 6K 下落式、右边鼠标平面，两者共用同一条判定线与同一套时间网格，
-滚动与缩放同步。演示模式已弃用，仍可从「视图 ▾」菜单进入，进入后两个平面叠加显示，并且不可编辑。
-
-【顶栏】从左到右：文件 / 编辑、谱面信息、放置物件、编辑物件、视图、速度组、音效、编辑器设置；
-最右端是 ▶ 播放 / 暂停 与播放倍速 ［−］［1.0x］［＋］。「操作指南 / 快捷键」在「编辑器设置」菜单里。
-
-【工具】顶栏「放置物件 ▾」菜单或数字键 1-7 切换：
-1 选择 / 区域选择：拖动框选、点击选中，用于后续的剪切 / 复制 / 镜像 / 编辑 / 删除。
-2 单轨按键：点击 6K 区域，在对应轨道放置按键，时间自动吸附网格。
-3 多轨按键：先点击一条轨道再点击另一条轨道，生成跨越这两条轨道的多轨按键，时间以第一次点击为准。
-4 长按：先点击起点的轨道与时间，再点击终点。第二次点击的横坐标决定结束轨道、纵坐标决定结束时间；
-  点在鼠标区域内则只改时间、轨道不变。可以滚动或缩放后再点终点，时间自动吸附网格。
-5 空域：先点击开始时间与结束时间，再依次点击左边界起点、左边界终点、右边界起点、右边界终点，
-  最后在弹出的对话框里选择两条边界的线型，也可以微调位置。
-6 禁区：放置、编辑、拖动的操作与空域完全相同，绘制成红色半透明底与红色边线，表示需要避开的区域。
-7 左右滑键：先点击设定时间与横向位置，再点击第二次决定滑动方向，开启横向辅助网格时会吸附到网格线。
-  横向位置：启用横向辅助网格时吸附到网格线并夹进 0..1 合法区域；未启用时按鼠标真实位置放置。
-Esc 取消当前放置流程，切换工具同样会放弃未完成的操作。放置过程中会显示幽灵预览。
-
-【选择与编辑】
-选择工具下拖动即区域选择；Ctrl + 点击或框选与上次选择做对称差，两次都选中的取消选择。
-顶栏「文件 / 编辑 ▾」菜单里可以剪切、复制、粘贴、沿游玩区中轴线镜像、编辑选中物件、删除与全选。
-粘贴后点击目标时间，轨道与横向位置保持不变；编辑物件仅在单选时可用。
-
-【视图】
-拖动两个平面中间的分界线可以实时调整左右宽度，悬停时光标变成左右箭头，双击分界线恢复默认 1:3。
-滚轮每次滚动时间网格的一格，即 1 / 网格细分 拍；Shift + 滚轮一次滚动 1 拍。滚动后判定线自动吸附回网格。
-Ctrl + 滚轮、顶栏右侧的 − / + 按钮，或「视图 ▾ → 缩放」都能缩放：+ 放大，− 缩小。
-右侧竖向滚动条可以拖动或翻页移动时间轴，滑块长度即当前可视时间占比；Home / End 跳到开头 / 结尾。
-
-【速度组】
-顶栏「速度组」按钮里可新建、复制、删除组，编辑流速列表，并把当前选择加入组。
-流速列表每项是从某拍开始的「流速 = 默认速度 × 倍率」，支持 0 与负数实现停留与反向。
-删除组时组内物件回到默认组。
-
-【BPM 与偏移】
-「谱面信息 → BPM 与偏移」里每项是：从哪一拍开始、BPM、每小节拍数。
-每逢 BPM 变更一定新开一小节：变更拍不必落在上一段的小节线上，但它自己就是小节线，
-上一段末尾不完整的小节按一整节计入编号。
-「每小节拍数」填 0 表示这一段关闭小节线，只留拍线；填回正数即可恢复。
-流速可正可负并会叠加，因此物件位置不是判定时刻的单调函数：远处的物件也可能被推回判定线上，
-编辑器始终按 ∫v 的结果显示。
-
-【播放与演示】
-空格播放 / 暂停；暂停时判定线会自动吸附到时间轴刻度上。
-「音效 → 节拍音」可以打开打拍器：播放时每到小节线或整拍响一声，慢放不会改变这一声的长度，
-只有间隔跟着音乐变慢。
-「音效」菜单还能开关打击音效，并打开「音量…」窗口分别调节音乐 / 节拍音 / 打击音。
-「编辑器设置」里的系统音频延迟用于对齐画面与声音，蓝牙耳机常见 120~250 ms。
-演示模式已弃用（在「视图 ▾」菜单里，进入后工具栏隐藏、画面只读，支持滚动、缩放与播放 / 暂停），
-按 Esc 返回编辑。
-"""
-
 SHORTCUTS_TEXT = """【工具切换】
 1  选择 / 区域选择
 2  单轨按键
@@ -1190,32 +1407,35 @@ SHORTCUTS_TEXT = """【工具切换】
 Esc  取消当前放置流程，演示模式下退出演示
 
 【编辑】
-Ctrl+X  剪切选中物件
-Ctrl+C  复制选中物件
-Ctrl+V  进入粘贴模式，点击目标时间完成粘贴
-Ctrl+Z  撤销
-Ctrl+Y / Ctrl+Shift+Z  重做
-Ctrl+A  全选
+Ctrl X  剪切选中物件
+Ctrl C  复制选中物件
+Ctrl V  进入粘贴模式，点击目标时间完成粘贴
+Ctrl Z  撤销
+Ctrl Y / Ctrl Shift Z  重做
+Ctrl A  全选
 M  沿游玩区域中轴线镜像
 E  编辑选中物件
 Delete / Backspace  删除选中物件
 
 【文件】
-Ctrl+N  新建谱面
-Ctrl+O  打开谱面
-Ctrl+S  保存
-Ctrl+Shift+S  另存为
+Ctrl N  新建谱面
+Ctrl O  打开谱面
+Ctrl Shift O  快速打开上次谱面
+Ctrl S  保存
+Ctrl Shift S  另存为
 
 【视图与播放】
 滚轮  时间轴前进 / 后退一格，自动吸附网格
 Shift + 滚轮  一次滚动 1 拍
 Ctrl + 滚轮  缩放
-+ / =  放大
++  放大
 -  缩小
 ← / →  按网格步进
 PageUp / PageDown  半屏滚动
-Home / End  跳到开头 / 结尾
 空格  播放 / 暂停
 F10  最大化 / 还原窗口
 F11  无边框全屏切换
+
+可在「其他设置 → 修改快捷键」中修改工具切换、镜像、编辑物件、缩放、播放、
+时间轴步进、上下翻页、演示视图、最大化与全屏；固定快捷键只显示，不能修改。
 """

@@ -102,8 +102,7 @@ def audio_setup_hint() -> str:
     if _MIXER_ERROR:
         return (
             f"pygame 已安装，但音频设备打不开（{_MIXER_ERROR}）："
-            f"检查系统输出设备 / 关掉独占声卡的软件后重试，"
-            f"或在「编辑器设置 → 重新初始化音频设备」重试；"
+            f"请检查系统输出设备，或关闭独占声卡的软件；"
             f"当前解释器：{sys.executable}"
         )
     return ""
@@ -131,60 +130,6 @@ def _silent_reason() -> str:
 def audio_silent_reason() -> str:
     """对外：静音时的一句话原因（可用时为空串）。"""
     return "" if audio_backend_state() == "ok" else _silent_reason()
-
-
-_STARTUP_LOG_MAX_BYTES = 256 * 1024
-_STARTUP_LOG_KEEP_LINES = 200
-ENV_STARTUP_LOG = "INFALSUS_EDITOR_LOG"
-
-
-def write_startup_log(path: Optional[str] = None) -> str:
-    """把音频自检写进 _diag/audio_startup.log（排障用，失败也不影响运行）。
-
-    内容：时间、解释器、pygame / numpy 状态、失败原因、最终后端。启动时写一次，
-    用户报“没有声音”时直接看这个文件即可；超过 256 KB 时只保留最近 200 行。
-    可用环境变量 INFALSUS_EDITOR_LOG 改到别的路径（测试里会用到）。
-    """
-    import datetime
-
-    if getattr(sys, "frozen", False):      # 打包后：自检日志写在 exe 旁边
-        root = os.path.dirname(os.path.abspath(sys.executable))
-    else:
-        root = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))  # src/audio.py → 仓库根目录
-    target = path or os.environ.get(ENV_STARTUP_LOG) or os.path.join(root, "_diag", "audio_startup.log")
-    lines = [
-        f"----- {datetime.datetime.now().isoformat(timespec='seconds')} -----",
-        f"解释器：{sys.executable}",
-        f"Python：{sys.version.split()[0]}",
-        f"PYTHONHOME：{os.environ.get('PYTHONHOME', '(未设置)')}",
-        f"PYTHONPATH：{os.environ.get('PYTHONPATH', '(未设置)')}",
-        f"pygame：{'已安装 ' + _PYGAME.version.ver if _PYGAME is not None else '未安装'}"
-        + (f"（导入失败：{_PYGAME_ERROR}）" if _PYGAME_ERROR else ""),
-        f"numpy：{'已安装' if _NP is not None else '未安装'}",
-        f"音频设备：{_MIXER_ERROR or '正常'}",
-        f"状态：{audio_backend_state()} · 后端：{audio_backend_name()}",
-        "",
-    ]
-    try:
-        folder = os.path.dirname(target)
-        if folder:
-            os.makedirs(folder, exist_ok=True)
-        _trim_startup_log(target)
-        with open(target, "a", encoding="utf-8") as handle:
-            handle.write("\n".join(lines))
-    except OSError:  # pragma: no cover - 只读目录等
-        pass
-    return target
-
-
-def _trim_startup_log(target: str) -> None:
-    """日志超过上限时只保留末尾若干行，避免长期运行无限增长。"""
-    if not os.path.isfile(target) or os.path.getsize(target) <= _STARTUP_LOG_MAX_BYTES:
-        return
-    with open(target, encoding="utf-8", errors="replace") as handle:
-        tail = handle.readlines()[-_STARTUP_LOG_KEEP_LINES:]
-    with open(target, "w", encoding="utf-8") as handle:
-        handle.writelines(tail)
 
 
 def time_stretch(
@@ -527,7 +472,7 @@ class StretchedSoundBackend:  # pragma: no cover - 依赖 pygame + numpy
         if window is None:
             return
         try:
-            self._channel.queue(window[0])      # 覆盖掉旧的排队窗口
+            self._channel.queue(window[0])      # 用当前窗口替换被动队列
         except Exception:  # pragma: no cover - 依赖驱动
             return
         self._queued = window
@@ -543,7 +488,7 @@ class StretchedSoundBackend:  # pragma: no cover - 依赖 pygame + numpy
         if window is None:
             return False
         try:
-            self._channel.play(window[0])       # 顶掉当前窗口与旧排队窗口
+            self._channel.play(window[0])       # 用当前窗口替换播放队列
         except Exception:  # pragma: no cover - 依赖驱动
             return False
         self._anchor = window
@@ -953,22 +898,6 @@ class AudioPlayer:
             except Exception:
                 pass
         self.path = None
-
-    def retry_backend(self) -> bool:
-        """重新初始化音频设备（插好耳机 / 关掉独占声卡的软件后可以重试）。
-
-        返回重试后是否可用；已载入的歌曲会自动重新载入。
-        """
-        path = self.path
-        rate = self.rate
-        self.unload()
-        self._plain_backend = self._create_plain_backend()
-        self._stretch_backend = None
-        self.backend = self._plain_backend
-        self.rate = rate
-        if path:
-            return self.load(path)
-        return self.usable_audio
 
     # ------------------------------------------------------------------ 倍速
     def set_rate(self, rate: float) -> None:

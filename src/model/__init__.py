@@ -24,7 +24,8 @@ from .notes import (
     layer_rank,
 )
 from .speed import SpeedGroup, SpeedSegment
-from .chart import Chart, EditorSettings, Metadata
+from editor_settings import EditorSettings
+from .chart import Chart, Metadata
 from .document import Document
 
 __all__ = [

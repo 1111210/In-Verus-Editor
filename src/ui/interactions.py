@@ -41,6 +41,7 @@ class ToolController:
         self.region_editor = region_editor
         self.status = status
         self.tool = config.TOOL_SELECT
+        self.state.pending.hint = self._tool_hint()
         self.paste_mode = False
         self.hover: Optional[Tuple[float, float]] = None
         self._press: Optional[Tuple[float, float]] = None
@@ -67,7 +68,11 @@ class ToolController:
         if tool != self.tool:
             self.cancel_pending()
         self.tool = tool
+        self.state.pending.hint = self._tool_hint()
         self.status(f"当前工具：{config.TOOL_LABELS[tool]}")
+
+    def _tool_hint(self) -> str:
+        return config.TOOL_HINTS.get(self.tool, config.TOOL_HINTS[config.TOOL_SELECT])
 
     def cancel_pending(self) -> None:
         """放弃未完成的操作（切换工具 / Esc）。"""
@@ -82,7 +87,7 @@ class ToolController:
         pending.x_end = None
         pending.left = None
         pending.right = None
-        pending.hint = ""
+        pending.hint = self._tool_hint()
         pending.clipboard = []
         pending.clipboard_beat = None
         self._stage = 0
@@ -254,7 +259,7 @@ class ToolController:
         # 这样即使物件是在另一套横向网格下创建的，拖动后锚点也一定落在当前网格线上，
         # 而且不会改变物件自身的长度 / 宽度。
         raw_delta = self.view.x_to_norm(x) - self.view.x_to_norm(origin_x)
-        grid_on = self.view.chart.settings.horizontal_divisions > 0
+        grid_on = self.view.settings.horizontal_divisions > 0
         if beats == 0.0 and lane_delta == 0 and abs(raw_delta) < 1e-9:
             return
         rebuilt: List[Dict[str, Any]] = []
@@ -496,7 +501,7 @@ class ToolController:
         if not self.view.in_mouse_pane(x):
             return None
         value = self.view.x_to_norm(x)
-        if self.view.chart.settings.horizontal_divisions > 0:
+        if self.view.settings.horizontal_divisions > 0:
             value = self.view.snap_norm(value)
             value = min(1.0, max(0.0, value))
         return float(value)
@@ -526,8 +531,8 @@ class ToolController:
             return
         x_start = self._first_x if self._first_x is not None else x_end_value
         x_end = x_end_value
-        step = 1.0 / self.view.chart.settings.horizontal_divisions if (
-            self.view.chart.settings.horizontal_divisions > 0
+        step = 1.0 / self.view.settings.horizontal_divisions if (
+            self.view.settings.horizontal_divisions > 0
         ) else config.MIN_SLIDE_SPAN
         if abs(x_end - x_start) < 1e-9:
             # 吸附后落在同一格：用未吸附的点击位置判断方向，再按方向补一个最小跨度，
@@ -572,9 +577,8 @@ class ToolController:
     def refresh_preview(self) -> None:
         """按最后一次光标位置重算预览（主循环每帧调用）。
 
-        预览以前只在鼠标移动时更新：点击推进阶段后只要不移动鼠标，左上角提示
-        与边界就停留在上一步，一动鼠标才“跳变”。现在点击也会记录光标位置，
-        预览每帧重算，因此点击后立即反映当前阶段，不需要移动鼠标。
+        点击会记录光标位置；每帧重算使提示与边界在阶段推进后立即更新，
+        不依赖鼠标再次移动。
         """
         if self.hover is None:
             return
@@ -594,50 +598,59 @@ class ToolController:
         if tool == config.TOOL_LANE_TAP:
             if lane is None:
                 pending.tool = ""
-                pending.hint = ""
+                pending.hint = self._tool_hint()
                 return
             pending.lane_start = lane
             pending.lane_end = lane
             pending.beat_start = beat
             pending.beat_end = beat
-            pending.hint = ""
+            pending.hint = self._tool_hint()
         elif tool == config.TOOL_LANE_MULTI:
             if self._stage == 0:
                 if lane is None:
                     pending.tool = ""
-                    pending.hint = ""
+                    pending.hint = self._tool_hint()
                     return
                 pending.lane_start = lane
                 pending.lane_end = lane
                 pending.beat_start = beat
                 pending.beat_end = beat
-                pending.hint = "多轨按键：点击起点轨道"
+                pending.hint = self._tool_hint()
             else:
                 pending.lane_start = self._first_lane
                 pending.beat_start = self._first_beat
                 pending.beat_end = self._first_beat
                 pending.lane_end = lane if lane is not None else pending.lane_start
+                pending.hint = "多轨按键：请点击另一条轨道"
         elif tool == config.TOOL_LANE_HOLD:
             if self._stage == 0:
                 if lane is None:
                     pending.tool = ""
-                    pending.hint = ""
+                    pending.hint = self._tool_hint()
                     return
                 pending.lane_start = lane
                 pending.lane_end = lane
                 pending.beat_start = beat
                 pending.beat_end = beat
-                pending.hint = "长按：点击起点"
+                pending.hint = self._tool_hint()
             else:
                 pending.lane_start = self._first_lane
                 pending.beat_start = self._first_beat
                 pending.beat_end = beat
                 pending.lane_end = lane if lane is not None else self._first_lane
+                pending.hint = "长按：请点击结束轨道与结束时间"
         elif tool in (config.TOOL_MOUSE_REGION, config.TOOL_MOUSE_FORBIDDEN):
             label = self._region_label()
+            stage_hints = {
+                1: f"{label}：点击结束时间",
+                2: f"{label}：点击左边界起点",
+                3: f"{label}：点击左边界终点",
+                4: f"{label}：点击右边界起点",
+                5: f"{label}：点击右边界终点，之后选择线型",
+            }
             if not in_play:
                 pending.tool = ""
-                pending.hint = ""
+                pending.hint = stage_hints.get(self._stage, self._tool_hint())
                 return
             default_left = config.REGION_PENDING_LEFT_DEFAULT
             default_right = config.REGION_PENDING_RIGHT_DEFAULT
@@ -677,17 +690,11 @@ class ToolController:
                 right_start if right_start is not None else default_right,
                 right_end if right_end is not None else default_right,
             )
-            pending.hint = {
-                1: f"{label}：点击结束时间",
-                2: f"{label}：点击左边界起点",
-                3: f"{label}：点击左边界终点",
-                4: f"{label}：点击右边界起点",
-                5: f"{label}：点击右边界终点，之后选择线型",
-            }.get(self._stage, "")
+            pending.hint = stage_hints.get(self._stage, self._tool_hint())
         elif tool == config.TOOL_MOUSE_SLIDE:
             if not in_play:
                 pending.tool = ""
-                pending.hint = ""
+                pending.hint = self._tool_hint()
                 return
             cursor = self._slide_x(x)
             if cursor is None:
@@ -698,14 +705,15 @@ class ToolController:
                 pending.beat_start = beat
                 pending.x_start = cursor
                 pending.x_end = pending.x_start
-                pending.hint = "滑键：点击时间与起始位置"
+                pending.hint = self._tool_hint()
             else:
                 pending.beat_start = self._first_beat
                 pending.x_start = self._first_x
                 pending.x_end = cursor
+                pending.hint = "滑键：请点击终点与滑动方向"
         else:
             pending.tool = ""
-            pending.hint = ""
+            pending.hint = self._tool_hint()
 
     # ------------------------------------------------------------------ 其它
     def selection_summary(self) -> str:

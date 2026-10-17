@@ -291,9 +291,23 @@ class TimingMap:
 
     @classmethod
     def from_dict(cls, data: Dict[str, object] | None) -> "TimingMap":
-        data = data or {}
-        segs = [BpmSegment.from_dict(d) for d in data.get("bpm_segments", [])]  # type: ignore[arg-type]
-        return cls(segs or [BpmSegment()], float(data.get("offset_ms", 0.0)))
+        data = data if isinstance(data, dict) else {}
+        raw_segments = data.get("bpm_segments", [])
+        if not isinstance(raw_segments, list):
+            raw_segments = []
+        segs = []
+        for segment in raw_segments:
+            if not isinstance(segment, dict):
+                continue
+            try:
+                segs.append(BpmSegment.from_dict(segment))
+            except (TypeError, ValueError):
+                continue
+        try:
+            offset_ms = float(data.get("offset_ms", 0.0))
+        except (TypeError, ValueError):
+            offset_ms = 0.0
+        return cls(segs or [BpmSegment()], offset_ms)
 
 
 def _clean_segment(seg: BpmSegment) -> BpmSegment:

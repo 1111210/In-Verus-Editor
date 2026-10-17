@@ -65,30 +65,42 @@ RATE_FINE_MAX = 0.1
 DEFAULT_RATE = 1.0
 
 
+def clamp_rate(rate: float) -> float:
+    """夹进编辑器范围并保留至多两位小数，不量化到预设档位。"""
+    return round(max(RATE_MIN, min(RATE_MAX, float(rate))), 2)
+
+
 def quantize_rate(rate: float) -> float:
     """把倍速夹进允许范围并按所在档位取整（细档 0.01、常规档 0.1）。"""
-    value = max(RATE_MIN, min(RATE_MAX, float(rate)))
+    value = clamp_rate(rate)
     if value < RATE_FINE_MAX - 1e-9:
         return round(round(value / RATE_FINE_STEP) * RATE_FINE_STEP, 2)
     return round(round(value / RATE_STEP) * RATE_STEP, 1)
 
 
 def step_rate(rate: float, direction: int) -> float:
-    """步进一档：0.2x → 0.1x → 0.09x … 0.01x；反向 0.01x → … → 0.1x → 0.2x。"""
-    value = quantize_rate(rate)
+    """步进一档；手动输入的任意倍速也以当前值为中心步进。"""
+    value = clamp_rate(rate)
     if direction < 0:
         if value > RATE_FINE_MAX + 1e-9:
-            return round(max(RATE_FINE_MAX, value - RATE_STEP), 2)
-        return round(max(RATE_MIN, value - RATE_FINE_STEP), 2)
+            candidate = round(value - RATE_STEP, 2)
+            if candidate < RATE_FINE_MAX and value < 0.2:
+                candidate = RATE_FINE_MAX
+            return clamp_rate(candidate)
+        return clamp_rate(value - RATE_FINE_STEP)
     if value < RATE_FINE_MAX - 1e-9:
-        return round(min(RATE_FINE_MAX, value + RATE_FINE_STEP), 2)
-    return round(min(RATE_MAX, value + RATE_STEP), 2)
+        return clamp_rate(min(RATE_FINE_MAX, value + RATE_FINE_STEP))
+    return clamp_rate(value + RATE_STEP)
+
+
+def format_rate_value(rate: float) -> str:
+    """倍速输入框中的数字部分：至少一位、至多两位小数。"""
+    text = f"{clamp_rate(rate):.2f}".rstrip("0")
+    return text + "0" if text.endswith(".") else text
 
 
 def format_rate(rate: float) -> str:
-    """倍速文本：常规档保留一位小数，细档保留两位。"""
-    value = float(rate)
-    return f"{value:.2f}x" if value < RATE_FINE_MAX - 1e-9 else f"{value:.1f}x"
+    return format_rate_value(rate) + "x"
 
 # 系统音频延迟允许为负（负值 = 声音比软件位置更早），这里给出合理范围防止误填
 AUDIO_LATENCY_MIN_MS = -5000.0
@@ -129,6 +141,16 @@ TOOL_LABELS = {
     TOOL_MOUSE_REGION: "空域",
     TOOL_MOUSE_FORBIDDEN: "禁区",
     TOOL_MOUSE_SLIDE: "左右滑键",
+}
+
+TOOL_HINTS = {
+    TOOL_SELECT: "选择：点击物件选择，拖动调整；Ctrl 可多选",
+    TOOL_LANE_TAP: "单轨按键：点击轨道与时间",
+    TOOL_LANE_MULTI: "多轨按键：点击起点轨道",
+    TOOL_LANE_HOLD: "长按：点击起点",
+    TOOL_MOUSE_REGION: "空域：点击开始时间",
+    TOOL_MOUSE_FORBIDDEN: "禁区：点击开始时间",
+    TOOL_MOUSE_SLIDE: "滑键：点击时间与起始位置",
 }
 
 TOOL_ORDER = (

@@ -58,10 +58,10 @@ class BoundaryCurve:
 
     @classmethod
     def from_dict(cls, data: Dict[str, Any] | None) -> "BoundaryCurve":
-        data = data or {}
+        data = data if isinstance(data, dict) else {}
         return cls(
-            start=float(data.get("start", 0.0)),
-            end=float(data.get("end", 0.0)),
+            start=float(data.get("start", 0.0) or 0.0),
+            end=float(data.get("end", 0.0) or 0.0),
             ease=normalize_ease(data.get("ease")),
         )
 

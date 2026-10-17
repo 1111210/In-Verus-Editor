@@ -211,11 +211,26 @@ class SpeedGroup:
 
     @classmethod
     def from_dict(cls, data: Dict[str, Any]) -> "SpeedGroup":
+        data = data if isinstance(data, dict) else {}
+        segments_raw = data.get("segments", [])
+        if not isinstance(segments_raw, list):
+            segments_raw = []
+        segments = []
+        for segment in segments_raw:
+            if not isinstance(segment, dict):
+                continue
+            try:
+                segments.append(SpeedSegment.from_dict(segment))
+            except (TypeError, ValueError):
+                continue
+        note_ids = data.get("note_ids", [])
+        if not isinstance(note_ids, (list, tuple, set)):
+            note_ids = []
         return cls(
             int(data.get("id", config.DEFAULT_GROUP_ID)),
             str(data.get("name", config.DEFAULT_GROUP_NAME)),
-            [SpeedSegment.from_dict(d) for d in data.get("segments", [])],  # type: ignore[arg-type]
-            data.get("note_ids", []),  # type: ignore[arg-type]
+            segments,
+            note_ids,
         )
 
     @classmethod

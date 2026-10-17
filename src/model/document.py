@@ -2,16 +2,16 @@
 
 撤销机制：
 撤销栈按差量记录：每条命令提交一条 UndoRecord（记录“怎么撤销、怎么重做”），
-只保存被改动的那些数据（通常是几个物件的字典，或者某个轻量结构的旧值），
+只保存被改动的那些数据（通常是几个物件的字典，或者某个轻量结构的改动前值），
 避免 O(物件数) 的全量快照。
 
 * 放置 / 粘贴 → 撤销 = 删除这些新 id；重做 = 用保存的数据重建；
 * 删除 → 撤销 = 把被删物件的数据写回来；重做 = 再删一次；
 * 剪切 → 先复制到剪贴板再删除（复用“删除”的记录：撤销恢复物件与选择，重做再删一次）；
 * 镜像 / 编辑物件 / 改速度组归属 → 记录这些物件的“改动前 / 改动后”数据并互相替换；
-* 元数据 / BPM 与偏移 / 速度组面板 → 只记录这些轻量结构的旧值。
+* 元数据 / BPM 与偏移 / 速度组面板 → 只记录这些轻量结构的改动前值。
 
-与谱面无关的视图 / 编辑器设置（缩放、网格、延迟、音量、节拍音、侧轨高亮、
+与谱面无关的视图 / 其他设置（缩放、网格、延迟、音量、节拍音、侧轨高亮、
 显示更早的物件……）不进撤销栈，也不标记谱面已修改：它们保存在全局 settings.json，
 撤销谱面改动时也不会顺带把它们回退。
 
@@ -103,6 +103,17 @@ class Document:
     def redo_label(self) -> str:
         return self._redo[-1].label if self._redo else ""
 
+    @property
+    def content_version(self) -> tuple[int, int, int, int]:
+        """谱面内容、时间轴和文档命令的统一失效版本。"""
+
+        return (
+            self.revision,
+            self.chart.revision,
+            self.chart.timing.revision,
+            id(self.chart.timing),
+        )
+
     def undo(self) -> bool:
         if not self._undo:
             return False
@@ -129,7 +140,7 @@ class Document:
 
     # -------------------------------------------------------- 轻量结构编辑
     def _light_state(self) -> Tuple[Any, Any, List[Any]]:
-        """可撤销的谱面数据：元数据 / 时间轴 / 速度组（不含编辑器设置）。"""
+        """可撤销的谱面数据：元数据 / 时间轴 / 速度组（不含其他设置）。"""
         chart = self.chart
         return (
             chart.metadata.to_dict(),
@@ -155,9 +166,9 @@ class Document:
         self.chart.invalidate_order()
 
     def apply(self, label: str, func: Callable[[], Any]) -> Any:
-        """修改元数据 / BPM / 速度组等谱面数据（只记录这些结构的旧值）。
+        """修改元数据 / BPM / 速度组等谱面数据（只记录这些结构的改动前值）。
 
-        与谱面无关的视图 / 编辑器设置请直接改值 —— 它们不进撤销栈。
+        与谱面无关的视图 / 其他设置请直接改值 —— 它们不进撤销栈。
         """
         before = self._light_state()
         snapshot_before = copy.deepcopy(before)

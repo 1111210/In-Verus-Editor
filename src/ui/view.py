@@ -16,6 +16,7 @@ from dataclasses import dataclass
 from typing import List, Optional, Tuple
 
 import config
+from editor_settings import EditorSettings
 from model.chart import Chart
 from model.notes import Note
 from model.speed import SpeedGroup, SpeedSegment
@@ -158,15 +159,24 @@ class Layout:
 class ViewState:
     """把 (beat, 归一化横向位置) 映射到画布像素。"""
 
-    def __init__(self, chart: Chart, layout: Optional[Layout] = None) -> None:
+    def __init__(
+        self,
+        chart: Chart,
+        layout: Optional[Layout] = None,
+        settings: Optional[EditorSettings] = None,
+    ) -> None:
         self.chart = chart
+        self.settings = settings or chart.settings
         self.layout = layout or Layout()
         self.current_beat = 0.0
         self.playing = False
 
     # ------------------------------------------------------------------ 绑定
-    def set_chart(self, chart: Chart) -> None:
+    def set_chart(
+        self, chart: Chart, settings: Optional[EditorSettings] = None
+    ) -> None:
         self.chart = chart
+        self.settings = settings or chart.settings
 
     def resize(self, width: int, height: int) -> None:
         self.layout.width = max(320, int(width))
@@ -199,11 +209,11 @@ class ViewState:
     # ------------------------------------------------------------------ 缩放
     @property
     def zoom_seconds(self) -> float:
-        return self.chart.settings.zoom_seconds
+        return self.settings.zoom_seconds
 
     @property
     def grid_division(self) -> int:
-        return self.chart.settings.grid_division
+        return self.settings.grid_division
 
     def seconds_per_beat(self) -> float:
         return self.chart.timing.seconds_per_beat(self.current_beat)
@@ -239,7 +249,7 @@ class ViewState:
         return max(0.0, high - low)
 
     def zoom_by(self, factor: float) -> None:
-        settings = self.chart.settings
+        settings = self.settings
         settings.zoom_seconds = min(
             config.ZOOM_MAX_SECONDS,
             max(config.ZOOM_MIN_SECONDS, settings.zoom_seconds * float(factor)),
@@ -284,7 +294,7 @@ class ViewState:
     @property
     def ignore_speed_groups(self) -> bool:
         """视图选项「忽略速度组」：只影响显示，不改动速度组本身。"""
-        return bool(self.chart.settings.ignore_speed_groups)
+        return bool(self.settings.ignore_speed_groups)
 
     def display_group(self, note: Note) -> SpeedGroup:
         """绘制 / 命中该物件时使用的速度组（开启忽略时统一用恒速组）。"""
@@ -406,7 +416,7 @@ class ViewState:
 
     def snap_norm(self, value: float) -> float:
         """按横向辅助网格吸附（未启用时保持原值）。"""
-        divisions = self.chart.settings.horizontal_divisions
+        divisions = self.settings.horizontal_divisions
         if divisions <= 0:
             return float(value)
         return round(float(value) * divisions) / divisions

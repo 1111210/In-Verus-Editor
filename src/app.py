@@ -15,9 +15,9 @@ from audio import (
     audio_backend_name,
     audio_setup_hint,
     audio_silent_reason,
-    write_startup_log,
 )
 from chart_io import (
+    ChartDataError,
     chart_audio_path,
     copy_audio_into_chart_dir,
     load_chart,
@@ -29,7 +29,6 @@ from model.notes import BoundaryCurve, ForbiddenRegion, MouseRegion
 from model.timing import TimingMap
 from model.validate import format_report, validate_chart
 from global_settings import (
-    adopt_chart_settings,
     load_settings,
     save_settings,
 )
@@ -43,6 +42,7 @@ from ui.dialogs import (
     NoteEditDialog,
     SaveChangesDialog,
     SettingsDialog,
+    ShortcutDialog,
     SpeedGroupDialog,
     TextInputDialog,
     VolumeDialog,
@@ -54,6 +54,18 @@ from ui.scene import Scene
 from ui.theme import DARK, apply_theme
 from ui.toolbar import Toolbar
 from ui.view import ViewState
+from shortcuts import (
+    DEFAULT_SHORTCUTS,
+    FIXED_COMMAND_BY_ID,
+    FIXED_COMMANDS,
+    MODIFIER_TOKENS,
+    event_token,
+    format_modifiers,
+    normalize_shortcut,
+    normalize_shortcuts,
+    shortcut_signature,
+    tk_binding,
+)
 
 CTRL_MASK = 0x0004
 SHIFT_MASK = 0x0001
@@ -96,11 +108,13 @@ class EditorApp:
         apply_theme(self.root, self.theme)
 
         self.document = Document()
-        # 视图 / 音效 / 编辑器设置是全局的：不随谱面文件走
+        # 视图 / 音效 / 其他设置是全局的：不随谱面文件走
         self.editor_settings = load_settings()
         self.document.chart.settings = self.editor_settings
         self._settings_snapshot = self.editor_settings.to_dict()
-        self.view = ViewState(self.document.chart)
+        self.view = ViewState(
+            self.document.chart, settings=self.editor_settings
+        )
         self.render_state = RenderState()
         self.audio = AudioPlayer()
         # 音效（节拍音 / 打击音）走“预先算好时刻 + 混进音频输出”的路径
@@ -124,6 +138,11 @@ class EditorApp:
         self._pending_frames = 0
         self._closed = False
         self._tick_id: Optional[str] = None
+        self._shortcut_modifiers: set[str] = set()
+        self._shortcut_latched: set[tuple[tuple[str, ...], str]] = set()
+        self._shortcut_down_mains: set[str] = set()
+        self._shortcut_map_key: Optional[tuple] = None
+        self._shortcut_map: Dict[tuple[tuple[str, ...], str], str] = {}
         # 音乐播完时的播放位置（秒；None = 还没播完 / 没有音乐）
         self._music_end_seconds: Optional[float] = None
         # 拖动分界线：正在拖动 + 当前光标样式
@@ -158,7 +177,6 @@ class EditorApp:
         else:
             self.status(f"音频后端：{audio_backend_name()}")
         self.status(f"解释器：{sys.executable}")
-        write_startup_log()
         self._apply_volumes()          # 音乐 / 节拍音 / 打击音 音量按谱面设置生效
 
         if chart_path:
@@ -210,56 +228,156 @@ class EditorApp:
         self.canvas.bind("<Button-5>", lambda e: self._wheel_notches(-1, e))
         self.canvas.focus_set()
 
-        root.bind("<space>", lambda e: self._shortcut(self.toggle_play))
-        root.bind("<Escape>", lambda e: self._on_escape())
-        root.bind("<Left>", lambda e: self._scroll_steps(-1))
-        root.bind("<Right>", lambda e: self._scroll_steps(1))
-        root.bind("<Prior>", lambda e: self._scroll_page(1))
-        root.bind("<Next>", lambda e: self._scroll_page(-1))
-        root.bind("<Home>", lambda e: self.jump(0.0))
-        root.bind("<End>", lambda e: self.jump(self.document.chart.beat_bounds()[1]))
-        root.bind("<plus>", lambda e: self.zoom(1 / config.ZOOM_STEP))
-        root.bind("<equal>", lambda e: self.zoom(1 / config.ZOOM_STEP))
-        root.bind("<minus>", lambda e: self.zoom(config.ZOOM_STEP))
-        root.bind("<Delete>", lambda e: self.delete_selection())
-        root.bind("<BackSpace>", lambda e: self.delete_selection())
-        root.bind("<Control-n>", lambda e: self.new_chart())
-        root.bind("<Control-o>", lambda e: self.open_chart())
-        root.bind("<Control-s>", lambda e: self.save_chart(False))
-        root.bind("<Control-Shift-S>", lambda e: self.save_chart(True))
-        root.bind("<Control-z>", lambda e: self.undo())
-        root.bind("<Control-y>", lambda e: self.redo())
-        root.bind("<Control-Shift-Z>", lambda e: self.redo())
-        root.bind("<Control-c>", lambda e: self.copy_selection())
-        root.bind("<Control-x>", lambda e: self.cut_selection())
-        root.bind("<Control-v>", lambda e: self.begin_paste())
-        root.bind("<Control-a>", lambda e: self.select_all())
-        root.bind("<Control-m>", lambda e: self.mirror_selection())
-        root.bind("<Control-e>", lambda e: self.edit_selected())
-        root.bind("<Control-g>", lambda e: self.edit_settings())
-        root.bind("<F11>", lambda e: self.toggle_fullscreen())
-        root.bind("<F10>", lambda e: self.toggle_maximize())
-        root.bind("<KeyPress>", lambda e: self.toolbar.mark_interaction(), add="+")
+        for command in FIXED_COMMANDS:
+            for value in command.bindings:
+                sequence = tk_binding(value)
+                if sequence is not None:
+                    root.bind(
+                        sequence,
+                        lambda _event, action_id=command.action_id: self._perform_command(
+                            action_id
+                        ),
+                    )
+        root.bind("<KeyPress>", self._on_shortcut_press)
+        root.bind("<KeyRelease>", self._on_shortcut_release)
         # 点击菜单 / 分组按钮以外的地方 -> 自动收起菜单
         root.bind("<ButtonPress-1>", lambda e: self.toolbar.handle_outside_click(e.widget), add="+")
         # 点击工具栏 / 菜单 / 侧边滚动条 -> 自动停止播放
         root.bind("<ButtonPress-1>", self._on_global_press, add="+")
-        root.bind("m", lambda e: self._shortcut(self.mirror_selection))
-        root.bind("e", lambda e: self._shortcut(self.edit_selected))
-        for index, tool in enumerate(config.TOOL_ORDER, start=1):
-            root.bind(str(index), lambda e, t=tool: self._shortcut(lambda: self.set_tool(t)))
         root.protocol("WM_DELETE_WINDOW", self.on_close)
 
-    def _canvas_focused(self) -> bool:
-        """只在画布拥有焦点时响应单键快捷键，避免干扰工具栏控件。"""
-        try:
-            return self.root.focus_get() is self.canvas
-        except (KeyError, tk.TclError):  # pragma: no cover
-            return True
+    def shortcut_text(self, action_id: str) -> str:
+        """菜单 / 对话框显示用的当前快捷键。"""
+        fixed = FIXED_COMMAND_BY_ID.get(action_id)
+        if fixed is not None:
+            return normalize_shortcut(fixed.menu_text)
+        return normalize_shortcut(
+            self.editor_settings.shortcuts.get(
+                action_id, DEFAULT_SHORTCUTS.get(action_id, "")
+            )
+        )
 
-    def _shortcut(self, func) -> None:
-        if self._canvas_focused():
-            func()
+    def _shortcut_action_map(self) -> Dict[tuple[tuple[str, ...], str], str]:
+        key = tuple(
+            (action_id, self.shortcut_text(action_id))
+            for action_id in DEFAULT_SHORTCUTS
+        )
+        if key == self._shortcut_map_key:
+            return self._shortcut_map
+        result: Dict[tuple[tuple[str, ...], str], str] = {}
+        for action_id, value in key:
+            signature = shortcut_signature(value)
+            if signature is not None and signature not in result:
+                result[signature] = action_id
+        self._shortcut_map_key = key
+        self._shortcut_map = result
+        return result
+
+    def _perform_command(self, action_id: str) -> None:
+        if action_id.startswith("tool:"):
+            self.set_tool(action_id.split(":", 1)[1])
+            return
+        if action_id == "new":
+            self.new_chart()
+        elif action_id == "open":
+            self.open_chart()
+        elif action_id == "open_last":
+            self.open_last_chart()
+        elif action_id == "save":
+            self.save_chart(False)
+        elif action_id == "save_as":
+            self.save_chart(True)
+        elif action_id == "undo":
+            self.undo()
+        elif action_id == "redo":
+            self.redo()
+        elif action_id == "cut":
+            self.cut_selection()
+        elif action_id == "copy":
+            self.copy_selection()
+        elif action_id == "paste":
+            self.begin_paste()
+        elif action_id == "select_all":
+            self.select_all()
+        elif action_id == "delete":
+            self.delete_selection()
+        elif action_id == "escape":
+            self._on_escape()
+        elif action_id == "settings":
+            self.edit_settings()
+        elif action_id == "mirror":
+            self.mirror_selection()
+        elif action_id == "edit_selected":
+            self.edit_selected()
+            # 对话框会接管键盘，KeyRelease 不一定回到主窗口。
+            self._shortcut_modifiers.clear()
+            self._shortcut_latched.clear()
+            self._shortcut_down_mains.clear()
+        elif action_id == "zoom_in":
+            self.zoom(1 / config.ZOOM_STEP)
+        elif action_id == "zoom_out":
+            self.zoom(config.ZOOM_STEP)
+        elif action_id == "scroll_back":
+            self._scroll_steps(-1)
+        elif action_id == "scroll_forward":
+            self._scroll_steps(1)
+        elif action_id == "page_up":
+            self._scroll_page(1)
+        elif action_id == "page_down":
+            self._scroll_page(-1)
+        elif action_id == "play":
+            self.toggle_play()
+        elif action_id == "demo":
+            self.toggle_demo()
+        elif action_id == "maximize":
+            self.toggle_maximize()
+        elif action_id == "fullscreen":
+            self.toggle_fullscreen()
+
+    def _perform_shortcut_action(self, action_id: str) -> None:
+        """把快捷键动作交给统一命令分发入口。"""
+
+        self._perform_command(action_id)
+
+    @staticmethod
+    def _text_input_focused(widget) -> bool:
+        return isinstance(widget, (tk.Entry, tk.Text, ttk.Entry, ttk.Combobox, ttk.Spinbox))
+
+    def _on_shortcut_press(self, event):
+        self.toolbar.mark_interaction()
+        try:
+            focused = self.root.focus_get()
+        except (KeyError, tk.TclError):
+            focused = None
+        if self._text_input_focused(focused):
+            return None
+        token = event_token(event.keysym)
+        if token in MODIFIER_TOKENS:
+            self._shortcut_modifiers.add(token)
+            return None
+        modifiers = set(self._shortcut_modifiers)
+        if token == "+":
+            modifiers.discard("Shift")
+        if token in self._shortcut_down_mains:
+            return None
+        self._shortcut_down_mains.add(token)
+        signature = (tuple(format_modifiers(modifiers).split()), token)
+        action_id = self._shortcut_action_map().get(signature)
+        if action_id is None or signature in self._shortcut_latched:
+            return None
+        self._shortcut_latched.add(signature)
+        self._perform_command(action_id)
+        return "break"
+
+    def _on_shortcut_release(self, event) -> None:
+        token = event_token(event.keysym)
+        if token in MODIFIER_TOKENS:
+            self._shortcut_modifiers.discard(token)
+            return
+        self._shortcut_down_mains.discard(token)
+        for signature in list(self._shortcut_latched):
+            if signature[1] == token:
+                self._shortcut_latched.discard(signature)
 
     # ------------------------------------------------------------------ 循环
     def run(self) -> None:
@@ -312,12 +430,10 @@ class EditorApp:
         """
         state = self.render_state
         layout = self.view.layout
-        settings = self.document.chart.settings
+        settings = self.editor_settings
         return (
-            self.document.revision,
+            self.document.content_version,
             self.document.selection_revision,
-            self.document.chart.revision,
-            self.document.chart.timing.revision,
             settings.zoom_seconds,
             settings.grid_division,
             settings.horizontal_divisions,
@@ -336,7 +452,7 @@ class EditorApp:
         )
 
     def _maybe_save_settings(self) -> None:
-        """设置一变就把全局配置写回磁盘（视图 / 音效 / 编辑器设置都是全局的）。
+        """设置一变就把全局配置写回磁盘（视图 / 音效 / 其他设置都是全局的）。
 
         用快照比较，避免每帧都写文件；撤销 / 重做改了设置也会被写到。
         """
@@ -414,10 +530,10 @@ class EditorApp:
         暂停后往回滚再播放会把中间那一段的音效一起裁掉（打击音不响）。
         """
         chart = self.document.chart
-        settings = chart.settings
+        settings = self.editor_settings
         timing = chart.timing
         length_ms = self.audio.length_ms
-        scope_key = (self.document.revision, int(length_ms // 30000.0))
+        scope_key = (self.document.content_version, int(length_ms // 30000.0))
         if scope_key != self._effects_scope_key:
             _, end_beat = chart.beat_bounds()
             end_ms = max(length_ms, timing.beat_to_song_ms(end_beat) + 4000.0)
@@ -431,7 +547,7 @@ class EditorApp:
             bucket,
         )
         clicks_key = (settings.metronome, base_key)
-        hits_key = (self.document.revision, bool(settings.hit_enabled), base_key)
+        hits_key = (self.document.content_version, bool(settings.hit_enabled), base_key)
         changed = False
         if clicks_key != self._effects_clicks_key:
             self._effects_clicks = effect_events(chart, settings.metronome, False, until_ms)
@@ -455,8 +571,8 @@ class EditorApp:
         """视图菜单：关闭 / 小节音 / 节拍音。"""
         if mode not in METRONOME_LABELS:
             return
-        # 编辑器设置与谱面无关：直接改值，不进撤销栈
-        self.document.chart.settings.metronome = mode
+        # 其他设置与谱面无关：直接改值，不进撤销栈
+        self.editor_settings.metronome = mode
         self._refresh_effects()                 # 只重算节拍音那一半
         if mode == MODE_OFF:
             self.status("节拍音已关闭")
@@ -505,7 +621,7 @@ class EditorApp:
         """点击菜单栏上的按钮 / 侧边滚动条时自动停止播放。
 
         只有顶栏上的按钮才算“点击菜单栏”（点顶栏空白处、分隔条不算）；画布上的
-        点击不受影响（放置与选择照旧可以在播放中进行）。播放 / 倍速控件排除在
+        画布点击不触发自动停止，放置与选择可在播放中进行。播放 / 倍速控件排除在
         外：它们本身就带播放控制，先停下再执行命令会把状态来回切。
         """
         widget = getattr(event, "widget", None)
@@ -621,17 +737,14 @@ class EditorApp:
             self._schedule_next_tick()
 
     def _on_double_click(self, event) -> None:
-        """双击分界线：恢复默认 1:3 分栏；其他位置的双击按普通点击处理。
+        """非分界线位置的双击按普通点击处理。
 
-        Tk 对「同一位置、系统双击间隔内的第二次按下」只派发 <Double-Button-1>，
-        不再派发 <ButtonPress-1>。若这里对非分界线位置直接返回，放置工具原地连点
-        的第二下就会被吞掉（必须移动鼠标或等双击间隔过去才生效）。因此非分界线
-        位置补发一次普通按下。
+        Tk 对「同一位置、系统双击间隔内的第二次按下」派发 <Double-Button-1>。
+        非分界线位置转发一次普通按下，使放置工具原地连点的第二下立即生效。
         """
         if self.demo_mode:
             return
         if self.view.divider_at(event.x):
-            self.reset_split_ratio()
             return
         self._on_press(event)
 
@@ -652,18 +765,16 @@ class EditorApp:
         self._sync_ui()
         self._request_redraw()
 
-    def reset_split_ratio(self) -> None:
-        """双击分界线（或菜单）恢复默认的 1:3 分栏。"""
-        self.view.set_split_ratio(config.SPLIT_6K_RATIO)
-        self._sync_ui()
-        self._request_redraw()
-        self.status(f"分栏已恢复默认：6K {config.SPLIT_6K_RATIO * 100:.0f}% / 鼠标 {(1 - config.SPLIT_6K_RATIO) * 100:.0f}%")
-
     def _wheel_notches(self, notches: float, event) -> None:
         self.toolbar.mark_interaction()
         self.toolbar.close_if_open()
         ctrl = bool(event.state & CTRL_MASK)
         shift = bool(event.state & SHIFT_MASK)
+        settings = self.editor_settings
+        if (ctrl and settings.invert_wheel_zoom) or (
+            not ctrl and settings.invert_wheel_scroll
+        ):
+            notches = -notches
         self.controller.on_wheel(float(notches), ctrl, shift)
 
     def _on_wheel(self, event) -> None:
@@ -735,16 +846,16 @@ class EditorApp:
             self.status("窗口已最大化")
 
     def reset_zoom(self) -> None:
-        self.document.chart.settings.zoom_seconds = config.DEFAULT_ZOOM_SECONDS
+        self.editor_settings.zoom_seconds = config.DEFAULT_ZOOM_SECONDS
         self.status(f"缩放已重置为 {config.DEFAULT_ZOOM_SECONDS:g} 秒")
 
     # ------------------------------------------------------------------ 倍速
     def set_playback_rate(self, rate: float, announce: bool = True) -> None:
-        """播放倍速（0.01 ~ 1.0x）：≥0.1x 每 0.1 一档，0.1x 以下每 0.01 一档。
+        """播放倍速（0.01 ~ 1.0x，可输入至多两位小数）。
 
         倍速同时改变谱面推进速度与音频速度（慢放音调随之变低）。
         """
-        rate = config.quantize_rate(rate)
+        rate = config.clamp_rate(rate)
         if abs(rate - self.audio.rate) < 1e-9:
             self.toolbar.sync()
             return
@@ -788,9 +899,9 @@ class EditorApp:
         if not self._confirm_discard():
             return
         chart = Chart()
-        chart.settings = self.editor_settings      # 编辑器设置是全局的
+        chart.settings = self.editor_settings
         self.document.set_chart(chart)
-        self.view.set_chart(self.document.chart)
+        self.view.set_chart(self.document.chart, self.editor_settings)
         self.view.set_beat(0.0)
         self.audio.load(None)
         self.controller.cancel_pending()
@@ -810,24 +921,56 @@ class EditorApp:
             return
         self.load_chart_file(path)
 
+    def open_last_chart(self) -> None:
+        """快速打开 settings.json 中记录的上一张谱面。"""
+        path = str(self.editor_settings.last_chart_path or "").strip()
+        if not path:
+            self.status("还没有上次打开的谱面")
+            return
+        if not os.path.isfile(path):
+            messagebox.showerror(
+                "打开失败",
+                f"上次谱面已不存在：\n{path}",
+                parent=self.root,
+            )
+            return
+        if not self._confirm_discard():
+            return
+        self.load_chart_file(path)
+
     def load_chart_file(self, path: str) -> None:
         try:
-            chart, raw = load_chart(path)
+            chart, _raw = load_chart(path)
+        except FileNotFoundError as exc:
+            messagebox.showerror("打开失败", str(exc), parent=self.root)
+            return
+        except ChartDataError as exc:
+            messagebox.showerror("打开失败", f"无法读取谱面：\n{exc}", parent=self.root)
+            return
         except Exception as exc:  # pragma: no cover - 依赖外部文件
             messagebox.showerror("打开失败", f"无法读取谱面：\n{exc}", parent=self.root)
             return
-        # 谱面里可能带有 editor 段：全局设置文件尚未建立时据此初始化
-        chart_editor = raw.get("editor") if isinstance(raw, dict) else None
-        if adopt_chart_settings(self.editor_settings, chart_editor):
-            save_settings(self.editor_settings)
-            self._apply_volumes()
         chart.settings = self.editor_settings
         self.document.set_chart(chart, path)
-        self.view.set_chart(chart)
+        self.view.set_chart(chart, self.editor_settings)
         self.view.set_beat(0.0)
         self.controller.cancel_pending()
         self._load_audio()
+        self.editor_settings.last_chart_path = os.path.abspath(path)
+        self._maybe_save_settings()
         self.status(f"已打开谱面：{os.path.basename(path)}")
+        if chart.load_warnings:
+            shown = chart.load_warnings[:12]
+            extra = len(chart.load_warnings) - len(shown)
+            detail = "\n".join(f"· {item}" for item in shown)
+            if extra > 0:
+                detail += f"\n…另有 {extra} 项未显示。"
+            messagebox.showwarning(
+                "谱面可能有脏数据",
+                "已继续加载可识别的物件和数据，保存时会保留未识别字段。\n\n"
+                + detail,
+                parent=self.root,
+            )
 
     def save_chart(self, save_as: bool = False) -> bool:
         path = self.document.path
@@ -847,6 +990,8 @@ class EditorApp:
             return False
         self.document.path = written
         self.document.dirty = False
+        self.editor_settings.last_chart_path = os.path.abspath(written)
+        self._maybe_save_settings()
         self.status(f"已保存：{written}")
         self._load_audio()
         return True
@@ -869,7 +1014,7 @@ class EditorApp:
     def _load_audio(self) -> None:
         path = chart_audio_path(self.document.path, self.document.chart)
         ok = self.audio.load(path)
-        self.audio.latency_ms = self.document.chart.settings.audio_latency_ms
+        self.audio.latency_ms = self.editor_settings.audio_latency_ms
         if path is None and self.document.chart.metadata.audio_file:
             self.status(f"未找到音频文件：{self.document.chart.metadata.audio_file}")
         elif path and not ok:
@@ -887,10 +1032,9 @@ class EditorApp:
         # 重新开始播放：清掉上一轮的“音乐结束位置”
         self._music_end_seconds = None
         timing = self.document.chart.timing
-        self.audio.latency_ms = self.document.chart.settings.audio_latency_ms
+        self.audio.latency_ms = self.editor_settings.audio_latency_ms
         song_ms = timing.beat_to_song_ms(self.view.current_beat)
-        # 按新的起播位置裁剪（不能用旧暂停位置：往回滚再播放会把中间
-        # 整段音效裁掉，听起来就是“有时打击音不响”）
+        # 按本次起播位置裁剪，使往回滚动后的音效仍从目标位置开始播放。
         self._refresh_effects(refilter=True, from_ms=song_ms)
         self.audio.play(song_ms)
         reason = audio_silent_reason()
@@ -962,30 +1106,19 @@ class EditorApp:
         self.view.set_beat(self.view.current_beat)
         self.status(f"BPM 列表已更新（{len(timing.segments)} 项），偏移 {timing.offset_ms:g} ms")
 
-    def retry_audio_backend(self) -> bool:
-        """重新初始化音频设备（插好耳机 / 释放独占声卡后不必重启编辑器）。"""
-        ok = self.audio.retry_backend()
-        hint = audio_setup_hint()
-        if ok:
-            self.status(f"音频后端已启用：{audio_backend_name()}")
-        else:
-            self.status(f"音频后端仍不可用：{hint or audio_backend_name()}")
-        self._sync_ui()
-        return ok
-
     def edit_settings(self) -> None:
         result = run_dialog(
             SettingsDialog,
             self.root,
             self.theme,
             self.document.chart,
-            self.retry_audio_backend,
+            self.editor_settings,
         )
         if not result:
             return
 
         def _apply() -> None:
-            settings = self.document.chart.settings
+            settings = self.editor_settings
             settings.zoom_seconds = float(result["zoom_seconds"])
             settings.audio_latency_ms = float(result["audio_latency_ms"])
             settings.music_volume = float(result.get("music_volume", settings.music_volume))
@@ -993,22 +1126,43 @@ class EditorApp:
                 result.get("metronome_volume", settings.metronome_volume)
             )
             settings.hit_volume = float(result.get("hit_volume", settings.hit_volume))
+            settings.invert_wheel_scroll = bool(
+                result.get("invert_wheel_scroll", settings.invert_wheel_scroll)
+            )
+            settings.invert_wheel_zoom = bool(
+                result.get("invert_wheel_zoom", settings.invert_wheel_zoom)
+            )
             settings.normalize()
 
-        _apply()          # 编辑器设置：不进撤销栈
-        self.audio.latency_ms = self.document.chart.settings.audio_latency_ms
+        _apply()          # 其他设置：不进撤销栈
+        self.audio.latency_ms = self.editor_settings.audio_latency_ms
         self._apply_volumes()
         self.view.set_beat(self.view.current_beat)
         self.status(
-            f"设置已更新：可视 {self.document.chart.settings.zoom_seconds:g} 秒 · "
-            f"延迟 {self.document.chart.settings.audio_latency_ms:g} ms · "
-            f"音量 音乐 {self.document.chart.settings.music_volume * 100:.0f}% / "
-            f"节拍 {self.document.chart.settings.metronome_volume * 100:.0f}% / "
-            f"打击 {self.document.chart.settings.hit_volume * 100:.0f}%"
+            f"设置已更新：可视 {self.editor_settings.zoom_seconds:g} 秒 · "
+            f"延迟 {self.editor_settings.audio_latency_ms:g} ms · "
+            f"音量 音乐 {self.editor_settings.music_volume * 100:.0f}% / "
+            f"节拍 {self.editor_settings.metronome_volume * 100:.0f}% / "
+            f"打击 {self.editor_settings.hit_volume * 100:.0f}%"
         )
 
+    def edit_shortcuts(self) -> None:
+        result = run_dialog(
+            ShortcutDialog,
+            self.root,
+            self.theme,
+            self.editor_settings.shortcuts,
+        )
+        if result is None:
+            return
+        self.editor_settings.shortcuts = normalize_shortcuts(result)
+        self.document.chart.settings = self.editor_settings
+        self._maybe_save_settings()
+        self.toolbar.sync()
+        self.status("快捷键设置已更新")
+
     def edit_demo_view_settings(self) -> None:
-        """编辑器设置菜单「演示视图设置…」：演示视图的画面参数。"""
+        """其他设置菜单「演示视图设置…」：演示视图的画面参数。"""
         result = run_dialog(DemoViewDialog, self.root, self.theme, self.editor_settings)
         if not result:
             return
@@ -1019,7 +1173,7 @@ class EditorApp:
                 setattr(settings, key, value)
             settings.normalize()
 
-        _apply()          # 编辑器设置：不进撤销栈
+        _apply()          # 其他设置：不进撤销栈
         self._refresh_demo_view_settings()
         self.status(
             "演示视图已更新："
@@ -1043,7 +1197,7 @@ class EditorApp:
 
     def _apply_volumes(self) -> None:
         """把设置里的三个音量同步给音频后端（一次设置，混音只重合成一次窗口）。"""
-        settings = self.document.chart.settings
+        settings = self.editor_settings
         self.audio.set_mix(
             settings.music_volume,
             {
@@ -1058,25 +1212,22 @@ class EditorApp:
 
     def toggle_hit_sound(self) -> None:
         """音效菜单：开关打击音效。"""
-        chart = self.document.chart
-        value = not chart.settings.hit_enabled
-        chart.settings.hit_enabled = value          # 编辑器设置：不进撤销栈
+        value = not self.editor_settings.hit_enabled
+        self.editor_settings.hit_enabled = value     # 其他设置：不进撤销栈
         self._apply_volumes()
         self.status("打击音效：" + ("开启" if value else "关闭"))
         self.toolbar.sync()
 
     def toggle_side_lane_highlight(self) -> None:
         """视图菜单：第 1 / 第 6 轨背景高亮（暗紫色）。"""
-        chart = self.document.chart
-        value = not chart.settings.side_lane_highlight
-        chart.settings.side_lane_highlight = value   # 视图设置：不进撤销栈
+        value = not self.editor_settings.side_lane_highlight
+        self.editor_settings.side_lane_highlight = value
         self.status("侧轨高亮：" + ("开启" if value else "关闭"))
 
     def toggle_show_past_notes(self) -> None:
         """视图菜单：判定时刻已经过去的物件是否继续绘制（判定线下方）。"""
-        chart = self.document.chart
-        value = not chart.settings.show_past_notes
-        chart.settings.show_past_notes = value       # 视图设置：不进撤销栈
+        value = not self.editor_settings.show_past_notes
+        self.editor_settings.show_past_notes = value
         self.status(
             "显示更早的物件：开启" if value else "显示更早的物件：关闭"
         )
@@ -1087,9 +1238,8 @@ class EditorApp:
 
         只影响编辑器里的显示与命中测试；速度组的编辑 / 保存完全不受影响。
         """
-        chart = self.document.chart
-        value = not chart.settings.ignore_speed_groups
-        chart.settings.ignore_speed_groups = value   # 视图设置：不进撤销栈
+        value = not self.editor_settings.ignore_speed_groups
+        self.editor_settings.ignore_speed_groups = value
         self.status(
             "忽略速度组：开启" if value else "忽略速度组：关闭"
         )
@@ -1097,20 +1247,26 @@ class EditorApp:
 
     def edit_volumes(self) -> None:
         """音效菜单「音量…」：调音乐 / 节拍音 / 打击音。"""
-        result = run_dialog(VolumeDialog, self.root, self.theme, self.document.chart)
+        result = run_dialog(
+            VolumeDialog,
+            self.root,
+            self.theme,
+            self.document.chart,
+            self.editor_settings,
+        )
         if not result:
             return
 
         def _apply() -> None:
-            settings = self.document.chart.settings
+            settings = self.editor_settings
             settings.music_volume = float(result["music_volume"])
             settings.metronome_volume = float(result["metronome_volume"])
             settings.hit_volume = float(result["hit_volume"])
             settings.normalize()
 
-        _apply()          # 编辑器设置：不进撤销栈
+        _apply()          # 其他设置：不进撤销栈
         self._apply_volumes()
-        settings = self.document.chart.settings
+        settings = self.editor_settings
         self.status(
             f"音量：音乐 {settings.music_volume * 100:.0f}% · "
             f"节拍音 {settings.metronome_volume * 100:.0f}% · "
@@ -1120,7 +1276,7 @@ class EditorApp:
 
     def set_grid_division_custom(self) -> None:
         """视图菜单「时间网格细分 → 自定义…」：输入一拍细分多少份。"""
-        settings = self.document.chart.settings
+        settings = self.editor_settings
         value = run_dialog(
             TextInputDialog,
             self.root,
@@ -1138,7 +1294,7 @@ class EditorApp:
 
     def set_horizontal_divisions_custom(self) -> None:
         """视图菜单「横向辅助网格 → 自定义…」：输入 0..1 合法区域几等分。"""
-        settings = self.document.chart.settings
+        settings = self.editor_settings
         value = run_dialog(
             TextInputDialog,
             self.root,
@@ -1172,17 +1328,6 @@ class EditorApp:
             f"（小节 {bar + 1} 第 {in_bar + 1:.2f} 拍 · {bars_note}"
             f"{self.view.time_label(beat)}）"
         )
-
-    def show_guide(self) -> None:
-        """操作指南（与快捷键拆成两个独立窗口）。"""
-        from ui.dialogs import GUIDE_TEXT
-
-        run_dialog(HelpDialog, self.root, self.theme, "操作指南", GUIDE_TEXT)
-
-    def show_shortcuts(self) -> None:
-        from ui.dialogs import SHORTCUTS_TEXT
-
-        run_dialog(HelpDialog, self.root, self.theme, "快捷键", SHORTCUTS_TEXT)
 
     def auto_check_issues(self):
         """当前的自动检查结果（纯数据，便于测试）。"""
@@ -1292,18 +1437,24 @@ class EditorApp:
 
     def set_grid_division(self, text: str) -> None:
         try:
-            value = int(str(text))
-        except ValueError:
+            value = int(float(str(text).strip()))
+        except (TypeError, ValueError):
             return
-        settings = self.document.chart.settings
+        settings = self.editor_settings
         settings.grid_division = max(config.GRID_DIVISION_MIN, value)
         self.view.set_beat(self.view.current_beat)
         self.status(f"时间网格：一拍细分为 {settings.grid_division} 份")
 
+    def increase_grid_division(self) -> None:
+        self.set_grid_division(str(self.editor_settings.grid_division + 1))
+
+    def decrease_grid_division(self) -> None:
+        self.set_grid_division(str(self.editor_settings.grid_division - 1))
+
     def set_horizontal_divisions(self, text: str) -> None:
         text = str(text).strip()
         value = 0 if text in ("", "关") else int(float(text))
-        settings = self.document.chart.settings
+        settings = self.editor_settings
         settings.horizontal_divisions = max(0, value)
         self.status(
             "横向辅助网格已关闭"
@@ -1317,8 +1468,8 @@ class EditorApp:
             return
         self.demo_mode = enabled
         self.render_state.demo = enabled
-        # 演示模式在画布上直接贴演示视图的软件渲染画面；LAYOUT_OVERLAY 保留给
-        # “没有 pygame”时的退路（编辑器自己的叠加绘制）
+        # 演示模式在画布上直接贴演示视图的软件渲染画面；没有 pygame 时
+        # 使用 LAYOUT_OVERLAY 和编辑器自身的叠加绘制。
         self.view.set_layout_mode(config.LAYOUT_OVERLAY if enabled else config.LAYOUT_SPLIT)
         self.controller.cancel_pending()
         if enabled:
