@@ -21,9 +21,12 @@ In Verus Editor 是游戏 **《In Falsus》**（[Steam 商店页](https://store.
 
 ### 3.1 运行发布版
 
-在项目的 Release 页面（或本地 `release/` 目录）下载 `InVerusEditor.exe`，双击打开即可，无需安装 Python 与任何依赖。
+在项目的 Release 页面下载 `InVerusEditor-windows-x64.zip`，解压后双击
+`InVerusEditor.exe` 即可，无需安装 Python 与任何依赖。请保留整个解压目录，不要
+只单独移动 exe；程序依赖同目录下的 `_internal/`。
 
-> 杀毒软件可能对 PyInstaller 打包的单文件程序误报，但项目实际不包含恶意代码；介意的话可以按 3.2 从源码启动，或自行对照源码重新打包。
+发布包采用 PyInstaller `onedir` 模式，避免单文件程序每次启动时都把完整运行库解压到
+临时目录，通常可以明显缩短启动时间。介意打包程序的话也可以按 3.2 从源码启动。
 
 ### 3.2 从源码启动
 
@@ -46,11 +49,29 @@ python run_editor.py charts/demo/demo.json   # 打开指定谱面
 python run_editor.py --make-demo             # 生成示例谱面后退出
 ```
 
+### 3.3 重新打包 Windows 发布版
+
+安装构建依赖并执行构建脚本：
+
+```bash
+pip install -e .[all,build]
+python packaging/build_release.py
+```
+
+脚本要求构建环境的 Tcl/Tk 为 9.x，并通过运行时路径钩子直接使用 Tcl/Tk DLL
+内置的脚本库，避免再携带数百个重复数据文件。构建使用 `onedir` 模式，并在
+`release/` 下生成 `InVerusEditor/` 与 `InVerusEditor-windows-x64.zip`。构建后的
+exe 需要与 `_internal/` 一起分发。
+
 ## 4. 项目结构
 
 ```
 .
 ├─ run_editor.py                # 免安装启动脚本：把 src 加入搜索路径后启动编辑器
+├─ packaging/
+│  ├─ InVerusEditor.spec        # PyInstaller onedir 发布配置
+│  ├─ rthook_tcl9.py            # 为 Tcl/Tk 9 设置内置 zipfs 运行库路径
+│  └─ build_release.py          # 校验依赖、打包与 ZIP 生成
 ├─ requirements.txt             # 安装 pyproject.toml 中定义的完整可选依赖
 ├─ pyproject.toml               # 包元数据与入口点
 ├─ LICENSE                      # MIT 许可

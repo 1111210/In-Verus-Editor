@@ -17,6 +17,8 @@ dependencies = []
 audio = ["pygame-ce>=2.5.0", "numpy>=1.26"]
 preview = ["pygame-ce>=2.5.0"]
 all = ["pygame-ce>=2.5.0", "numpy>=1.26"]
+# 仅构建 Windows 发布包时需要
+build = ["pyinstaller>=6.22.3"]
 
 [project.scripts]
 infalsus-editor = "app:main"
