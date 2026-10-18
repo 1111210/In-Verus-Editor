@@ -43,6 +43,7 @@ from model.notes import (
     MouseSlide,
     NOTE_REGION,
     Note,
+    lane_stack_key,
     layer_rank,
 )
 from model.speed import SpeedGroup
@@ -569,9 +570,9 @@ class Renderer:
                 )
                 continue
             self.scene.set_layer(SLIDE_LAYER if rank == LAYER_SLIDE else 4 + rank)
-            if rank in (LAYER_MULTI_HOLD, LAYER_MULTI_TAP):
-                # 多轨物件：跨的轨道越多越先画（越靠下层），同跨度保持时间顺序
-                visible.sort(key=lambda n: n.lane_end - n.lane_start, reverse=True)
+            if rank <= LAYER_SINGLE_TAP:
+                # 同一大层内：轨道越多越靠下；跨度相同时持续时间越短越靠上。
+                visible.sort(key=lane_stack_key)
             for note in visible:
                 draw(note, note.id in state.selection)
 

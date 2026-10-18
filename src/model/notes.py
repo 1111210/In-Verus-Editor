@@ -378,6 +378,37 @@ def layer_rank(note: Note) -> int:
     return LAYER_MULTI_HOLD
 
 
+def lane_stack_key(note: LaneNote) -> Tuple[int, int, float, float, float, str]:
+    """轨道物件的自下而上叠放键。
+
+    先按四大图层排序；同一图层内轨道数量更多先画（更靠下），
+    再让持续时间更长先画，使持续时间较短的物件位于上层。
+    """
+    lane_count = int(note.lane_end - note.lane_start + 1)
+    return (
+        layer_rank(note),
+        -lane_count,
+        -float(note.duration_beats),
+        float(note.head_beat),
+        float(note.tail_beat),
+        note.id,
+    )
+
+
+def note_stack_key(note: Note) -> Tuple[int, int, float, float, float, str]:
+    """命中测试使用的上层优先排序键（反向排序）。"""
+    if isinstance(note, LaneNote):
+        return lane_stack_key(note)
+    return (
+        layer_rank(note),
+        0,
+        0.0,
+        float(note.head_beat),
+        float(note.tail_beat),
+        note.id,
+    )
+
+
 def note_from_dict(data: Dict[str, Any]) -> Note:
     """由字典构造物件（用于读档与撤销快照）。"""
     kind = data.get("type")

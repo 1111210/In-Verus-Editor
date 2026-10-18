@@ -17,6 +17,7 @@ from model.notes import (
     MouseSlide,
     Note,
     layer_rank,
+    note_stack_key,
 )
 from model.speed import SpeedGroup
 from .view import ViewState
@@ -228,7 +229,7 @@ class HitCache:
                     hits.append(note)
             elif point_in_rect(x, y, bounds, pad=config.HIT_PADDING_PX):
                 hits.append(note)
-        hits.sort(key=lambda n: (layer_rank(n), n.head_beat), reverse=True)
+        hits.sort(key=note_stack_key, reverse=True)
         return hits
 
     def query_box(self, x0: float, y0: float, x1: float, y1: float) -> List[Note]:
@@ -674,7 +675,7 @@ def notes_at(
         for n in view.candidate_notes(chart.sorted_notes())
         if note_in_time(n, view.current_beat, show_past) and note_hit(n, chart, view, x, y)
     ]
-    hits.sort(key=lambda n: (layer_rank(n), n.head_beat), reverse=True)
+    hits.sort(key=note_stack_key, reverse=True)
     if limit is not None:
         return hits[:limit]
     return hits
