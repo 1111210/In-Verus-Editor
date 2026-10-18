@@ -13,7 +13,14 @@ from dataclasses import dataclass
 from typing import List, Optional, Tuple
 
 from model.chart import Chart
-from model.notes import LaneNote, MouseRegion, MouseSlide, Note, layer_rank
+from model.notes import (
+    LaneNote,
+    MouseRegion,
+    MouseSlide,
+    Note,
+    lane_stack_key,
+    layer_rank,
+)
 from model.timing import TimingMap
 from .scene import (
     K6_LEFT,
@@ -241,10 +248,13 @@ def runs_cross_line(runs: List[List[Tuple[float, float]]]) -> bool:
 
 
 def visible_notes(chart: Chart, now_ms: float, span_ms: float) -> List[Note]:
-    """当前应绘制的物件：按图层（自下而上）排序，层内由远到近。
+    """当前应绘制的物件：按图层（自下而上）排序。
 
     距离与剔除都用所属速度组的滚动毫秒（∫v），因此流速不同的物件
     不会因为“判定时刻更晚”就被错误地排到更近 / 更远的位置。
+
+    同一轨道图层内先遵循编辑器的重叠规则（轨道越多越靠下、持续时间
+    越短越靠上），再按由远到近绘制。
 
     可见性按物件还没判过的那一段判断（_note_z_span_at）：反向流速时
     物件开头可能还在很远处，而它的后半段已经跑到判定线靠近摄像机的一侧 ——
@@ -272,15 +282,20 @@ def visible_notes(chart: Chart, now_ms: float, span_ms: float) -> List[Note]:
         low_z, high_z = span_z
         if low_z > START_Z:
             continue                                   # 整段都在运动起点之外
+        rank = layer_rank(note)
+        if isinstance(note, LaneNote):
+            stack_rank = lane_stack_key(note)[:3]
+        else:
+            stack_rank = (rank, 0, 0.0)
         entries.append((
-            layer_rank(note),
-            -distance_from_z(high_z, span_ms),         # 层内由远到近
+            *stack_rank,
+            -distance_from_z(high_z, span_ms),         # 同叠放优先级时由远到近
             note.head_beat,
             note.id,
             note,
         ))
-    entries.sort(key=lambda item: item[:4])
-    return [item[4] for item in entries]
+    entries.sort(key=lambda item: item[:-1])
+    return [item[-1] for item in entries]
 
 
 # ---------------------------------------------------------------- 世界坐标
