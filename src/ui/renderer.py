@@ -412,16 +412,28 @@ class Renderer:
     @staticmethod
     def _subdivision_color(
         theme: Theme, numerator: int, denominator: int
-    ) -> tuple[str, Optional[str]]:
-        """按拍内分数返回细分线颜色；彩色线用点阵模拟半透明。"""
+    ) -> Optional[tuple[str, Optional[str]]]:
+        """按拍内分数返回细分线样式；``None`` 表示不绘制这条线。"""
         divisor = math.gcd(abs(int(numerator)), int(denominator))
         fraction = (int(numerator) // divisor, int(denominator) // divisor)
         if fraction in ((1, 4), (1, 2), (3, 4)):
             return theme.grid_sub_red, theme.stipple_soft
-        if fraction in ((1, 6), (1, 3), (2, 3), (5, 6)):
-            return theme.grid_sub_blue, theme.stipple_soft
         if fraction in ((1, 8), (3, 8), (5, 8), (7, 8)):
             return theme.grid_sub_green, theme.stipple_soft
+        # 高密度网格只保留二分、四分与八分位置，避免六分 / 十二分线过密。
+        if denominator > 12:
+            return None
+        if fraction in (
+            (1, 12),
+            (1, 6),
+            (1, 3),
+            (5, 12),
+            (7, 12),
+            (2, 3),
+            (5, 6),
+            (11, 12),
+        ):
+            return theme.grid_sub_blue, theme.stipple_soft
         return theme.grid_sub, None
 
     def _draw_time_grid(
@@ -476,9 +488,10 @@ class Renderer:
             else:
                 if not draw_sub:
                     continue
-                color, stipple = self._subdivision_color(
-                    theme, i % division, division
-                )
+                subdivision = self._subdivision_color(theme, i % division, division)
+                if subdivision is None:
+                    continue
+                color, stipple = subdivision
                 width = 1
             line_options = {"fill": color, "width": width}
             if stipple is not None:
