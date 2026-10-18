@@ -338,7 +338,7 @@ class Document:
     def replace_note(
         self, note_id: str, data: Dict[str, Any], label: str = "编辑物件"
     ) -> Optional[Note]:
-        """用新的数据替换一个物件（保持 id 与所属速度组）。"""
+        """用新的数据替换一个物件；保持 id，未提供 group 时沿用原组。"""
         old = self.chart.find(note_id)
         if old is None:
             return None

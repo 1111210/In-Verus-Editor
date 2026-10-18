@@ -487,6 +487,7 @@ class ToolController:
             float(data.get("beat_end", end)),
             BoundaryCurve.from_dict(data.get("left")),
             BoundaryCurve.from_dict(data.get("right")),
+            group=int(data.get("group", config.DEFAULT_GROUP_ID)),
         )
         self.document.add_note(note, f"放置{label}")
         self.status(f"已放置{label} {note.id}：第 {note.beat_start:g} → {note.beat_end:g} 拍")

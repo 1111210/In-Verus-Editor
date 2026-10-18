@@ -231,6 +231,49 @@ def labeled_combo(parent: tk.Misc, row: int, label: str, values: Sequence[str], 
     return combo
 
 
+class ScrollableCombobox(ttk.Combobox):
+    """只读下拉框：弹窗最多显示指定行数，超出后可滚轮滚动。"""
+
+    def __init__(self, parent: tk.Misc, *, max_visible: int = 5, **kwargs: Any) -> None:
+        self.max_visible = max(1, int(max_visible))
+        super().__init__(parent, state="readonly", **kwargs)
+        # 点击由控件绑定先于 Combobox 类绑定执行，先限制高度再展开。
+        self.bind("<ButtonPress-1>", self._fit_popdown, add="+")
+        self.after_idle(self._fit_popdown)
+
+    def _fit_popdown(self, _event=None) -> None:
+        try:
+            popdown = str(self.tk.call("ttk::combobox::PopdownWindow", self))
+            listbox = f"{popdown}.f.l"
+            values = self.cget("values")
+            height = min(self.max_visible, max(1, len(values)))
+            self.tk.call(listbox, "configure", "-height", height)
+        except tk.TclError:  # pragma: no cover - 依赖 Tk 实现
+            pass
+
+
+def labeled_scroll_combo(
+    parent: tk.Misc,
+    row: int,
+    label: str,
+    values: Sequence[str],
+    value: str,
+    *,
+    column: int = 0,
+    width: int = 24,
+    max_visible: int = 5,
+) -> ScrollableCombobox:
+    ttk.Label(parent, text=label).grid(
+        row=row, column=column, sticky="w", pady=3, padx=(0, 6)
+    )
+    combo = ScrollableCombobox(
+        parent, values=list(values), width=width, max_visible=max_visible
+    )
+    combo.set(value)
+    combo.grid(row=row, column=column + 1, sticky="we", pady=3)
+    return combo
+
+
 # ---------------------------------------------------------------- 元数据
 class MetadataDialog(BaseDialog):
     title_text = "元数据设置"
@@ -1238,10 +1281,42 @@ class SpeedGroupDialog(BaseDialog):
 class NoteEditDialog(BaseDialog):
     title_text = "编辑物件"
 
-    def __init__(self, parent: tk.Misc, theme: Theme, note: Note, beat_hint: str = "") -> None:
+    def __init__(
+        self,
+        parent: tk.Misc,
+        theme: Theme,
+        note: Note,
+        beat_hint: str = "",
+        speed_groups: Sequence[SpeedGroup] | None = None,
+    ) -> None:
         self.note = note
         self.beat_hint = beat_hint
+        groups = list(speed_groups or [SpeedGroup.default()])
+        self.speed_groups = sorted(groups, key=lambda group: group.id)
         super().__init__(parent, theme)
+
+    def _group_label(self, group: SpeedGroup) -> str:
+        suffix = "（默认）" if group.is_default else ""
+        return f"{group.id} · {group.name}{suffix}"
+
+    def _select_current_group(self) -> None:
+        labels = [self._group_label(group) for group in self.speed_groups]
+        index = next(
+            (
+                position
+                for position, group in enumerate(self.speed_groups)
+                if group.id == self.note.group
+            ),
+            0,
+        )
+        self.c_group.configure(values=labels)
+        self.c_group.current(index)
+
+    def _selected_group_id(self) -> int:
+        index = self.c_group.current()
+        if 0 <= index < len(self.speed_groups):
+            return self.speed_groups[index].id
+        return self.speed_groups[0].id
 
     def _build(self) -> None:
         body = self.body
@@ -1255,6 +1330,7 @@ class NoteEditDialog(BaseDialog):
             self.e_lane_end = labeled_spin(body, 2, "结束轨道", note.lane_end + 1, 1, 6)
             self.e_beat_start = labeled_entry(body, 3, "开始拍", f"{note.beat_start:g}", width=14)
             self.e_beat_end = labeled_entry(body, 4, "结束拍", f"{note.beat_end:g}", width=14)
+            group_row = 5
         elif isinstance(note, MouseRegion):
             label = "禁区" if isinstance(note, ForbiddenRegion) else "空域"
             ttk.Label(body, text=f"{note.id} · {label}", style="Head.TLabel").grid(
@@ -1284,6 +1360,7 @@ class NoteEditDialog(BaseDialog):
                 style="Dim.TLabel",
                 wraplength=420,
             ).grid(row=9, column=0, columnspan=4, sticky="w", pady=(4, 0))
+            group_row = 10
         elif isinstance(note, MouseSlide):
             ttk.Label(body, text=f"{note.id} · 鼠标滑键", style="Head.TLabel").grid(
                 row=0, column=0, columnspan=2, sticky="w", pady=(0, 6)
@@ -1291,8 +1368,20 @@ class NoteEditDialog(BaseDialog):
             self.e_beat = labeled_entry(body, 1, "判定拍", f"{note.beat:g}", width=14)
             self.e_x_start = labeled_entry(body, 2, "起始位置", f"{note.x_start:g}", width=14)
             self.e_x_end = labeled_entry(body, 3, "结束位置", f"{note.x_end:g}", width=14)
+            group_row = 4
         else:  # pragma: no cover
             ttk.Label(body, text="未知物件类型").grid(row=0, column=0)
+            group_row = 1
+        self.c_group = labeled_scroll_combo(
+            body,
+            group_row,
+            "所属时间组",
+            [],
+            "",
+            width=28,
+            max_visible=5,
+        )
+        self._select_current_group()
         if self.beat_hint:
             ttk.Label(body, text=self.beat_hint, style="Dim.TLabel").grid(
                 row=30, column=0, columnspan=4, sticky="w", pady=(8, 0)
@@ -1301,6 +1390,7 @@ class NoteEditDialog(BaseDialog):
     def _ok(self) -> None:
         note = self.note
         ease_by_label = config.EASE_LABEL_TO_VALUE
+        group_id = self._selected_group_id()
         if isinstance(note, LaneNote):
             lane_start = max(1, min(6, parse_int(self.e_lane_start.get(), note.lane_start + 1))) - 1
             lane_end = max(1, min(6, parse_int(self.e_lane_end.get(), note.lane_end + 1))) - 1
@@ -1317,7 +1407,7 @@ class NoteEditDialog(BaseDialog):
                 "lane_end": lane_end,
                 "beat_start": beat_start,
                 "beat_end": beat_end,
-                "group": note.group,
+                "group": group_id,
             }
         elif isinstance(note, MouseRegion):
             self.result = {
@@ -1335,7 +1425,7 @@ class NoteEditDialog(BaseDialog):
                     parse_float(self.e_right_end.get(), note.right.end),
                     ease_by_label.get(self.c_right_ease.get(), config.EASE_LINEAR),
                 ).to_dict(),
-                "group": note.group,
+                "group": group_id,
             }
         elif isinstance(note, MouseSlide):
             x_start = parse_float(self.e_x_start.get(), note.x_start)
@@ -1348,7 +1438,7 @@ class NoteEditDialog(BaseDialog):
                 "beat": parse_float(self.e_beat.get(), note.beat),
                 "x_start": x_start,
                 "x_end": x_end,
-                "group": note.group,
+                "group": group_id,
             }
         else:  # pragma: no cover - 未知类型
             self.result = {}

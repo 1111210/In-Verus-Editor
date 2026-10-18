@@ -1386,14 +1386,28 @@ class EditorApp:
             BoundaryCurve(float(left[0]), float(left[1])),
             BoundaryCurve(float(right[0]), float(right[1])),
         )
-        return run_dialog(NoteEditDialog, self.root, self.theme, template, self._beat_hint())
+        return run_dialog(
+            NoteEditDialog,
+            self.root,
+            self.theme,
+            template,
+            self._beat_hint(),
+            speed_groups=self.document.chart.speed_groups,
+        )
 
     def edit_selected(self) -> None:
         note = self.document.single_selected()
         if note is None:
             self.status("编辑功能需要只选择 1 个物件")
             return
-        data = run_dialog(NoteEditDialog, self.root, self.theme, note, self._beat_hint())
+        data = run_dialog(
+            NoteEditDialog,
+            self.root,
+            self.theme,
+            note,
+            self._beat_hint(),
+            speed_groups=self.document.chart.speed_groups,
+        )
         if not data:
             return
         self.document.replace_note(note.id, data)
