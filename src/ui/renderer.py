@@ -67,6 +67,7 @@ from .geometry import (
 )
 from .scene import Scene
 from .theme import Theme
+from .time_grid import time_grid_line_style
 from .view import ViewState
 
 # 复杂交集无法用单多边形表示时，逐行兜底的条带高度。
@@ -409,33 +410,6 @@ class Renderer:
                 )
 
     # ------------------------------------------------------------------ 网格
-    @staticmethod
-    def _subdivision_color(
-        theme: Theme, numerator: int, denominator: int
-    ) -> Optional[tuple[str, Optional[str]]]:
-        """按拍内分数返回细分线样式；``None`` 表示不绘制这条线。"""
-        divisor = math.gcd(abs(int(numerator)), int(denominator))
-        fraction = (int(numerator) // divisor, int(denominator) // divisor)
-        if fraction in ((1, 4), (1, 2), (3, 4)):
-            return theme.grid_sub_red, theme.stipple_soft
-        if fraction in ((1, 8), (3, 8), (5, 8), (7, 8)):
-            return theme.grid_sub_green, theme.stipple_soft
-        # 高密度网格只保留二分、四分与八分位置，避免六分 / 十二分线过密。
-        if denominator > 12:
-            return None
-        if fraction in (
-            (1, 12),
-            (1, 6),
-            (1, 3),
-            (5, 12),
-            (7, 12),
-            (2, 3),
-            (5, 6),
-            (11, 12),
-        ):
-            return theme.grid_sub_blue, theme.stipple_soft
-        return theme.grid_sub, None
-
     def _draw_time_grid(
         self,
         chart: Chart,
@@ -478,26 +452,26 @@ class Renderer:
                 continue
             is_beat = abs(beat - round(beat)) < 1e-6
             is_bar = round(beat, 9) in bar_lines
-            stipple = None
-            if is_bar:
-                color, width = theme.grid_bar, 2
-            elif is_beat:
-                if not draw_beat:
-                    continue
-                color, width = theme.grid_beat, 1
-            else:
-                if not draw_sub:
-                    continue
-                subdivision = self._subdivision_color(theme, i % division, division)
-                if subdivision is None:
-                    continue
-                color, stipple = subdivision
-                width = 1
-            line_options = {"fill": color, "width": width}
-            if stipple is not None:
-                line_options["stipple"] = stipple
+            style = time_grid_line_style(
+                theme,
+                index=i,
+                division=division,
+                is_beat=is_beat,
+                is_bar=is_bar,
+                draw_subdivision=draw_sub,
+                draw_beat=draw_beat,
+            )
+            if style is None:
+                continue
             self.scene.line(
-                f"{key_prefix}:{i}", x0, y, x1, y, **line_options
+                f"{key_prefix}:{i}",
+                x0,
+                y,
+                x1,
+                y,
+                fill=style.fill,
+                width=style.width,
+                stipple=style.stipple,
             )
             if is_bar:
                 if bar_labels:
