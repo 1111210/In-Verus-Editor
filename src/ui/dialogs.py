@@ -237,8 +237,12 @@ class ScrollableCombobox(ttk.Combobox):
     def __init__(self, parent: tk.Misc, *, max_visible: int = 5, **kwargs: Any) -> None:
         self.max_visible = max(1, int(max_visible))
         super().__init__(parent, state="readonly", **kwargs)
-        # 点击由控件绑定先于 Combobox 类绑定执行，先限制高度再展开。
-        self.bind("<ButtonPress-1>", self._fit_popdown, add="+")
+        # Combobox 类绑定展开时会重新设置默认高度，因此等整个事件结束后再修正。
+        self.bind("<ButtonPress-1>", self._schedule_fit_popdown, add="+")
+        self.bind("<KeyPress>", self._schedule_fit_popdown, add="+")
+        self.after_idle(self._fit_popdown)
+
+    def _schedule_fit_popdown(self, _event=None) -> None:
         self.after_idle(self._fit_popdown)
 
     def _fit_popdown(self, _event=None) -> None:
