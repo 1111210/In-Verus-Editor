@@ -799,7 +799,7 @@ class ShortcutDialog(BaseDialog):
         self._active_action = action_id
         self._captured_modifiers.clear()
         self._labels[action_id].configure(text="按下组合键…")
-        self._buttons[action_id].configure(text="保存此项")
+        self._buttons[action_id].configure(text="取消设置")
         try:
             self.focus_set()
         except tk.TclError:  # pragma: no cover

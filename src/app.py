@@ -229,6 +229,11 @@ class EditorApp:
         self.canvas.focus_set()
 
         for command in FIXED_COMMANDS:
+            if command.action_id in ("open", "open_last"):
+                # Ctrl+O 与 Ctrl+Shift+O 共用一个入口，按事件中的真实 Shift
+                # 状态分流。避免不同 Tk / 输入法把大写 O 与小写 o 映射成不同
+                # sequence 时，Ctrl+Shift+O 落到普通打开。
+                continue
             for value in command.bindings:
                 sequence = tk_binding(value)
                 if sequence is not None:
@@ -238,6 +243,12 @@ class EditorApp:
                             action_id
                         ),
                     )
+        open_sequence = tk_binding("Ctrl O")
+        open_last_sequence = tk_binding("Ctrl Shift O")
+        if open_sequence is not None:
+            root.bind(open_sequence, self._on_open_shortcut)
+        if open_last_sequence is not None:
+            root.bind(open_last_sequence, self._on_open_shortcut)
         root.bind("<KeyPress>", self._on_shortcut_press)
         root.bind("<KeyRelease>", self._on_shortcut_release)
         # 点击菜单 / 分组按钮以外的地方 -> 自动收起菜单
@@ -338,6 +349,16 @@ class EditorApp:
         """把快捷键动作交给统一命令分发入口。"""
 
         self._perform_command(action_id)
+
+    def _on_open_shortcut(self, event) -> str:
+        """Ctrl+Shift+O 快速打开上次谱面，Ctrl+O 打开文件选择窗口。"""
+
+        shift = bool(event.state & SHIFT_MASK)
+        if shift:
+            self.open_last_chart()
+        else:
+            self.open_chart()
+        return "break"
 
     @staticmethod
     def _text_input_focused(widget) -> bool:
@@ -1443,10 +1464,14 @@ class EditorApp:
         self.status(f"时间网格：一拍细分为 {settings.grid_division} 份")
 
     def increase_grid_division(self) -> None:
-        self.set_grid_division(str(self.editor_settings.grid_division + 1))
+        self.set_grid_division(
+            str(config.step_grid_division(self.editor_settings.grid_division, 1))
+        )
 
     def decrease_grid_division(self) -> None:
-        self.set_grid_division(str(self.editor_settings.grid_division - 1))
+        self.set_grid_division(
+            str(config.step_grid_division(self.editor_settings.grid_division, -1))
+        )
 
     def set_horizontal_divisions(self, text: str) -> None:
         text = str(text).strip()

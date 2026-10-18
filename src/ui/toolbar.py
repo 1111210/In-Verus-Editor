@@ -207,7 +207,7 @@ class Toolbar(ttk.Frame):
             ),
             Entry("重置缩放", app.reset_zoom),
         ]
-        grid_choices = (1, 2, 3, 4, 6, 8, 12, 16, 24, 32, 48, 64)
+        grid_choices = config.GRID_DIVISION_CHOICES
         grid_options = [
             Entry(
                 f"1/{value}",
@@ -372,7 +372,7 @@ class Toolbar(ttk.Frame):
         self.entry_rate.configure(textvariable=self._rate_var)
         self.entry_rate.bind("<FocusIn>", lambda _e: setattr(self, "_rate_editing", True))
         self.entry_rate.bind("<FocusOut>", self._commit_rate_entry)
-        self.entry_rate.bind("<Return>", self._commit_rate_entry)
+        self.entry_rate.bind("<Return>", self._submit_rate_entry)
         ttk.Button(
             self._right, text="−", width=2, style="Tool.TButton",
             command=self._with_focus(app.decrease_playback_rate),
@@ -405,7 +405,7 @@ class Toolbar(ttk.Frame):
         self.entry_grid.configure(textvariable=self._grid_var)
         self.entry_grid.bind("<FocusIn>", lambda _e: setattr(self, "_grid_editing", True))
         self.entry_grid.bind("<FocusOut>", self._commit_grid_entry)
-        self.entry_grid.bind("<Return>", self._commit_grid_entry)
+        self.entry_grid.bind("<Return>", self._submit_grid_entry)
         ttk.Label(
             self._right, text="1/", font=self.theme.font(self.theme.font_small)
         ).pack(side="right")
@@ -488,10 +488,20 @@ class Toolbar(ttk.Frame):
         self.app.set_playback_rate(value)
         self.sync()
 
+    def _submit_rate_entry(self, event=None) -> str:
+        self._commit_rate_entry(event)
+        self.focus_canvas()
+        return "break"
+
     def _commit_grid_entry(self, _event=None) -> None:
         self._grid_editing = False
         self.app.set_grid_division(self._grid_var.get())
         self.sync()
+
+    def _submit_grid_entry(self, event=None) -> str:
+        self._commit_grid_entry(event)
+        self.focus_canvas()
+        return "break"
 
     def _update_scrollbar(self) -> None:
         """内容比视口宽时显示横向滚动条（窗口变窄时自动出现）。"""

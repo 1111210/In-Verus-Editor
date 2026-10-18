@@ -30,7 +30,10 @@ class Theme:
     lane_border_strong: str = "#4d4d4d"
     lane_side_highlight: str = "#3a2352"   # 侧轨高亮：第 1 / 第 6 轨背景（暗紫）
 
-    grid_sub: str = "#1a1a1a"
+    grid_sub: str = "#242424"
+    grid_sub_red: str = "#e05a5a"
+    grid_sub_blue: str = "#5b8de0"
+    grid_sub_green: str = "#5ac67a"
     grid_beat: str = "#2b2b2b"
     grid_bar: str = "#4f4f4f"
     grid_label: str = "#808080"

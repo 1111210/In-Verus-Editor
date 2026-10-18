@@ -409,6 +409,21 @@ class Renderer:
                 )
 
     # ------------------------------------------------------------------ 网格
+    @staticmethod
+    def _subdivision_color(
+        theme: Theme, numerator: int, denominator: int
+    ) -> tuple[str, Optional[str]]:
+        """按拍内分数返回细分线颜色；彩色线用点阵模拟半透明。"""
+        divisor = math.gcd(abs(int(numerator)), int(denominator))
+        fraction = (int(numerator) // divisor, int(denominator) // divisor)
+        if fraction in ((1, 4), (1, 2), (3, 4)):
+            return theme.grid_sub_red, theme.stipple_fill
+        if fraction in ((1, 6), (1, 3), (2, 3), (5, 6)):
+            return theme.grid_sub_blue, theme.stipple_fill
+        if fraction in ((1, 8), (3, 8), (5, 8), (7, 8)):
+            return theme.grid_sub_green, theme.stipple_fill
+        return theme.grid_sub, None
+
     def _draw_time_grid(
         self,
         chart: Chart,
@@ -451,6 +466,7 @@ class Renderer:
                 continue
             is_beat = abs(beat - round(beat)) < 1e-6
             is_bar = round(beat, 9) in bar_lines
+            stipple = None
             if is_bar:
                 color, width = theme.grid_bar, 2
             elif is_beat:
@@ -460,8 +476,16 @@ class Renderer:
             else:
                 if not draw_sub:
                     continue
-                color, width = theme.grid_sub, 1
-            self.scene.line(f"{key_prefix}:{i}", x0, y, x1, y, fill=color, width=width)
+                color, stipple = self._subdivision_color(
+                    theme, i % division, division
+                )
+                width = 1
+            line_options = {"fill": color, "width": width}
+            if stipple is not None:
+                line_options["stipple"] = stipple
+            self.scene.line(
+                f"{key_prefix}:{i}", x0, y, x1, y, **line_options
+            )
             if is_bar:
                 if bar_labels:
                     bar_index, _ = chart.timing.bar_index_at(beat + 1e-9)

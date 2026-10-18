@@ -42,6 +42,8 @@ ZOOM_MIN_SECONDS = 0.02
 ZOOM_MAX_SECONDS = 4.0
 ZOOM_STEP = 1.25
 GRID_DIVISION_MIN = 1
+# 视图菜单与右上角 +/- 共用的时间网格档位。
+GRID_DIVISION_CHOICES = (1, 2, 3, 4, 6, 8, 12, 16, 24, 32, 48, 64)
 
 # 判定线位置（占游玩区高度的比例，0 = 顶部，1 = 底部）
 JUDGMENT_LINE_RATIO = 0.80
@@ -101,6 +103,22 @@ def format_rate_value(rate: float) -> str:
 
 def format_rate(rate: float) -> str:
     return format_rate_value(rate) + "x"
+
+
+def step_grid_division(division: int, direction: int) -> int:
+    """在共享网格档位间步进；自定义值与预设值也按数值大小衔接。"""
+    value = max(GRID_DIVISION_MIN, int(division))
+    if direction > 0:
+        return next(
+            (choice for choice in GRID_DIVISION_CHOICES if choice > value),
+            value,
+        )
+    if direction < 0:
+        return next(
+            (choice for choice in reversed(GRID_DIVISION_CHOICES) if choice < value),
+            value,
+        )
+    return value
 
 # 系统音频延迟允许为负（负值 = 声音比软件位置更早），这里给出合理范围防止误填
 AUDIO_LATENCY_MIN_MS = -5000.0
