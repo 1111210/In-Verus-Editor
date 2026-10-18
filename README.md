@@ -2,9 +2,9 @@
 
 ## 1. 项目简介
 
-In Verus Editor 是游戏 **《In Falsus》**（[Steam 商店页](https://store.steampowered.com/app/3971950)）的非官方社区谱面编辑器，用于编辑双平面谱面：左边 **6K 下落式**，右边 **鼠标平面**（空域 / 禁区 / 滑键），两边共享同一条判定线与同一套时间网格。
+In Verus Editor 是游戏 《In Falsus》（[Steam 商店页](https://store.steampowered.com/app/3971950)）的非官方社区谱面编辑器，用于创建并编辑同时具有 6K 下落式和鼠标操作的双平面谱面。
 
-编辑器产出的谱面推荐搭配播放器 **[In Verus Player](https://github.com/1111210/In-Verus-Player)** 游玩与练习。
+编辑器产出的谱面推荐搭配播放器 [In Verus Player](https://github.com/1111210/In-Verus-Player) 游玩与练习。
 
 以 MIT 许可发布，详见 [LICENSE](LICENSE)。
 
@@ -19,8 +19,7 @@ In Verus Editor 是游戏 **《In Falsus》**（[Steam 商店页](https://store.
 ### 3.1 运行发布版
 
 在项目的 Release 页面下载 `InVerusEditor-windows-x64.zip`，解压后双击
-`InVerusEditor.exe` 即可，无需安装 Python 与任何依赖。请保留整个解压目录，不要
-只单独移动 exe；程序依赖同目录下的 `_internal/`。
+`InVerusEditor.exe` 即可，无需安装 Python 与任何依赖。
 
 发布包采用 PyInstaller `onedir` 模式，避免单文件程序每次启动时都把完整运行库解压到
 临时目录，通常可以明显缩短启动时间。介意打包程序的话也可以按 3.2 从源码启动。
@@ -36,7 +35,7 @@ pip install -r requirements.txt
 python run_editor.py
 ```
 
-`pygame-ce` 与 `numpy` 只在音频播放与演示模式下需要：没有它们时编辑器仍可完整编辑与播放（静音时钟），只是没有声音。视图 / 音效 / 快捷键 / 上次谱面路径等偏好保存在程序旁边的 `settings.json`（源码运行时就是仓库根目录），整个文件夹可以连设置一起搬迁。
+`pygame-ce` 与 `numpy` 是可选的：没有它们时编辑器仍可完整编辑与播放，只是没有声音。视图 / 音效 / 快捷键 / 上次谱面路径等偏好保存在程序旁边的 `settings.json`（源码运行时就是仓库根目录），整个文件夹可以连设置一起搬迁。
 
 常用命令行参数：
 
