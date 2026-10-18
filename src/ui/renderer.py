@@ -417,11 +417,11 @@ class Renderer:
         divisor = math.gcd(abs(int(numerator)), int(denominator))
         fraction = (int(numerator) // divisor, int(denominator) // divisor)
         if fraction in ((1, 4), (1, 2), (3, 4)):
-            return theme.grid_sub_red, theme.stipple_fill
+            return theme.grid_sub_red, theme.stipple_soft
         if fraction in ((1, 6), (1, 3), (2, 3), (5, 6)):
-            return theme.grid_sub_blue, theme.stipple_fill
+            return theme.grid_sub_blue, theme.stipple_soft
         if fraction in ((1, 8), (3, 8), (5, 8), (7, 8)):
-            return theme.grid_sub_green, theme.stipple_fill
+            return theme.grid_sub_green, theme.stipple_soft
         return theme.grid_sub, None
 
     def _draw_time_grid(
