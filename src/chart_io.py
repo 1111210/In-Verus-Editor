@@ -1,7 +1,8 @@
 """谱面 JSON 读写与音频复制。
 
-音频策略：选择音频文件后，把歌曲复制到谱面文件所在文件夹的 audio/ 子目录，
-谱面里记录相对路径（audio/song.mp3），保证谱面可以整体搬迁。
+音频策略：谱面未保存时只在内存中记录所选音频的绝对路径；保存时把歌曲复制到
+谱面文件所在文件夹，并在 JSON 中记录相对文件名，保证谱面可以整体搬迁。
+目标文件名冲突时依次使用 ``song-1.mp3``、``song-2.mp3`` 等名称。
 """
 
 from __future__ import annotations
@@ -9,6 +10,7 @@ from __future__ import annotations
 import json
 import os
 import shutil
+import tempfile
 from typing import Any, Dict, List, Mapping, Optional, Tuple
 
 import config
@@ -204,6 +206,39 @@ def default_chart_dir(path: str) -> str:
     return os.path.dirname(os.path.abspath(path)) or os.getcwd()
 
 
+def paths_refer_to_same_file(path_a: Optional[str], path_b: Optional[str]) -> bool:
+    """判断两个路径是否指向同一个文件（文件不存在时退回绝对路径比较）。"""
+    if not path_a or not path_b:
+        return False
+    try:
+        return os.path.samefile(path_a, path_b)
+    except (OSError, ValueError):
+        return os.path.normcase(os.path.abspath(path_a)) == os.path.normcase(
+            os.path.abspath(path_b)
+        )
+
+
+def _path_is_inside(path: str, folder: str) -> bool:
+    """路径是否位于目标目录内（用于避免误删谱面目录外的原始音频）。"""
+    try:
+        candidate = os.path.normcase(os.path.abspath(path))
+        root = os.path.normcase(os.path.abspath(folder))
+        return os.path.commonpath((candidate, root)) == root
+    except (OSError, ValueError):
+        return False
+
+
+def _unique_audio_target(folder: str, filename: str) -> str:
+    """返回不存在的目标路径：``name.ext``、``name-1.ext``、``name-2.ext``……"""
+    stem, extension = os.path.splitext(filename)
+    candidate = os.path.join(folder, filename)
+    index = 1
+    while os.path.exists(candidate):
+        candidate = os.path.join(folder, f"{stem}-{index}{extension}")
+        index += 1
+    return candidate
+
+
 def save_chart(chart: Chart, path: str) -> str:
     """保存谱面，返回实际写入的路径。"""
     path = ensure_chart_suffix(path)
@@ -250,28 +285,79 @@ def load_chart(path: str) -> Tuple[Chart, Dict[str, Any]]:
 
 
 def choose_audio_relative_path(audio_path: str) -> str:
-    """把绝对/外部音频路径转换为谱面内的相对路径。"""
+    """返回复制到谱面目录后的音频文件名。"""
     return os.path.basename(audio_path)
 
 
-def copy_audio_into_chart_dir(audio_path: str, chart_path: str) -> str:
+def copy_audio_into_chart_dir(
+    audio_path: str,
+    chart_path: str,
+    replace_audio_path: Optional[str] = None,
+) -> str:
     """复制歌曲到谱面文件所在文件夹，返回谱面内记录的文件名。
 
-    如果谱面尚未保存（chart_path 为空），使用当前工作目录下的 charts/unsaved。
+    如果谱面尚未保存（chart_path 为空），不写磁盘，返回源音频的绝对路径。
+    ``replace_audio_path`` 是当前谱面正在使用的音频；更换音频时只删除谱面
+    目录内的旧副本，目录外的原始文件不会被删除。
     """
     if not audio_path:
         return ""
     source = os.path.abspath(audio_path)
     if not os.path.isfile(source):
         raise FileNotFoundError(source)
-    if chart_path:
-        folder = default_chart_dir(chart_path)
-    else:
-        folder = os.path.abspath(os.path.join(os.getcwd(), "charts", "unsaved"))
+    if not chart_path:
+        return source
+
+    folder = default_chart_dir(chart_path)
     os.makedirs(folder, exist_ok=True)
-    target = os.path.join(folder, os.path.basename(source))
-    if os.path.abspath(source) != os.path.abspath(target):
-        shutil.copy2(source, target)
+
+    # 重新选择当前音频时完全不做文件操作。
+    if replace_audio_path and paths_refer_to_same_file(source, replace_audio_path):
+        return choose_audio_relative_path(source)
+
+    source_folder = os.path.normcase(os.path.dirname(source))
+    if source_folder == os.path.normcase(folder):
+        if (
+            replace_audio_path
+            and _path_is_inside(replace_audio_path, folder)
+            and os.path.isfile(replace_audio_path)
+        ):
+            os.remove(replace_audio_path)
+        return choose_audio_relative_path(source)
+
+    desired = os.path.join(folder, os.path.basename(source))
+    if paths_refer_to_same_file(source, desired):
+        return choose_audio_relative_path(source)
+
+    temp_path: Optional[str] = None
+    try:
+        # 先完整复制到同目录的临时文件，再删除旧音频并定名。这样新音频复制失败时
+        # 不会提前破坏当前谱面仍在使用的旧文件。
+        if (
+            replace_audio_path
+            and _path_is_inside(replace_audio_path, folder)
+            and os.path.isfile(replace_audio_path)
+        ):
+            suffix = os.path.splitext(source)[1]
+            fd, temp_path = tempfile.mkstemp(
+                prefix=".inverus-audio-", suffix=suffix, dir=folder
+            )
+            os.close(fd)
+            shutil.copy2(source, temp_path)
+            os.remove(replace_audio_path)
+
+        target = _unique_audio_target(folder, os.path.basename(source))
+        if temp_path:
+            os.replace(temp_path, target)
+            temp_path = None
+        else:
+            shutil.copy2(source, target)
+    finally:
+        if temp_path and os.path.exists(temp_path):
+            try:
+                os.remove(temp_path)
+            except OSError:
+                pass
     return choose_audio_relative_path(target)
 
 
@@ -295,3 +381,24 @@ def chart_audio_path(chart_path: Optional[str], chart: Chart) -> Optional[str]:
         if os.path.isfile(candidate):
             return os.path.abspath(candidate)
     return None
+
+
+def prepare_audio_for_chart_save(
+    chart: Chart, source_chart_path: Optional[str], target_chart_path: str
+) -> bool:
+    """保存前把音频定稿到目标谱面目录，并更新谱面内的音频路径。"""
+    audio_path = chart_audio_path(source_chart_path, chart)
+    if audio_path is None:
+        return False
+    if (
+        source_chart_path
+        and os.path.normcase(default_chart_dir(source_chart_path))
+        == os.path.normcase(default_chart_dir(target_chart_path))
+        and _path_is_inside(audio_path, default_chart_dir(target_chart_path))
+    ):
+        # 普通保存不迁移已有的 audio/ 子目录等目录内布局；另存到新目录时才复制。
+        return True
+    chart.metadata.audio_file = copy_audio_into_chart_dir(
+        audio_path, target_chart_path
+    )
+    return True

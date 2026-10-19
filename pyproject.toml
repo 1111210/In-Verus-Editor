@@ -4,7 +4,7 @@ build-backend = "setuptools.build_meta"
 
 [project]
 name = "infalsus-editor"
-version = "0.1.0"
+version = "0.1.1"
 description = "《In Falsus》社区谱面编辑器（6K 下落式 + 鼠标平面）"
 readme = "README.md"
 requires-python = ">=3.10"

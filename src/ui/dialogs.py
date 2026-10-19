@@ -318,9 +318,9 @@ class MetadataDialog(BaseDialog):
         if not path:
             return
         self.audio_source = path
-        relative = os.path.basename(path)
+        shown = os.path.basename(path) if self.chart_path else path
         self.e_audio.delete(0, "end")
-        self.e_audio.insert(0, relative)
+        self.e_audio.insert(0, shown)
 
     def _ok(self) -> None:
         self.result = {

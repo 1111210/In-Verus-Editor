@@ -20,7 +20,10 @@ from chart_io import (
     ChartDataError,
     chart_audio_path,
     copy_audio_into_chart_dir,
+    ensure_chart_suffix,
     load_chart,
+    paths_refer_to_same_file,
+    prepare_audio_for_chart_save,
     save_chart as write_chart,
 )
 from model.chart import Chart
@@ -1001,10 +1004,16 @@ class EditorApp:
             )
             if not path:
                 return False
+        path = ensure_chart_suffix(path)
         try:
+            prepare_audio_for_chart_save(
+                self.document.chart, self.document.path, path
+            )
             written = write_chart(self.document.chart, path)
         except Exception as exc:  # pragma: no cover - 依赖外部文件
-            messagebox.showerror("保存失败", f"无法写入谱面：\n{exc}", parent=self.root)
+            messagebox.showerror(
+                "保存失败", f"无法保存谱面或音频：\n{exc}", parent=self.root
+            )
             return False
         self.document.path = written
         self.document.dirty = False
@@ -1090,28 +1099,48 @@ class EditorApp:
             return
         audio_source = result.pop("audio_source", None)
         metadata = self.document.chart.metadata
+        status_message = ""
+        audio_files_changed = False
+
+        if audio_source:
+            source = os.path.abspath(audio_source)
+            if not self.document.path:
+                # 未保存谱面没有稳定目录；只记录源文件绝对路径，播放仍直接使用它。
+                result["audio_file"] = source
+                status_message = "已记录音频，保存谱面时会复制到谱面目录"
+            else:
+                previous = chart_audio_path(self.document.path, self.document.chart)
+                if previous and paths_refer_to_same_file(source, previous):
+                    # 保持原有记录（可能是 audio/song.mp3），不对文件做任何操作。
+                    result["audio_file"] = metadata.audio_file
+                    status_message = "音频未变化"
+                else:
+                    # Windows 下播放器可能占用旧音频；替换前先解除占用。
+                    self.audio.unload()
+                    try:
+                        result["audio_file"] = copy_audio_into_chart_dir(
+                            source,
+                            self.document.path,
+                            replace_audio_path=previous,
+                        )
+                    except Exception as exc:  # pragma: no cover - 依赖外部文件
+                        result["audio_file"] = metadata.audio_file
+                        messagebox.showerror("复制音频失败", str(exc), parent=self.root)
+                    else:
+                        audio_files_changed = True
+                        status_message = f"已更新音频：{result['audio_file']}"
 
         def _apply() -> None:
             for key, value in result.items():
                 setattr(metadata, key, value)
 
         self.document.apply("修改元数据", _apply)
-        if audio_source:
-            if not self.document.path:
-                if messagebox.askyesno(
-                    "先保存谱面",
-                    "音频需要复制到谱面文件所在文件夹。\n是否先保存谱面？",
-                    parent=self.root,
-                ):
-                    self.save_chart(True)
-            try:
-                relative = copy_audio_into_chart_dir(audio_source, self.document.path or "")
-            except Exception as exc:  # pragma: no cover
-                messagebox.showerror("复制音频失败", str(exc), parent=self.root)
-            else:
-                self.document.chart.metadata.audio_file = relative
-                self.document.dirty = True
-                self.status(f"已复制音频到：{relative}")
+        if audio_files_changed and not self.document.dirty:
+            # 同名音频被替换时记录路径可能不变，但磁盘内容已经变化。
+            self.document.dirty = True
+            self.document.revision += 1
+        if status_message:
+            self.status(status_message)
         self._load_audio()
 
     def edit_timing(self) -> None:

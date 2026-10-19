@@ -4,7 +4,7 @@ from __future__ import annotations
 
 APP_TITLE = "In Falsus 社区谱面编辑器"
 APP_SUBTITLE = "《In Falsus》的社区谱面编辑器"
-VERSION = "0.1.0"
+VERSION = "0.1.1"
 
 # 谱面文件格式
 CHART_FORMAT = "infalsus.chart"
