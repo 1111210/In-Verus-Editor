@@ -9,6 +9,10 @@
 所有后端的 position_ms() 都返回歌曲原始时间轴上的位置，
 因此上层（谱面/判定线）的换算完全不用区分后端。
 
+采样率：
+载入时按音频文件的原始采样率初始化 mixer（见 audio_file_sample_rate），
+避免 SDL 在 48k↔44.1k 之间重采样时改变歌曲时长，导致长歌逐渐音画偏移。
+
 延迟补偿：
 audio_latency_ms 表示“软件执行播放操作 -> 电脑硬件放出声音”的间隔。
 播放时用 后端位置 - 延迟 作为“耳朵听到的位置”，再换算成判定线所在拍。
@@ -20,6 +24,7 @@ import os
 import sys
 import time
 import bisect
+import struct
 from typing import List, Optional, Tuple
 
 import config
@@ -132,6 +137,432 @@ def audio_silent_reason() -> str:
     return "" if audio_backend_state() == "ok" else _silent_reason()
 
 
+# ---------------------------------------------------------------- 采样率探测
+_AUDIO_RATE_MIN = 7350
+_AUDIO_RATE_MAX = 192000
+
+
+def _valid_rate(value: int) -> Optional[int]:
+    return value if _AUDIO_RATE_MIN <= value <= _AUDIO_RATE_MAX else None
+
+
+def _id3_size(head: bytes) -> Optional[int]:
+    """ID3v2 头里的标签总长（含 10 字节头）；没有 ID3 返回 None。"""
+    if len(head) < 10 or head[:3] != b"ID3":
+        return None
+    return 10 + (
+        ((head[6] & 0x7F) << 21)
+        | ((head[7] & 0x7F) << 14)
+        | ((head[8] & 0x7F) << 7)
+        | (head[9] & 0x7F)
+    )
+
+
+def _mp3_sample_rate(path: str) -> Optional[int]:
+    """读取 MP3 第一个有效帧的采样率；失败返回 None。"""
+    try:
+        with open(path, "rb") as handle:
+            head = handle.read(10)
+            offset = _id3_size(head) or 0
+            handle.seek(offset)
+            data = handle.read(1 << 16)
+    except OSError:
+        return None
+    table = {
+        3: (44100, 48000, 32000),
+        2: (22050, 24000, 16000),
+        0: (11025, 12000, 8000),
+    }
+    for index in range(max(0, len(data) - 3)):
+        if data[index] != 0xFF or (data[index + 1] & 0xE0) != 0xE0:
+            continue
+        version = (data[index + 1] >> 3) & 0x03
+        layer = (data[index + 1] >> 1) & 0x03
+        rate_index = (data[index + 2] >> 2) & 0x03
+        if version == 1 or layer == 0 or rate_index == 3:
+            continue
+        return table[version][rate_index]
+    return None
+
+
+def _ogg_sample_rate(path: str) -> Optional[int]:
+    """读取 OGG Vorbis 识别头里的采样率；失败返回 None。"""
+    try:
+        with open(path, "rb") as handle:
+            data = handle.read(1 << 16)
+    except OSError:
+        return None
+    index = data.find(b"\x01vorbis")
+    if index >= 0 and index + 16 <= len(data):
+        value = struct.unpack_from("<I", data, index + 12)[0]
+        return _valid_rate(value)
+    # Ogg Opus 固定解码为 48kHz；识别头里的原始采样率不参与输出
+    if data.find(b"OpusHead") >= 0:
+        return 48000
+    return None
+
+
+def _wav_sample_rate(path: str) -> Optional[int]:
+    """读取 WAV/RF64 的 fmt 块采样率；失败返回 None。"""
+    try:
+        with open(path, "rb") as handle:
+            data = handle.read(1 << 16)
+    except OSError:
+        return None
+    if len(data) < 12 or data[:4] not in (b"RIFF", b"RF64") or data[8:12] != b"WAVE":
+        return None
+    position = 12
+    while position + 8 <= len(data):
+        chunk = data[position:position + 4]
+        size = struct.unpack_from("<I", data, position + 4)[0]
+        if chunk == b"fmt " and position + 12 <= len(data):
+            value = struct.unpack_from("<I", data, position + 12)[0]
+            return _valid_rate(value)
+        position += 8 + size + (size & 1)
+    return None
+
+
+def _flac_sample_rate(path: str) -> Optional[int]:
+    """读取 FLAC STREAMINFO 的采样率；失败返回 None。"""
+    try:
+        with open(path, "rb") as handle:
+            data = handle.read(1 << 16)
+    except OSError:
+        return None
+    if len(data) < 4 + 4 + 34 or data[:4] != b"fLaC":
+        return None
+    position = 4
+    if (data[position] & 0x7F) != 0:          # 第一个元数据块不是 STREAMINFO
+        return None
+    block = data[position + 4:position + 4 + 34]
+    value = (block[10] << 12) | (block[11] << 4) | (block[12] >> 4)
+    return _valid_rate(value)
+
+
+# ------------------------------------------------------------ AAC / M4A 采样率
+# ADTS / AudioSpecificConfig 的 samplingFrequencyIndex 表
+_AAC_SAMPLE_RATES = (
+    96000, 88200, 64000, 48000, 44100, 32000, 24000,
+    22050, 16000, 12000, 11025, 8000, 7350,
+)
+
+
+def _aac_adts_sample_rate(path: str) -> Optional[int]:
+    """读取裸 AAC（ADTS）第一个帧头的采样率；失败返回 None。"""
+    try:
+        with open(path, "rb") as handle:
+            head = handle.read(10)
+            offset = _id3_size(head) or 0
+            handle.seek(offset)
+            data = handle.read(1 << 16)
+    except OSError:
+        return None
+    for index in range(max(0, len(data) - 7)):
+        if data[index] != 0xFF or (data[index + 1] & 0xF6) != 0xF0:
+            continue
+        rate_index = (data[index + 2] >> 2) & 0x0F
+        if rate_index < len(_AAC_SAMPLE_RATES):
+            return _AAC_SAMPLE_RATES[rate_index]
+    return None
+
+
+def _mp4_boxes(data: bytes, start: int, end: int):
+    """遍历 MP4 容器中的盒：产出 (类型, 负载起点, 负载终点)。"""
+    position = start
+    while position + 8 <= end:
+        size = struct.unpack_from(">I", data, position)[0]
+        kind = data[position + 4:position + 8]
+        header = 8
+        if size == 1:
+            if position + 16 > end:
+                break
+            size = struct.unpack_from(">Q", data, position + 8)[0]
+            header = 16
+        elif size == 0:
+            size = end - position
+        if size < header or position + size > end:
+            break
+        yield kind, position + header, position + size
+        position += size
+
+
+_MP4_CONTAINERS = {b"moov", b"trak", b"mdia", b"minf", b"stbl", b"edts", b"wave"}
+
+
+def _mp4_find(data: bytes, start: int, end: int, kind: bytes, depth: int = 0):
+    """在容器里递归查找指定盒，返回负载区间；找不到返回 None。"""
+    if depth > 10:
+        return None
+    for box_kind, payload_start, payload_end in _mp4_boxes(data, start, end):
+        if box_kind == kind:
+            return payload_start, payload_end
+        if box_kind in _MP4_CONTAINERS:
+            found = _mp4_find(data, payload_start, payload_end, kind, depth + 1)
+            if found:
+                return found
+        elif box_kind == b"stsd":
+            # FullBox：version/flags(4) + entry_count(4)，后面才是样本条目
+            found = _mp4_find(data, payload_start + 8, payload_end, kind, depth + 1)
+            if found:
+                return found
+    return None
+
+
+def _mp4_mdhd_timescale(data: bytes, start: int, end: int) -> Optional[int]:
+    """mdhd 的 media timescale；音频轨通常等于采样率。"""
+    if start + 12 > end:
+        return None
+    version = data[start]
+    if version == 1:
+        if start + 24 > end:
+            return None
+        value = struct.unpack_from(">I", data, start + 20)[0]
+    else:
+        if start + 16 > end:
+            return None
+        value = struct.unpack_from(">I", data, start + 12)[0]
+    return _valid_rate(value)
+
+
+def _mp4_mp4a_rate(data: bytes, start: int, end: int) -> Optional[int]:
+    """mp4a 样本条目的 16.16 采样率场。
+
+    该场最大只能表示 65535Hz；96k/192k 等文件可能把这里写成 0，
+    实际采样率由 mdhd 或 esds 里的 ASC 给出。
+    """
+    if start + 28 > end:
+        return None
+    value = struct.unpack_from(">I", data, start + 24)[0] >> 16
+    return _valid_rate(value)
+
+
+def _descriptor_length(data: bytes, position: int, end: int) -> tuple:
+    """读取 MPEG-4 描述符长度；返回 (长度, 长度字段占用的字节数)。"""
+    if position >= end:
+        return 0, 0
+    first = data[position]
+    if not (first & 0x80):
+        return first, 1
+    count = 0
+    while count < 3 and first & (0x80 >> count):
+        count += 1
+    if count == 0 or count > 3 or position + 1 + count > end:
+        return 0, 0
+    value = first & (0x7F >> count)
+    for offset in range(1, count + 1):
+        value = (value << 8) | data[position + offset]
+    return value, count + 1
+
+
+def _aac_asc_rate(asc: bytes) -> Optional[int]:
+    """从 AudioSpecificConfig 读取解码输出采样率（显式 SBR/PS 取扩展采样率）。
+
+    隐式 SBR 无法只从 ASC 判断，按基础采样率返回。
+    """
+    if not asc:
+        return None
+    bit_count = len(asc) * 8
+    bits = 0
+    for byte in asc:
+        bits = (bits << 8) | byte
+
+    def read(count: int):
+        nonlocal bits, bit_count
+        if count <= 0 or count > bit_count:
+            raise ValueError
+        value = (bits >> (bit_count - count)) & ((1 << count) - 1)
+        bit_count -= count
+        return value
+
+    try:
+        audio_object_type = read(5)
+        if audio_object_type == 31:
+            audio_object_type = 32 + read(6)
+        rate_index = read(4)
+        if rate_index == 15:
+            rate = read(24)
+        elif rate_index < len(_AAC_SAMPLE_RATES):
+            rate = _AAC_SAMPLE_RATES[rate_index]
+        else:
+            return None
+        read(4)  # channelConfiguration
+        if audio_object_type in (5, 29):
+            extension_index = read(4)
+            if extension_index == 15:
+                extension = read(24)
+            elif extension_index < len(_AAC_SAMPLE_RATES):
+                extension = _AAC_SAMPLE_RATES[extension_index]
+            else:
+                extension = 0
+            if extension:
+                rate = extension
+    except (ValueError, IndexError):
+        return None
+    return _valid_rate(rate)
+
+
+def _mp4_esds_asc(data: bytes, start: int, end: int) -> Optional[bytes]:
+    """在 esds 负载里找 DecoderSpecificInfo（tag 0x05）并返回 ASC 字节。"""
+    position = start + 4                     # FullBox version/flags
+    while position < end:
+        if data[position] != 0x05:
+            position += 1
+            continue
+        length, count = _descriptor_length(data, position + 1, end)
+        content = position + 1 + count
+        if length and content + length <= end:
+            asc = data[content:content + length]
+            if _aac_asc_rate(asc):
+                return asc
+        position += 1
+    return None
+
+
+_MP4_TOP_LEVEL = {
+    b"ftyp", b"moov", b"mdat", b"free", b"skip", b"wide",
+    b"styp", b"sidx", b"moof", b"uuid", b"pdin", b"junk", b"pnot",
+}
+
+
+def _looks_like_mp4(head: bytes, file_size: int) -> bool:
+    """只凭文件头判断是否像 ISO BMFF（M4A/MP4）；不依赖扩展名。"""
+    if len(head) < 8 or file_size < 8:
+        return False
+    size = struct.unpack_from(">I", head, 0)[0]
+    kind = head[4:8]
+    if kind not in _MP4_TOP_LEVEL:
+        return False
+    if size == 0:
+        return True
+    if size == 1:
+        return len(head) >= 16
+    return 8 <= size <= file_size
+
+
+def _mp4_sample_rate(path: str) -> Optional[int]:
+    """读取 M4A/MP4 音频轨的采样率：ASC 输出率 > mdhd（>65535）> mp4a 场。"""
+    try:
+        size_total = os.path.getsize(path)
+        moov = b""
+        with open(path, "rb") as handle:
+            position = 0
+            while position + 8 <= size_total:
+                handle.seek(position)
+                header = handle.read(16)
+                if len(header) < 8:
+                    break
+                size = struct.unpack_from(">I", header, 0)[0]
+                kind = header[4:8]
+                box_header = 8
+                if size == 1:
+                    if len(header) < 16:
+                        break
+                    size = struct.unpack_from(">Q", header, 8)[0]
+                    box_header = 16
+                elif size == 0:
+                    size = size_total - position
+                if size < box_header or position + size > size_total:
+                    break
+                if kind == b"moov":
+                    handle.seek(position + box_header)
+                    moov = handle.read(size - box_header)
+                    break
+                position += size
+            else:
+                return None
+    except OSError:
+        return None
+    if not moov:
+        return None
+
+    for kind, track_start, track_end in _mp4_boxes(moov, 0, len(moov)):
+        if kind != b"trak":
+            continue
+        mp4a = _mp4_find(moov, track_start, track_end, b"mp4a")
+        if mp4a is None:
+            continue
+        mp4a_rate = _mp4_mp4a_rate(moov, mp4a[0], mp4a[1])
+        esds = _mp4_find(moov, mp4a[0] + 28, mp4a[1], b"esds")
+        asc_rate = None
+        if esds is not None:
+            asc = _mp4_esds_asc(moov, esds[0], esds[1])
+            if asc is not None:
+                asc_rate = _aac_asc_rate(asc)
+        mdhd_rate = None
+        mdhd = _mp4_find(moov, track_start, track_end, b"mdhd")
+        if mdhd is not None:
+            mdhd_rate = _mp4_mdhd_timescale(moov, mdhd[0], mdhd[1])
+        # ASC 给了输出采样率时最可靠；mp4a 的 16.16 场放不下 >65535Hz，
+        # 高采样率文件看 mdhd；其余情况 mp4a 的采样率场优先。
+        if asc_rate:
+            return asc_rate
+        if mdhd_rate and mdhd_rate > 65535:
+            return mdhd_rate
+        if mp4a_rate:
+            return mp4a_rate
+        if mdhd_rate:
+            return mdhd_rate
+    return None
+
+
+def audio_file_sample_rate(path: str) -> Optional[int]:
+    """探测常见音频文件的原始采样率（Hz）；未知格式返回 None。
+
+    只解析文件头/容器结构，不依赖文件扩展名，也不依赖 pygame 的 mixer
+    格式。支持的格式：MP3、裸 AAC（ADTS）、M4A/MP4（ftyp/moov/mdat/free
+    等顶层盒 + mp4a/ASC/mdhd）、OGG Vorbis、Opus、WAV/RF64、FLAC。
+    返回值可能是 22050、32000、88200、96000、192000 等常见采样率；
+    未知格式返回 None，调用方沿用当前 mixer 采样率。
+    """
+    try:
+        file_size = os.path.getsize(path)
+        with open(path, "rb") as handle:
+            head = handle.read(16)
+    except OSError:
+        return None
+    try:
+        if head[:4] == b"fLaC":
+            return _flac_sample_rate(path)
+        if head[:4] == b"OggS":
+            return _ogg_sample_rate(path)
+        if head[:4] in (b"RIFF", b"RF64"):
+            return _wav_sample_rate(path)
+        if _looks_like_mp4(head, file_size):
+            rate = _mp4_sample_rate(path)
+            if rate:
+                return rate
+
+        id3 = _id3_size(head)
+        if id3 is not None:
+            # ID3v2 后面可能是 MP3，也可能是带 ID3 的裸 AAC；按实际音频帧判断
+            try:
+                with open(path, "rb") as handle:
+                    handle.seek(id3)
+                    probe = handle.read(8)
+            except OSError:
+                return None
+            if (
+                len(probe) >= 2
+                and probe[0] == 0xFF
+                and (probe[1] & 0xF6) == 0xF0
+            ):
+                rate = _aac_adts_sample_rate(path)
+                if rate:
+                    return rate
+            rate = _mp3_sample_rate(path)
+            if rate:
+                return rate
+            return _aac_adts_sample_rate(path)
+
+        if len(head) >= 2 and head[0] == 0xFF:
+            if (head[1] & 0xF6) == 0xF0:
+                return _aac_adts_sample_rate(path)
+            return _mp3_sample_rate(path)
+    except Exception:  # pragma: no cover - 损坏文件
+        return None
+    return None
+
+
 def time_stretch(
     samples,
     rate: float,
@@ -235,23 +666,33 @@ class SilentBackend:
         return self._length_ms
 
 
+def _init_mixer(rate: int) -> Tuple[int, int, int]:
+    """按指定采样率重新初始化 mixer；返回实际格式（Hz、位深、声道）。"""
+    assert _PYGAME is not None
+    _PYGAME.mixer.quit()
+    _PYGAME.mixer.init(frequency=int(rate), size=-16, channels=2, buffer=1024)
+    info = _PYGAME.mixer.get_init()
+    if info is None:
+        raise RuntimeError("pygame.mixer 初始化失败")
+    try:
+        # 0 号通道留给歌曲（拉伸后端固定用它），节拍音等自动选空闲通道，
+        # 避免“滴”声把正在播放的歌曲顶掉
+        _PYGAME.mixer.set_reserved(1)
+    except Exception:  # pragma: no cover - 老版本 pygame
+        pass
+    return int(info[0]), int(info[1]), int(info[2])
+
+
 def _ensure_mixer() -> Tuple[int, int, int]:
-    """确保 mixer 用固定格式初始化（sndarray 需要已知格式）。"""
+    """确保 mixer 已初始化（sndarray 需要已知格式）。"""
     assert _PYGAME is not None
     info = _PYGAME.mixer.get_init()
     if info is None:
         try:
-            _PYGAME.mixer.init(frequency=44100, size=-16, channels=2, buffer=1024)
+            return _init_mixer(44100)
         except Exception:
             _PYGAME.mixer.quit()
-            _PYGAME.mixer.init(frequency=44100, size=-16, channels=2, buffer=1024)
-        info = _PYGAME.mixer.get_init()
-        try:
-            # 0 号通道留给歌曲（拉伸后端固定用它），节拍音等自动选空闲通道，
-            # 避免“滴”声把正在播放的歌曲顶掉
-            _PYGAME.mixer.set_reserved(1)
-        except Exception:  # pragma: no cover - 老版本 pygame
-            pass
+            return _init_mixer(44100)
     return int(info[0]), int(info[1]), int(info[2])
 
 
@@ -563,7 +1004,7 @@ class StretchedSoundBackend:  # pragma: no cover - 依赖 pygame + numpy
             int(self._samples.shape[0]),
             start + int(round(window_ms / 1000.0 * self.freq)),
         )
-        if stop - start < STRETCH_FRAME:
+        if stop - start < max(2, min(STRETCH_FRAME, int(round(self.freq * 0.05)))):
             return None
         chunk = self._samples[start:stop]
         stretched = time_stretch(chunk, self.rate)
@@ -710,6 +1151,8 @@ class AudioPlayer:
         self.latency_ms = 0.0
         self._playing = False
         self._paused_at_ms = 0.0
+        # 歌曲音量（重采样后端重建后要重新套用）
+        self._volume = 1.0
         # 出问题时的说明（界面会显示）
         self.last_error = ""
         # 上次改倍速时是否因为正在播放而自动暂停
@@ -737,6 +1180,61 @@ class AudioPlayer:
                 _MIXER_ERROR = None
                 return backend
         return SilentBackend()
+
+    def _rebuild_backends(self) -> None:
+        """按当前 mixer 格式重建后端。
+
+        采样率切换后旧的 Sound 缓存全部失效，必须丢弃重来。
+        """
+        self._plain_backend = self._create_plain_backend()
+        self._stretch_backend = None
+        self.backend = self._plain_backend
+
+    def _configure_mixer_for(self, path: str) -> bool:
+        """按音频文件的原始采样率初始化 mixer，避免 SDL 重采样改变播放速度。
+
+        SDL 的 48k↔44.1k 重采样实测会把歌曲时长改变约 0.05%～0.09%，
+        对长歌来说就是逐渐累积的音画偏移。能按文件原生采样率播放时就
+        不要让 mixer 重采样。
+        """
+        global _MIXER_ERROR
+        if _PYGAME is None:
+            return False
+        native = audio_file_sample_rate(path)
+        if not native:
+            return False
+        info = _PYGAME.mixer.get_init()
+        current = int(info[0]) if info else None
+        if current == native:
+            return False
+        try:
+            actual = _init_mixer(native)
+        except Exception as exc:  # pragma: no cover - 依赖音频设备
+            # 原生采样率打不开时退回原采样率，宁可重采样也不要丢播放设备
+            try:
+                if current:
+                    _init_mixer(current)
+                else:
+                    _ensure_mixer()
+            except Exception:
+                pass
+            _MIXER_ERROR = f"{type(exc).__name__}: {exc}".strip()
+            self.last_error = (
+                f"无法按 {native} Hz 打开音频设备，已回退；"
+                "音频可能被重采样并产生轻微时序漂移"
+            )
+            self._rebuild_backends()
+            return False
+        if actual[0] != native:
+            self.last_error = (
+                f"音频设备实际采样率 {actual[0]} Hz（文件为 {native} Hz），"
+                "音频可能被重采样并产生轻微时序漂移"
+            )
+        else:
+            self.last_error = ""
+            _MIXER_ERROR = None
+        self._rebuild_backends()
+        return True
 
     def _select_backend(self, path: Optional[str] = None):
         # path 传入“即将载入的歌曲”：load() 会先把 self.path 清空，
@@ -772,6 +1270,7 @@ class AudioPlayer:
         backend = self._select_backend()
         if backend is self.backend:
             self._sync_effects()
+            self._apply_volume()
             return
         position = self.position_ms()
         was_playing = self._playing
@@ -795,6 +1294,7 @@ class AudioPlayer:
 
     def set_mix(self, volume: float, gains) -> None:
         """一次设置歌曲音量 + 音效音量：混音模式下只重合成一次窗口。"""
+        self._volume = float(volume)
         self._effect_gains = {str(k): float(v) for k, v in gains.items()}
         if isinstance(self.backend, StretchedSoundBackend):
             try:
@@ -823,6 +1323,19 @@ class AudioPlayer:
         except Exception:                            # pragma: no cover
             pass
         self._sync_effects()
+        self._apply_volume()
+
+    def _apply_volume(self) -> None:
+        """把当前歌曲 / 音效音量套用到当前后端。"""
+        try:
+            self.backend.set_volume(float(self._volume))
+        except Exception:                            # pragma: no cover
+            pass
+        if isinstance(self.backend, StretchedSoundBackend):
+            try:
+                self.backend.set_mix(float(self._volume), self._effect_gains)
+            except Exception:                        # pragma: no cover
+                pass
 
     @property
     def length_ms(self) -> float:
@@ -864,6 +1377,9 @@ class AudioPlayer:
     def load(self, path: Optional[str]) -> bool:
         self.stop()
         self.path = None
+        self.last_error = ""
+        if path and os.path.isfile(path):
+            self._configure_mixer_for(path)
         self.backend = self._select_backend(path)
         if not path or not os.path.isfile(path):
             # 未载入歌曲：用静音时钟，播放时判定线照常前进（不会一点播放就立刻“结束”）
@@ -885,6 +1401,7 @@ class AudioPlayer:
             self.path = path
             self.backend.set_rate(self.rate)
             self._sync_effects()
+            self._apply_volume()
         return ok
 
     def unload(self) -> None:
@@ -999,6 +1516,7 @@ class AudioPlayer:
                 pass
         self.last_error = reason
         self._playing = False
+        self._apply_volume()
         if was_playing and self.path:
             try:
                 self.play(position)
@@ -1006,6 +1524,7 @@ class AudioPlayer:
                 pass
 
     def set_volume(self, volume: float) -> None:
+        self._volume = float(volume)
         try:
             self.backend.set_volume(volume)
         except Exception:
