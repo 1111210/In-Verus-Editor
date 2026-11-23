@@ -35,10 +35,12 @@ class Theme:
     # 「临时轨道高亮」开启时，完全出现的临时轨道改用深灰色
     lane_temp_highlight: str = "#2b2b2b"
 
-    grid_sub: str = "#242424"
-    grid_sub_red: str = "#e05a5a"
-    grid_sub_blue: str = "#5b8de0"
-    grid_sub_green: str = "#5ac67a"
+    # 中性细分线（非 2/3/4 倍数位置）保持清晰可见，但透明度低于整拍线；
+    # 彩色细分线使用低亮度颜色，避免高密度网格里盖过拍线与小节线。
+    grid_sub: str = "#3b3b3b"
+    grid_sub_red: str = "#a84e4e"
+    grid_sub_blue: str = "#4a6da5"
+    grid_sub_green: str = "#4a905c"
     grid_beat: str = "#3d3d3d"
     grid_bar: str = "#696969"
     grid_label: str = "#808080"

@@ -34,7 +34,6 @@ _BLUE_FRACTIONS = frozenset(
         (11, 12),
     }
 )
-BLUE_MAX_DENOMINATOR = 12
 
 
 def _reduced_fraction(numerator: int, denominator: int) -> tuple[int, int]:
@@ -45,19 +44,20 @@ def _reduced_fraction(numerator: int, denominator: int) -> tuple[int, int]:
 def subdivision_line_style(
     theme: Theme, numerator: int, denominator: int
 ) -> Optional[TimeGridLineStyle]:
-    """返回拍内细分线样式；``None`` 表示高密度网格中应省略该线。"""
+    """返回拍内细分线样式；``None`` 表示当前密度下应省略该线。
+
+    拍内分数先按 2 / 4 / 8 / 12 分位置着色；其余位置（例如 1/16、1/24、1/32）
+    使用中性灰点阵线，整拍线保持实线，因此整拍线的可见度更高。
+    """
     fraction = _reduced_fraction(numerator, denominator)
     if fraction in _RED_FRACTIONS:
         return TimeGridLineStyle(theme.grid_sub_red, 1, theme.stipple_soft)
     if fraction in _GREEN_FRACTIONS:
         return TimeGridLineStyle(theme.grid_sub_green, 1, theme.stipple_soft)
-
-    # 高密度网格只保留二分、四分与八分位置，避免六分 / 十二分线过密。
-    if denominator > BLUE_MAX_DENOMINATOR:
-        return None
     if fraction in _BLUE_FRACTIONS:
         return TimeGridLineStyle(theme.grid_sub_blue, 1, theme.stipple_soft)
-    return TimeGridLineStyle(theme.grid_sub, 1)
+    # 中性细分线用较密的点阵，让整拍线的实线不透明度始终更高。
+    return TimeGridLineStyle(theme.grid_sub, 1, theme.stipple_strong)
 
 
 def time_grid_line_style(
