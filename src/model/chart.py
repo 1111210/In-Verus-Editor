@@ -1,4 +1,4 @@
-"""谱面：元数据 + BPM/偏移 + 速度组 + 物件集合。"""
+"""谱面：元数据 + BPM/偏移 + 轨道数改变 + 速度组 + 物件集合。"""
 
 from __future__ import annotations
 
@@ -22,6 +22,7 @@ from .notes import (
     note_from_dict,
     sort_key,
 )
+from .lanes import LaneChangeEvent, LaneChangeMap, validate_lane_change_events
 from .speed import SpeedGroup, SpeedSegment
 from .timing import BpmSegment, TimingMap
 
@@ -116,6 +117,8 @@ class Chart:
         self.lane_notes: List[LaneNote] = []
         self.mouse_notes: List[MouseNote] = []
         self.speed_groups: List[SpeedGroup] = [SpeedGroup.default()]
+        # 轨道数改变：三条临时轨道的淡入 / 淡出事件（空 = 全程 6K）
+        self.lane_changes = LaneChangeMap()
         # 读取时保留未识别 / 类型异常的字段，保存时合回到规范结构。
         self._source_data: Optional[Dict[str, Any]] = None
         self._unparsed_entries: Dict[str, List[Any]] = {}
@@ -330,7 +333,12 @@ class Chart:
 
     # ------------------------------------------------------------------ 统计
     def beat_bounds(self) -> tuple[float, float]:
-        key = (self.timing.revision, self.revision)
+        key = (
+            self.timing.revision,
+            self.revision,
+            self.lane_changes.revision,
+            id(self.lane_changes),
+        )
         if (
             self._beat_bounds is None
             or self._beat_bounds_for is not self.timing
@@ -342,6 +350,7 @@ class Chart:
                 beats.append(note.tail_beat)
             for seg in self.timing.segments:
                 beats.append(seg.start_beat)
+            beats.extend(self.lane_changes.event_beats())
             self._beat_bounds = (min(beats), max(beats))
             self._beat_bounds_for = self.timing
             self._beat_bounds_key = key
@@ -364,23 +373,40 @@ class Chart:
 
     # ------------------------------------------------------------------ 序列化
     def to_dict(self) -> Dict[str, Any]:
-        data = {
+        data: Dict[str, Any] = {
             "format": config.CHART_FORMAT,
             "version": config.CHART_FORMAT_VERSION,
             "metadata": self.metadata.to_dict(),
             "timing": self.timing.to_dict(),
-            # 注意：其他设置（视图 / 音效 / 其他设置）不写进谱面，
-            # 它们保存在全局配置文件里（见 global_settings.py）。
-            "speed_groups": [g.to_dict() for g in self.speed_groups],
-            "lanes": [n.to_dict() for n in self.sorted_notes() if isinstance(n, LaneNote)],
-            "mouse": [n.to_dict() for n in self.sorted_notes() if isinstance(n, MouseNote)],
         }
+        # 旧谱面没有轨道数改变时保持原结构，不额外写入空字段；已经有该字段的谱面
+        # 即使事件被全部删除也要写回空对象，避免保存时把删除撤销掉。
+        if not self.lane_changes.is_empty or (
+            self._source_data is not None and "lane_changes" in self._source_data
+        ):
+            data["lane_changes"] = self.lane_changes.to_dict()
+        data.update(
+            {
+                # 注意：其他设置（视图 / 音效 / 其他设置）不写进谱面，
+                # 它们保存在全局配置文件里（见 global_settings.py）。
+                "speed_groups": [g.to_dict() for g in self.speed_groups],
+                "lanes": [
+                    n.to_dict() for n in self.sorted_notes() if isinstance(n, LaneNote)
+                ],
+                "mouse": [
+                    n.to_dict() for n in self.sorted_notes() if isinstance(n, MouseNote)
+                ],
+            }
+        )
         if self._source_data is not None:
             data = _merge_preserved(data, self._source_data)
         for section, entries in self._unparsed_entries.items():
             target = data.get(section)
             if isinstance(target, list):
                 target.extend(copy.deepcopy(entries))
+            elif isinstance(target, dict) and isinstance(target.get("events"), list):
+                # lane_changes 等对象型分区：无法解析的事件按原样保留在 events 里
+                target["events"].extend(copy.deepcopy(entries))
         return data
 
     @classmethod
@@ -403,6 +429,84 @@ class Chart:
                 chart.load_warnings.append(f"timing 无法解析，已使用默认时间轴：{exc}")
         elif timing is not None:
             chart.load_warnings.append("timing 不是对象，已使用默认时间轴。")
+
+        lane_changes = raw.get("lane_changes")
+        if isinstance(lane_changes, dict):
+            events_raw = lane_changes.get("events", [])
+            if isinstance(events_raw, list):
+                events = []
+                for index, event_data in enumerate(events_raw):
+                    if not isinstance(event_data, dict):
+                        chart._unparsed_entries.setdefault("lane_changes", []).append(
+                            event_data
+                        )
+                        chart.load_warnings.append(
+                            f"lane_changes.events[{index}] 不是对象，已跳过。"
+                        )
+                        continue
+                    try:
+                        events.append(LaneChangeEvent.from_dict(event_data))
+                    except Exception as exc:
+                        chart._unparsed_entries.setdefault("lane_changes", []).append(
+                            event_data
+                        )
+                        chart.load_warnings.append(
+                            f"lane_changes.events[{index}] 无法解析，已跳过：{exc}"
+                        )
+                # 旧版把同一条事件分别写在三条临时轨道上；读入后合并为统一时间线。
+                # 三份完全一致时是无损迁移，不一致时提示谱师重新确认。
+                legacy_schedules: Dict[float, List[tuple]] = {}
+                has_legacy_lane = False
+                for event_data in events_raw:
+                    if not isinstance(event_data, dict) or "lane" not in event_data:
+                        continue
+                    has_legacy_lane = True
+                    try:
+                        lane = round(float(event_data.get("lane")), 6)
+                        start = round(float(event_data.get("start_beat")), 9)
+                        end = round(float(event_data.get("end_beat")), 9)
+                    except (TypeError, ValueError):
+                        continue
+                    legacy_schedules.setdefault(lane, []).append(
+                        (str(event_data.get("type", "")), start, end)
+                    )
+                if has_legacy_lane:
+                    # 旧版 lane 字段在保存时迁移掉；其余未识别字段仍由 _merge_preserved 保留。
+                    source_changes = (
+                        chart._source_data.get("lane_changes")
+                        if isinstance(chart._source_data, dict)
+                        else None
+                    )
+                    source_events = (
+                        source_changes.get("events")
+                        if isinstance(source_changes, dict)
+                        else None
+                    )
+                    if isinstance(source_events, list):
+                        for source_event in source_events:
+                            if isinstance(source_event, dict):
+                                source_event.pop("lane", None)
+                if legacy_schedules:
+                    signatures = {
+                        tuple(sorted(schedule))
+                        for schedule in legacy_schedules.values()
+                    }
+                    if (
+                        len(signatures) > 1
+                        or len(legacy_schedules) < len(config.TEMPORARY_LANE_POSITIONS)
+                    ):
+                        chart.load_warnings.append(
+                            "lane_changes：旧版逐轨事件已合并为统一事件表；"
+                            "三条临时轨道始终同时淡入 / 淡出。"
+                        )
+                chart.lane_changes = LaneChangeMap(events)
+                error = validate_lane_change_events(chart.lane_changes.events)
+                if error:
+                    chart.load_warnings.append(f"lane_changes：{error}")
+            else:
+                chart.load_warnings.append("lane_changes.events 不是数组，已忽略。")
+        elif lane_changes is not None:
+            chart.load_warnings.append("lane_changes 不是对象，已忽略。")
 
         groups_raw = raw.get("speed_groups")
         if groups_raw is None:

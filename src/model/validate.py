@@ -7,8 +7,15 @@
 * 两条物件的轨道范围相交、且时间范围相交即视为冲突：
   按键互相重叠、长按/多轨按键覆盖别的按键、长按之间相交、多轨按键相交、
   长按与多轨按键相交…… 全部由这一条规则覆盖；
+* 轨道范围包含临时轨道时同样按编号判断；临时轨道当时是否出现不影响重叠结果；
 * 端点相接（紧贴）不算冲突：例如长按在第 10 拍结束、另一个按键正好在第 10 拍 —— 允许。
   但瞬时按键落在长按/多轨按键的内部要报错。
+
+临时轨道：
+
+* 只落在临时轨道上的瞬时按键，在临时轨道完全不出现的时刻报错；
+* 只落在临时轨道上的长按，存在时间与临时轨道完全不出现的时间有正长度交集时报错；
+* 临时轨道正在淡入 / 淡出时不算“完全不出现”，不报错。
 
 鼠标平面：滑键与空域，外加禁区覆盖检查。
 
@@ -30,7 +37,10 @@ from __future__ import annotations
 from dataclasses import dataclass
 from typing import Dict, List, Sequence, Tuple
 
+import config
+
 from .chart import Chart
+from .lanes import lane_covers_original, lane_span_ui_text
 from .notes import ForbiddenRegion, LaneNote, MouseRegion, MouseSlide, Note
 
 EPS = 1e-7
@@ -40,6 +50,7 @@ FORBIDDEN_SAMPLES_PER_BEAT = 4.0
 FORBIDDEN_MAX_SAMPLES = 400
 
 ISSUE_LANE = "lane_overlap"
+ISSUE_TEMP_LANE = "temp_lane_absent"
 ISSUE_SLIDE = "slide_region"
 ISSUE_FORBIDDEN = "forbidden_cover"
 
@@ -101,7 +112,7 @@ def region_active_at(region: MouseRegion, beat: float, eps: float = EPS) -> bool
     return region.beat_start + eps < beat < region.beat_end - eps
 
 
-def lane_range_overlap(a: LaneNote, b: LaneNote) -> Tuple[int, int] | None:
+def lane_range_overlap(a: LaneNote, b: LaneNote) -> Tuple[float, float] | None:
     lo = max(a.lane_start, b.lane_start)
     hi = min(a.lane_end, b.lane_end)
     return (lo, hi) if lo <= hi else None
@@ -116,9 +127,7 @@ def _beat_text(note: Note) -> str:
 
 
 def _lane_text(note: LaneNote) -> str:
-    if note.lane_start == note.lane_end:
-        return f"轨道 {note.lane_start + 1}"
-    return f"轨道 {note.lane_start + 1}-{note.lane_end + 1}"
+    return f"轨道 {lane_span_ui_text(note.lane_start, note.lane_end)}"
 
 
 # ------------------------------------------------------------------ 检查
@@ -137,7 +146,7 @@ def check_lane_notes(chart: Chart) -> List[Issue]:
             if not intervals_conflict(a.beat_start, a.beat_end, other.beat_start, other.beat_end):
                 continue
             lo, hi = lanes
-            lane_text = f"轨道 {lo + 1}" if lo == hi else f"轨道 {lo + 1}-{hi + 1}"
+            lane_text = f"轨道 {lane_span_ui_text(lo, hi)}"
             issues.append(
                 Issue(
                     ISSUE_LANE,
@@ -147,6 +156,53 @@ def check_lane_notes(chart: Chart) -> List[Issue]:
                     (a.id, other.id),
                 )
             )
+    return issues
+
+
+def check_temporary_lane_notes(chart: Chart) -> List[Issue]:
+    """只位于临时轨道上的按键必须落在临时轨道存在（或正在淡入淡出）的时间。
+
+    * 瞬时按键：判定时刻临时轨道完全不出现时报错；
+    * 长按：存在时间与完全不存在的时间有正长度交集时报错；
+    * 淡入 / 淡出期间不算“完全不出现”，因此不报错。
+    """
+    issues: List[Issue] = []
+    changes = chart.lane_changes
+    for note in chart.lane_notes:
+        if lane_covers_original(note.lane_start, note.lane_end):
+            continue
+        if note.is_hold:
+            absent = next(
+                (
+                    segment
+                    for segment in changes.segments(note.beat_start, note.beat_end)
+                    if segment[2] == config.LANE_CHANGE_STATE_ABSENT
+                ),
+                None,
+            )
+            if absent is None:
+                continue
+            beat = (absent[0] + absent[1]) / 2.0
+            issues.append(
+                Issue(
+                    ISSUE_TEMP_LANE,
+                    f"{note.id}（{_lane_text(note)}，{_beat_text(note)}）："
+                    f"长按存在时间与临时轨道完全不出现的时间重叠"
+                    f"（第 {beat:g} 拍附近）",
+                    (note.id,),
+                )
+            )
+            continue
+        if changes.state_at(note.beat_start) != config.LANE_CHANGE_STATE_ABSENT:
+            continue
+        issues.append(
+            Issue(
+                ISSUE_TEMP_LANE,
+                f"{note.id}（{_lane_text(note)}，{_beat_text(note)}）："
+                f"临时轨道此时完全不存在",
+                (note.id,),
+            )
+        )
     return issues
 
 
@@ -212,7 +268,12 @@ def check_slides(chart: Chart) -> List[Issue]:
 
 def validate_chart(chart: Chart) -> List[Issue]:
     """执行全部检查，返回问题列表（空列表 = 通过）。"""
-    return check_lane_notes(chart) + check_slides(chart) + check_forbidden(chart)
+    return (
+        check_lane_notes(chart)
+        + check_temporary_lane_notes(chart)
+        + check_slides(chart)
+        + check_forbidden(chart)
+    )
 
 
 def _check_beats(start: float, end: float) -> List[float]:
@@ -299,19 +360,27 @@ def check_forbidden(chart: Chart) -> List[Issue]:
 def format_report(chart: Chart, issues: Sequence[Issue]) -> str:
     """把检查结果整理成可读文本（用于弹窗展示）。"""
     counts = chart.note_counts()
+    temporary_lane_count = sum(
+        1 for note in chart.lane_notes
+        if not lane_covers_original(note.lane_start, note.lane_end)
+    )
     lines = [
         "自动检查范围：",
-        f"  · 6K 下落式：{counts['lane']} 个物件",
+        f"  · 6K 下落式：{counts['lane']} 个物件"
+        f"（其中只位于临时轨道：{temporary_lane_count} 个）",
         f"  · 空域：{counts['region']} 个   禁区：{counts['forbidden']} 个   "
         f"滑键：{counts['slide']} 个",
         "",
         "检查规则：",
         "  · 任意轨道在任意时刻只能存在一个按键；长按 / 多轨按键与其它按键重叠都算冲突",
+        "  · 轨道范围包含临时轨道时同样按编号判断；临时轨道当时是否出现不影响重叠结果",
+        "  · 只位于临时轨道上的按键不能在临时轨道完全不出现时存在；淡入淡出期间允许",
         "  · 滑键所在时刻若落在空域内部，则滑键横向范围必须与该空域相交或紧贴",
         "  · 滑键与空域的任意时刻都不能被禁区完全覆盖；多个禁区的横向范围会合并计算",
         "",
     ]
     lane_issues = [i for i in issues if i.kind == ISSUE_LANE]
+    temp_lane_issues = [i for i in issues if i.kind == ISSUE_TEMP_LANE]
     slide_issues = [i for i in issues if i.kind == ISSUE_SLIDE]
     forbidden_issues = [i for i in issues if i.kind == ISSUE_FORBIDDEN]
     if not issues:
@@ -322,6 +391,11 @@ def format_report(chart: Chart, issues: Sequence[Issue]) -> str:
     if lane_issues:
         lines.append(f"【6K 轨道冲突】共 {len(lane_issues)} 处")
         for index, issue in enumerate(lane_issues, 1):
+            lines.append(f"  {index}. {issue.message}")
+        lines.append("")
+    if temp_lane_issues:
+        lines.append(f"【临时轨道】共 {len(temp_lane_issues)} 处")
+        for index, issue in enumerate(temp_lane_issues, 1):
             lines.append(f"  {index}. {issue.message}")
         lines.append("")
     if slide_issues:

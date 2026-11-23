@@ -11,6 +11,7 @@ from typing import List, Optional, Sequence, Tuple
 
 import config
 from model.chart import Chart
+from model.lanes import lane_covers_original, lane_display_span
 from model.notes import (
     LaneNote,
     MouseRegion,
@@ -36,7 +37,7 @@ Point = Tuple[float, float]
 
 @dataclass(frozen=True)
 class LaneNoteGeometry:
-    """6K 物件的唯一屏幕几何，供渲染与命中测试共同使用。"""
+    """轨道按键（6K / 9K 显示）的唯一屏幕几何，供渲染与命中测试共同使用。"""
 
     x0: float
     x1: float
@@ -201,6 +202,8 @@ def hit_signature(view: ViewState) -> tuple:
         round(float(layout.judgment_y), 6),
         int(getattr(view.chart, "revision", 0)),
         bool(view.settings.ignore_speed_groups),
+        bool(layout.nine_key),
+        tuple(round(float(x), 3) for rect in layout.lane_rects for x in rect),
     )
 
 
@@ -244,8 +247,14 @@ class HitCache:
         return found
 
 
-def lane_note_pads(note: LaneNote) -> Tuple[float, float]:
-    pad = 6.0 if note.is_multi else 9.0
+def lane_note_pads(note: LaneNote, view: ViewState | None = None) -> Tuple[float, float]:
+    """按键左右留白：显示为多轨时略小，单轨时略大。"""
+    multi = note.is_multi
+    if view is not None:
+        layout = view.layout
+        low, high = lane_display_span(note.lane_start, note.lane_end, layout.nine_key)
+        multi = low != high
+    pad = 6.0 if multi else 9.0
     return pad, pad
 
 
@@ -254,10 +263,8 @@ def lane_note_geometry(note: LaneNote, view: ViewState) -> LaneNoteGeometry:
 
     layout = view.layout
     group = view.display_group(note)
-    x0, x1 = layout.lane_span(note.lane_start, note.lane_end)
-    pad, _ = lane_note_pads(note)
-    x0 += pad
-    x1 -= pad
+    pad, _ = lane_note_pads(note, view)
+    x0, x1 = layout.lane_inner_span(note.lane_start, note.lane_end, pad)
     y_head = view.note_y(note.beat_start, group)
     y_tail = view.note_y(note.beat_end, group) if note.is_hold else y_head
     top = min(y_head, y_tail)
@@ -467,6 +474,10 @@ def note_bounds(note: Note, chart: Chart, view: ViewState) -> Optional[Bounds]:
     一致地裁剪到 pane_mouse。
     """
     if isinstance(note, LaneNote):
+        if not view.layout.nine_key and not lane_covers_original(
+            note.lane_start, note.lane_end
+        ):
+            return None
         return lane_note_bounds(note, chart, view)
     if isinstance(note, MouseRegion):
         return region_bounds(note, chart, view)

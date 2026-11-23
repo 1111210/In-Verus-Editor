@@ -4,6 +4,7 @@
 * LAYOUT_SPLIT（编辑器默认）：画布左右分成两个独立区域 ——
   左边是 6K 下落式区域，右边是鼠标平面区域。两个区域共用同一条判定线
   （同一个 y）与同一套时间网格，所以滚动 / 缩放天然同步。
+  开启 9K 模式后，左边按 9 条轨道排列（插入三条临时轨道）。
 * LAYOUT_OVERLAY（演示模式）：只有一个区域，鼠标平面叠加在 6K 的中间四条轨道上。
 
 两个区域的时间映射完全一致（beat_to_y），因此切换模式不会改变时间位置。
@@ -18,6 +19,12 @@ from typing import List, Optional, Tuple
 import config
 from editor_settings import EditorSettings
 from model.chart import Chart
+from model.lanes import (
+    is_temporary_lane,
+    lane_display_index,
+    lane_display_span,
+    lane_from_display_index,
+)
 from model.notes import Note
 from model.speed import SpeedGroup, SpeedSegment
 
@@ -55,9 +62,15 @@ class Layout:
     pad_bottom: int = 12
     mode: str = config.LAYOUT_SPLIT
     split_ratio: float = config.SPLIT_6K_RATIO
+    # 9K 模式：6K 区域渲染为 9 条轨道（插入三条临时轨道）
+    nine_key: bool = False
 
     def __post_init__(self) -> None:
         self.recompute()
+
+    @property
+    def lane_count(self) -> int:
+        return config.NINE_KEY_LANE_COUNT if self.nine_key else config.LANE_COUNT
 
     # ------------------------------------------------------------------ 计算
     def recompute(self) -> None:
@@ -77,11 +90,13 @@ class Layout:
             left = max(self.play_left, center - width / 2.0)
             right = min(self.play_right, center + width / 2.0)
             self.overlay_span = (float(left), float(right))
-            rects = _column_rects(self.overlay_span, config.LANE_COUNT)
+            rects = _column_rects(self.overlay_span, self.lane_count)
             self.lane_rects = rects
             self.pane_6k = (float(left), float(right))
-            mouse_left = rects[config.MOUSE_LANE_FIRST][0]
-            mouse_right = rects[config.MOUSE_LANE_LAST][1]
+            mouse_first = lane_display_index(float(config.MOUSE_LANE_FIRST), self.nine_key)
+            mouse_last = lane_display_index(float(config.MOUSE_LANE_LAST), self.nine_key)
+            mouse_left = rects[mouse_first][0]
+            mouse_right = rects[mouse_last][1]
             self.pane_mouse = (mouse_left, mouse_right)
             self.mouse_left = mouse_left
             self.mouse_right = mouse_right
@@ -92,7 +107,7 @@ class Layout:
             k6_width = max(120.0, usable * self.split_ratio)
             self.pane_6k = (float(self.play_left), float(self.play_left + k6_width))
             self.pane_mouse = (float(self.play_left + k6_width + config.PANE_GAP), float(self.play_right))
-            self.lane_rects = _column_rects(self.pane_6k, config.LANE_COUNT)
+            self.lane_rects = _column_rects(self.pane_6k, self.lane_count)
             # 鼠标平面显示范围 = 合法区域 0..1 + 两侧各 MOUSE_OVERFLOW_NORM 的溢出余量：
             # 区域边界允许超出 0..1，多出来的部分也要看得见。
             pane_w = max(20.0, self.pane_mouse[1] - self.pane_mouse[0])
@@ -135,15 +150,22 @@ class Layout:
         return min(1.0 - low, max(low, ratio))
 
     # -------------------------------------------------------------- 轨道几何
-    def lane_span(self, lane_start: int, lane_end: int) -> Tuple[float, float]:
-        lane_start = max(0, min(config.LANE_COUNT - 1, lane_start))
-        lane_end = max(0, min(config.LANE_COUNT - 1, lane_end))
-        if lane_start > lane_end:
-            lane_start, lane_end = lane_end, lane_start
-        return self.lane_rects[lane_start][0], self.lane_rects[lane_end][1]
+    def lane_span(self, lane_start: float, lane_end: float) -> Tuple[float, float]:
+        """轨道编号区间 -> 显示轨道的左右边界（6K 模式折叠临时轨道）。"""
+        low, high = lane_display_span(lane_start, lane_end, self.nine_key)
+        return self.lane_rects[low][0], self.lane_rects[high][1]
+
+    def lane_inner_span(
+        self, lane_start: float, lane_end: float, pad: float
+    ) -> Tuple[float, float]:
+        """轨道区间的左右边界各向内收 pad 像素，窄轨时按比例收窄避免翻转。"""
+        x0, x1 = self.lane_span(lane_start, lane_end)
+        limit = max(1.0, (x1 - x0) * 0.18)
+        inset = min(max(0.0, float(pad)), limit)
+        return x0 + inset, x1 - inset
 
     def lane_at(self, x: float) -> Optional[int]:
-        """返回该横坐标所在的轨道；不在 6K 区域内返回 None。"""
+        """返回该横坐标所在的显示轨道下标；不在 6K 区域内返回 None。"""
         if not self.in_6k_pane(x):
             return None
         for index, (x0, x1) in enumerate(self.lane_rects):
@@ -151,9 +173,23 @@ class Layout:
                 return index
         return None
 
-    def lane_center(self, lane: int) -> float:
-        x0, x1 = self.lane_rects[max(0, min(config.LANE_COUNT - 1, lane))]
+    def lane_position_at(self, x: float) -> Optional[float]:
+        """返回该横坐标对应的谱面轨道编号（9K 模式可能是 1.5 / 2.5 / 3.5）。"""
+        index = self.lane_at(x)
+        if index is None:
+            return None
+        return lane_from_display_index(index, self.nine_key)
+
+    def lane_center(self, lane: float) -> float:
+        index = lane_display_index(lane, self.nine_key)
+        x0, x1 = self.lane_rects[index]
         return (x0 + x1) / 2.0
+
+    def is_temporary_lane_index(self, index: int) -> bool:
+        """显示轨道下标是否对应 9K 的临时轨道。"""
+        if not self.nine_key or not 0 <= index < len(self.lane_rects):
+            return False
+        return is_temporary_lane(lane_from_display_index(index, True))
 
 
 class ViewState:
@@ -168,6 +204,9 @@ class ViewState:
         self.chart = chart
         self.settings = settings or chart.settings
         self.layout = layout or Layout()
+        if bool(self.layout.nine_key) != bool(self.settings.nine_key_mode):
+            self.layout.nine_key = bool(self.settings.nine_key_mode)
+            self.layout.recompute()
         self.current_beat = 0.0
         self.playing = False
 
@@ -194,6 +233,14 @@ class ViewState:
         """拖动分界线：设置 6K 区域占比并重算布局（分栏模式下生效）。"""
         low = self.layout.min_split_ratio()
         self.layout.split_ratio = min(1.0 - low, max(low, float(ratio)))
+        self.layout.recompute()
+
+    def set_nine_key_mode(self, enabled: bool) -> None:
+        """切换 6K / 9K 显示并重算轨道几何。"""
+        enabled = bool(enabled)
+        if self.layout.nine_key == enabled:
+            return
+        self.layout.nine_key = enabled
         self.layout.recompute()
 
     def divider_at(self, x: float) -> bool:

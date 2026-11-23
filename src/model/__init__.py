@@ -1,8 +1,9 @@
-"""谱面数据模型：时间轴、物件、速度组、谱面与文档（撤销栈）。"""
+"""谱面数据模型：时间轴、轨道、物件、速度组、谱面与文档（撤销栈）。"""
 
 from __future__ import annotations
 
 from .timing import BpmSegment, TimingMap
+from .lanes import LaneChangeEvent, LaneChangeMap
 from .notes import (
     BoundaryCurve,
     ForbiddenRegion,
@@ -31,6 +32,8 @@ from .document import Document
 __all__ = [
     "BpmSegment",
     "TimingMap",
+    "LaneChangeEvent",
+    "LaneChangeMap",
     "BoundaryCurve",
     "ForbiddenRegion",
     "LaneNote",

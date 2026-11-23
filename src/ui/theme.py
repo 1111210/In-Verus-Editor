@@ -29,6 +29,11 @@ class Theme:
     lane_border: str = "#2f2f2f"
     lane_border_strong: str = "#4d4d4d"
     lane_side_highlight: str = "#3a2352"   # 侧轨高亮：第 1 / 第 6 轨背景（暗紫）
+    # 9K 模式的临时轨道：不存在时暗红、淡入淡出时暗黄，完全出现时用普通轨道底色
+    lane_temp_absent: str = "#3a0f0f"
+    lane_temp_fading: str = "#66520e"
+    # 「临时轨道高亮」开启时，完全出现的临时轨道改用深灰色
+    lane_temp_highlight: str = "#2b2b2b"
 
     grid_sub: str = "#242424"
     grid_sub_red: str = "#e05a5a"

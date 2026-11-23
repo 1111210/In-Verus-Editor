@@ -33,6 +33,7 @@ EDITABLE_COMMANDS: Tuple[EditableCommand, ...] = tuple(
     EditableCommand("page_up", "向上翻页", "PageUp"),
     EditableCommand("page_down", "向下翻页", "PageDown"),
     EditableCommand("play", "播放 / 暂停", "Space"),
+    EditableCommand("nine_key", "切换 6K / 9K 模式", "`"),
     EditableCommand("demo", "演示视图", ""),
     EditableCommand("maximize", "最大化 / 还原窗口", "F10"),
     EditableCommand("fullscreen", "全屏切换", "F11"),
@@ -138,6 +139,9 @@ _KEY_ALIASES = {
     "right": "→",
     "up": "↑",
     "down": "↓",
+    "grave": "`",
+    "quoteleft": "`",
+    "dead_grave": "`",
 }
 
 
@@ -230,6 +234,7 @@ _TK_KEYSYMS = {
     "→": "Right",
     "↑": "Up",
     "↓": "Down",
+    "`": "grave",
 }
 
 

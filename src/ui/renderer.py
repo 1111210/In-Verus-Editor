@@ -3,6 +3,8 @@
 布局：
 * 编辑器（LAYOUT_SPLIT）：左右两个独立区域 —— 左边 6K 下落式、右边鼠标平面。
   两个区域共用同一条判定线的 y 坐标与同一套时间网格，因此滚动 / 缩放同步。
+* 9K 模式：左边按 9 条轨道绘制，三条临时轨道按轨道数改变事件显示暗红 / 暗黄 /
+  普通底色。
 * 演示模式（LAYOUT_OVERLAY）：只有一个区域，鼠标平面叠加在 6K 的中间四条轨道上。
 
 渲染顺序（自下而上）：
@@ -28,6 +30,12 @@ from typing import List, Optional, Set, Tuple
 
 import config
 from model.chart import Chart
+from model.lanes import (
+    is_temporary_lane,
+    lane_covers_original,
+    lane_display_span,
+    lane_span_ui_text,
+)
 from model.notes import (
     BoundaryCurve,
     ForbiddenRegion,
@@ -103,8 +111,8 @@ class PendingPreview:
 
     tool: str = ""
     step: int = 0          # 交互阶段（0 = 还没落下第一个点）
-    lane_start: Optional[int] = None
-    lane_end: Optional[int] = None
+    lane_start: Optional[float] = None
+    lane_end: Optional[float] = None
     beat_start: Optional[float] = None
     beat_end: Optional[float] = None
     x_start: Optional[float] = None
@@ -214,7 +222,7 @@ class Renderer:
 
         self.scene.set_layer(1)
         self._draw_lanes(
-            view, theme, "lane", view.settings.side_lane_highlight
+            chart, view, theme, "lane", view.settings.side_lane_highlight
         )
         self.scene.set_layer(2)
         self._draw_time_grid(chart, view, beat_low, beat_high, *layout.pane_6k, "grid6", True, False)
@@ -250,7 +258,7 @@ class Renderer:
             width=1,
         )
         self._draw_lanes(
-            view, theme, "lane", view.settings.side_lane_highlight
+            chart, view, theme, "lane", view.settings.side_lane_highlight
         )
         self.scene.set_layer(2)
         self._draw_time_grid(
@@ -309,25 +317,79 @@ class Renderer:
     # ------------------------------------------------------------------ 轨道
     def _draw_lanes(
         self,
+        chart: Chart,
         view: ViewState,
         theme: Theme,
         key_prefix: str = "lane",
         highlight_sides: bool = False,
     ) -> None:
         layout = view.layout
+        beat_low, beat_high = view.beat_range()
+        # 三条临时轨道共用同一份状态段，计算一次即可。
+        temp_segments = chart.lane_changes.segments(beat_low, beat_high)
         for index, (x0, x1) in enumerate(layout.lane_rects):
             if highlight_sides and index in (0, len(layout.lane_rects) - 1):
-                # 侧轨高亮：第 1 / 第 6 轨背景用暗紫色
+                # 侧轨高亮：第 1 / 第 6 轨背景用暗紫色（9K 模式为第 1 / 第 9 轨）
                 fill = theme.lane_side_highlight
             else:
                 fill = theme.lane_alt if index % 2 == 0 else theme.lane_alt2
+            temporary = layout.is_temporary_lane_index(index)
+            if not temporary:
+                self.scene.rect(
+                    f"{key_prefix}:{index}",
+                    x0,
+                    layout.play_top,
+                    x1,
+                    layout.play_bottom,
+                    fill=fill,
+                    outline=theme.lane_border,
+                    width=1,
+                )
+                continue
+            if view.settings.temporary_lane_highlight:
+                fill = theme.lane_temp_highlight
+            # 临时轨道的底色随轨道数改变事件分段：不存在 = 暗红，淡入淡出 = 暗黄，
+            # 完全出现 = 普通轨道底色（开启临时轨道高亮时为深灰色）。先铺正常底色，
+            # 再覆盖不存在 / 淡入淡出的段。
             self.scene.rect(
-                f"{key_prefix}:{index}",
+                f"{key_prefix}:{index}:base",
                 x0,
                 layout.play_top,
                 x1,
                 layout.play_bottom,
                 fill=fill,
+                outline="",
+            )
+            state_colors = {
+                config.LANE_CHANGE_STATE_ABSENT: theme.lane_temp_absent,
+                config.LANE_CHANGE_STATE_FADING: theme.lane_temp_fading,
+            }
+            for segment_index, (low, high, state) in enumerate(temp_segments):
+                color = state_colors.get(state)
+                if color is None:
+                    continue
+                y_low = view.beat_to_y(low)
+                y_high = view.beat_to_y(high)
+                top = max(layout.play_top, min(y_low, y_high))
+                bottom = min(layout.play_bottom, max(y_low, y_high))
+                if bottom <= top:
+                    continue
+                self.scene.rect(
+                    f"{key_prefix}:{index}:state:{segment_index}",
+                    x0,
+                    top,
+                    x1,
+                    bottom,
+                    fill=color,
+                    outline="",
+                )
+            self.scene.rect(
+                f"{key_prefix}:{index}:border",
+                x0,
+                layout.play_top,
+                x1,
+                layout.play_bottom,
+                fill="",
                 outline=theme.lane_border,
                 width=1,
             )
@@ -586,6 +648,11 @@ class Renderer:
         y_max: float = 1e9,
     ) -> None:
         theme = self.theme
+        if not view.layout.nine_key and not lane_covers_original(
+            note.lane_start, note.lane_end
+        ):
+            # 只落在临时轨道上的按键在 6K 模式下没有可显示的原始轨道。
+            return
         shape = lane_note_geometry(note, view)
         x0, x1 = shape.x0, shape.x1
         y_head, top, bottom = shape.y_head, shape.top, shape.bottom
@@ -636,7 +703,21 @@ class Renderer:
                 width=2,
             )
         if selected:
-            label = f"{note.id} · 轨道{note.lane_start + 1}-{note.lane_end + 1} · 组{note.group}"
+            lane_text = lane_span_ui_text(note.lane_start, note.lane_end)
+            display_text = ""
+            if view.layout.nine_key:
+                low, high = lane_display_span(note.lane_start, note.lane_end, True)
+                low += 1
+                high += 1
+                display = f"{low}" if low == high else f"{low}-{high}"
+                display_text = f" · 9K {display}"
+            elif is_temporary_lane(note.lane_start) or is_temporary_lane(note.lane_end):
+                low, high = lane_display_span(note.lane_start, note.lane_end, False)
+                low += 1
+                high += 1
+                display = f"{low}" if low == high else f"{low}-{high}"
+                display_text = f" · 6K {display}"
+            label = f"{note.id} · 轨道 {lane_text}{display_text} · 组{note.group}"
             self.scene.text(
                 f"lbl:{note.id}",
                 x0,
@@ -1005,18 +1086,34 @@ class Renderer:
             )
 
     # ------------------------------------------------------------------ 预览
+    @staticmethod
+    def _lane_pending_visible(
+        view: ViewState, lane_start: float, lane_end: float | None = None
+    ) -> bool:
+        """6K 模式下只落在临时轨道上的放置预览不显示。"""
+        if view.layout.nine_key:
+            return True
+        return lane_covers_original(
+            lane_start, lane_start if lane_end is None else lane_end
+        )
+
     def _draw_pending(self, chart: Chart, view: ViewState, state: RenderState) -> None:
         pending = state.pending
         theme = self.theme
         layout = view.layout
-        if pending.tool == config.TOOL_LANE_TAP and pending.lane_start is not None and pending.beat_start is not None:
-            x0, x1 = layout.lane_span(pending.lane_start, pending.lane_start)
+        if (
+            pending.tool == config.TOOL_LANE_TAP
+            and pending.lane_start is not None
+            and pending.beat_start is not None
+            and self._lane_pending_visible(view, pending.lane_start)
+        ):
+            x0, x1 = layout.lane_inner_span(pending.lane_start, pending.lane_start, 9)
             y = view.note_y(pending.beat_start)
             self.scene.rect(
                 "pending:tap",
-                x0 + 9,
+                x0,
                 y - TAP_MIN_PX,
-                x1 - 9,
+                x1,
                 y,
                 fill=theme.pending,
                 outline=theme.pending,
@@ -1024,14 +1121,27 @@ class Renderer:
                 dash=(4, 3),
                 stipple=theme.stipple_soft,
             )
-        elif pending.tool == config.TOOL_LANE_MULTI and pending.lane_start is not None and pending.lane_end is not None:
-            x0, x1 = layout.lane_span(pending.lane_start, pending.lane_end)
+        elif (
+            pending.tool == config.TOOL_LANE_MULTI
+            and pending.lane_start is not None
+            and pending.lane_end is not None
+            and self._lane_pending_visible(
+                view, pending.lane_start, pending.lane_end
+            )
+        ):
+            low, high = lane_display_span(
+                pending.lane_start, pending.lane_end, layout.nine_key
+            )
+            display_multi = low != high
+            x0, x1 = layout.lane_inner_span(
+                pending.lane_start, pending.lane_end, 6 if display_multi else 9
+            )
             y = view.note_y(pending.beat_start or 0.0)
             self.scene.rect(
                 "pending:multi",
-                x0 + 6,
+                x0,
                 y - TAP_MIN_PX,
-                x1 - 6,
+                x1,
                 y,
                 fill=theme.pending,
                 outline=theme.pending,
@@ -1043,10 +1153,18 @@ class Renderer:
             pending.tool == config.TOOL_LANE_HOLD
             and pending.lane_start is not None
             and pending.beat_start is not None
+            and self._lane_pending_visible(
+                view,
+                pending.lane_start,
+                pending.lane_end if pending.lane_end is not None else pending.lane_start,
+            )
         ):
             lane_end = pending.lane_end if pending.lane_end is not None else pending.lane_start
-            x0, x1 = layout.lane_span(pending.lane_start, lane_end)
-            pad = 9 if x1 - x0 < 2 else 6
+            low, high = lane_display_span(
+                pending.lane_start, lane_end, layout.nine_key
+            )
+            pad = 6 if low != high else 9
+            x0, x1 = layout.lane_inner_span(pending.lane_start, lane_end, pad)
             end = pending.beat_end if pending.beat_end is not None else pending.beat_start
             y_head = view.note_y(pending.beat_start)
             y_tail = view.note_y(end)
@@ -1056,9 +1174,9 @@ class Renderer:
                 top = bottom - TAP_MIN_PX
             self.scene.rect(
                 "pending:hold",
-                x0 + pad,
+                x0,
                 top,
-                x1 - pad,
+                x1,
                 bottom,
                 fill=theme.pending,
                 outline=theme.pending,
@@ -1181,11 +1299,20 @@ class Renderer:
             note.shift(base)
             key = f"ghost:{index}"
             if isinstance(note, LaneNote):
-                x0, x1 = view.layout.lane_span(note.lane_start, note.lane_end)
+                if not view.layout.nine_key and not lane_covers_original(
+                    note.lane_start, note.lane_end
+                ):
+                    continue
+                low, high = lane_display_span(
+                    note.lane_start, note.lane_end, view.layout.nine_key
+                )
+                x0, x1 = view.layout.lane_inner_span(
+                    note.lane_start, note.lane_end, 6 if low != high else 9
+                )
                 y = view.note_y(note.beat_start)
                 y2 = view.note_y(note.beat_end) if note.is_hold else y - TAP_MIN_PX
                 self.scene.rect(
-                    key, x0 + 6, min(y, y2), x1 - 6, max(y, y2),
+                    key, x0, min(y, y2), x1, max(y, y2),
                     fill="", outline=theme.pending, width=2, dash=(3, 3),
                 )
             elif isinstance(note, MouseRegion):

@@ -639,6 +639,8 @@ class SoftwareView:
         head_z = self._note_z(self._head_ms(note), now_ms, group=group)
         head_z = min(START_Z, max(z_near, head_z))
         shape = frame.lane_shape(note)
+        if shape is None:
+            return
         tex_index, x0, x1 = shape.texture_index, shape.x0, shape.x1
         if note.is_hold:
             # 时间已经过去的部分不画：只画「当前时刻 ~ 长按结尾」这一截

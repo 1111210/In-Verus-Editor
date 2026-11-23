@@ -9,6 +9,13 @@ from typing import Callable, Dict, List, Optional, Tuple
 
 import config
 from model.document import Document
+from model.lanes import (
+    is_temporary_lane,
+    lane_display_span,
+    lane_from_display_index,
+    lane_span_ui_text,
+    lane_ui_text,
+)
 from model.notes import (
     BoundaryCurve,
     ForbiddenRegion,
@@ -22,6 +29,21 @@ from .renderer import RenderState
 from .view import ViewState
 
 RegionEditor = Callable[[float, float, Tuple[float, float], Tuple[float, float]], Optional[Dict]]
+
+
+def _display_lane_to_position(old_lane: float, display: float, nine_key: bool) -> float:
+    """把显示轨道下标映射回谱面轨道编号。
+
+    6K 模式下临时轨道折叠到左侧原始轨道；拖动时保留“这条轨道原本是临时轨道”
+    这一信息：如果目标显示轨道也有临时轨道（第 2 / 3 / 4 条显示轨道），
+    临时轨道就落在对应的 1.5 / 2.5 / 3.5 上，否则落到原始轨道。
+    """
+    if nine_key:
+        return lane_from_display_index(display, True)
+    index = int(display)
+    if is_temporary_lane(old_lane) and index in (1, 2, 3):
+        return float(index) + 0.5
+    return float(index)
 
 
 class ToolController:
@@ -51,7 +73,7 @@ class ToolController:
         self._drag: Optional[Dict[str, object]] = None
         # 未完成操作的“已提交”阶段：0 = 只有悬停预览，1 = 等待第二次点击
         self._stage = 0
-        self._first_lane: Optional[int] = None
+        self._first_lane: Optional[float] = None
         self._first_beat: Optional[float] = None
         self._first_x: Optional[float] = None
         # 空域放置：结束时间与四条边界数值（未点击的为 None）
@@ -271,7 +293,9 @@ class ToolController:
             if grid_on and anchor is not None:
                 x_delta = self.view.snap_norm(anchor + raw_delta) - anchor
                 reported = x_delta
-            self._shift_note(note, beats, lane_delta, x_delta)
+            self._shift_note(
+                note, beats, lane_delta, x_delta, self.view.layout.nine_key
+            )
             rebuilt.append(note.to_dict())
         self.document._apply_notes_state([str(i["id"]) for i in drag["before"]], rebuilt)  # type: ignore[arg-type]
         drag["moved"] = True
@@ -291,17 +315,34 @@ class ToolController:
         return None
 
     @staticmethod
-    def _shift_note(note: Note, beats: float, lane_delta: int, x_delta: float) -> None:
-        """按偏移移动一个物件（时间 / 轨道 / 横向位置三类按类型处理）。"""
+    def _shift_note(
+        note: Note, beats: float, lane_delta: int, x_delta: float, nine_key: bool = False
+    ) -> None:
+        """按偏移移动一个物件（时间 / 轨道 / 横向位置三类按类型处理）。
+
+        lane_delta 以当前显示的轨道为单位；6K 模式折叠临时轨道，9K 模式包含
+        临时轨道。轨道的实际编号由 _display_lane_to_position 还原。
+        """
         note.shift(beats)
         if isinstance(note, LaneNote):
             if lane_delta:
-                span = note.lane_end - note.lane_start
-                start = min(
-                    max(0, note.lane_start + lane_delta), config.LANE_COUNT - 1 - span
+                lane_count = (
+                    config.NINE_KEY_LANE_COUNT if nine_key else config.LANE_COUNT
                 )
+                low, high = lane_display_span(
+                    note.lane_start, note.lane_end, nine_key
+                )
+                span = high - low
+                new_low = min(
+                    max(0, low + lane_delta), lane_count - 1 - span
+                )
+                new_high = new_low + span
+                start = _display_lane_to_position(note.lane_start, new_low, nine_key)
+                end = _display_lane_to_position(note.lane_end, new_high, nine_key)
+                if start > end:
+                    start, end = end, start
                 note.lane_start = start
-                note.lane_end = start + span
+                note.lane_end = end
             return
         if isinstance(note, MouseRegion):
             for curve in (note.left, note.right):
@@ -312,8 +353,8 @@ class ToolController:
             note.x_start = min(1.0, max(0.0, note.x_start + x_delta))
             note.x_end = min(1.0, max(0.0, note.x_end + x_delta))
 
-    def _lane_at(self, x: float) -> Optional[int]:
-        return self.view.layout.lane_at(x)
+    def _lane_at(self, x: float) -> Optional[float]:
+        return self.view.layout.lane_position_at(x)
 
     def _in_play(self, x: float, y: float) -> bool:
         return self.view.in_play_area(x, y)
@@ -329,7 +370,7 @@ class ToolController:
         beat = self.view.snap_beat(self.view.y_to_beat(y))
         note = LaneNote(self.document.chart.new_note_id("L"), lane, lane, beat, beat)
         self.document.add_note(note, "放置单轨按键")
-        self.status(f"已放置单轨按键 {note.id}：轨道 {lane + 1}，第 {beat:g} 拍")
+        self.status(f"已放置单轨按键 {note.id}：轨道 {lane_ui_text(lane)}，第 {beat:g} 拍")
 
     def _place_lane_multi(self, x: float, y: float) -> None:
         if not self._in_play(x, y):
@@ -348,7 +389,7 @@ class ToolController:
             self.status(hint)
             return
         start_lane = self._first_lane if self._first_lane is not None else lane
-        if start_lane == lane:
+        if abs(start_lane - lane) <= 1e-9:
             self.status("请点击另一条轨道")
             return
         beat = self._first_beat or 0.0
@@ -360,7 +401,10 @@ class ToolController:
             beat,
         )
         self.document.add_note(note, "放置多轨按键")
-        self.status(f"已放置多轨按键 {note.id}：轨道 {note.lane_start + 1}-{note.lane_end + 1}，第 {beat:g} 拍")
+        self.status(
+            f"已放置多轨按键 {note.id}："
+            f"轨道 {lane_span_ui_text(note.lane_start, note.lane_end)}，第 {beat:g} 拍"
+        )
         self.cancel_pending()
 
     def _place_lane_hold(self, x: float, y: float) -> None:
@@ -400,7 +444,8 @@ class ToolController:
         self.document.add_note(note, "放置长按")
         self.status(
             f"已放置长按 {note.id}："
-            f"轨道 {note.lane_start + 1}-{note.lane_end + 1}，第 {start:g} → {end:g} 拍"
+            f"轨道 {lane_span_ui_text(note.lane_start, note.lane_end)}，"
+            f"第 {start:g} → {end:g} 拍"
         )
         self.cancel_pending()
 

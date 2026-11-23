@@ -28,6 +28,7 @@ from chart_io import (
 )
 from model.chart import Chart
 from model.document import Document
+from model.lanes import is_temporary_lane, lane_ui_number
 from model.notes import BoundaryCurve, ForbiddenRegion, MouseRegion
 from model.timing import TimingMap
 from model.validate import format_report, validate_chart
@@ -41,6 +42,7 @@ from ui.dialogs import (
     BpmDialog,
     DemoViewDialog,
     HelpDialog,
+    LaneChangeDialog,
     MetadataDialog,
     NoteEditDialog,
     SaveChangesDialog,
@@ -341,6 +343,8 @@ class EditorApp:
             self._scroll_page(-1)
         elif action_id == "play":
             self.toggle_play()
+        elif action_id == "nine_key":
+            self.toggle_nine_key_mode()
         elif action_id == "demo":
             self.toggle_demo()
         elif action_id == "maximize":
@@ -464,6 +468,8 @@ class EditorApp:
             bool(settings.side_lane_highlight),
             bool(settings.show_past_notes),
             bool(settings.ignore_speed_groups),
+            bool(settings.nine_key_mode),
+            bool(settings.temporary_lane_highlight),
             round(float(self.view.current_beat), 6),
             int(layout.width),
             int(layout.height),
@@ -667,8 +673,17 @@ class EditorApp:
         layout = self.view.layout
         beat = self.view.y_to_beat(y)
         lane = layout.lane_at(x)
-        if lane is not None:
-            where = f"6K 轨道 {lane + 1}"
+        position = layout.lane_position_at(x) if lane is not None else None
+        if lane is not None and position is not None:
+            if layout.nine_key and is_temporary_lane(position):
+                state = self.document.chart.lane_changes.state_at(beat)
+                state_text = config.LANE_CHANGE_STATE_LABELS.get(state, state)
+                where = (
+                    f"9K 轨道 {lane + 1} · 临时轨道 {lane_ui_number(position):g}"
+                    f" · {state_text}"
+                )
+            else:
+                where = f"{'9K' if layout.nine_key else '6K'} 轨道 {lane + 1}"
         elif layout.in_mouse_pane(x):
             where = f"鼠标平面 · 横向 {self.view.x_to_norm(x):+.3f}"
         else:
@@ -1153,6 +1168,28 @@ class EditorApp:
         self.view.set_beat(self.view.current_beat)
         self.status(f"BPM 列表已更新（{len(timing.segments)} 项），偏移 {timing.offset_ms:g} ms")
 
+    def edit_lane_changes(self) -> None:
+        chart = self.document.chart
+        changes = run_dialog(
+            LaneChangeDialog,
+            self.root,
+            self.theme,
+            chart.lane_changes,
+            self._beat_hint(),
+        )
+        if changes is None:
+            return
+        if list(changes.events) == list(chart.lane_changes.events):
+            self.status("轨道数改变设置未变化")
+            return
+
+        def _apply() -> None:
+            chart.lane_changes = changes
+            chart.invalidate_order()
+
+        self.document.apply("修改轨道数改变", _apply)
+        self.status(f"轨道数改变设置已更新（{len(changes)} 个事件）")
+
     def edit_settings(self) -> None:
         result = run_dialog(
             SettingsDialog,
@@ -1270,6 +1307,21 @@ class EditorApp:
         value = not self.editor_settings.side_lane_highlight
         self.editor_settings.side_lane_highlight = value
         self.status("侧轨高亮：" + ("开启" if value else "关闭"))
+
+    def toggle_nine_key_mode(self) -> None:
+        """视图菜单：6K 区域按 9K 显示（插入三条临时轨道）。"""
+        value = not self.editor_settings.nine_key_mode
+        self.editor_settings.nine_key_mode = value
+        self.view.set_nine_key_mode(value)
+        self.toolbar.sync()
+        self.status("9K 模式：" + ("开启" if value else "关闭"))
+
+    def toggle_temporary_lane_highlight(self) -> None:
+        """视图菜单：完全出现的临时轨道使用深灰色背景。"""
+        value = not self.editor_settings.temporary_lane_highlight
+        self.editor_settings.temporary_lane_highlight = value
+        self.toolbar.sync()
+        self.status("临时轨道高亮：" + ("开启" if value else "关闭"))
 
     def toggle_show_past_notes(self) -> None:
         """视图菜单：判定时刻已经过去的物件是否继续绘制（判定线下方）。"""

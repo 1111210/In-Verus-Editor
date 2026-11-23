@@ -13,6 +13,7 @@ from dataclasses import dataclass
 from typing import List, Optional, Tuple
 
 from model.chart import Chart
+from model.lanes import lane_covers_original, lane_display_span
 from model.notes import (
     LaneNote,
     MouseRegion,
@@ -319,9 +320,11 @@ class SlideShape:
     direction: int
 
 
-def lane_shape(note: LaneNote) -> LaneShape:
-    low = min(note.lane_start, note.lane_end)
-    high = max(note.lane_start, note.lane_end)
+def lane_shape(note: LaneNote) -> Optional[LaneShape]:
+    # 演示视图按 6K 渲染：只落在临时轨道上的按键没有可显示轨道。
+    if not lane_covers_original(note.lane_start, note.lane_end):
+        return None
+    low, high = lane_display_span(note.lane_start, note.lane_end, False)
     x0 = K6_LEFT + low * LANE_WIDTH + LANE_WIDTH * NOTE_SIDE_INSET
     x1 = K6_LEFT + (high + 1) * LANE_WIDTH - LANE_WIDTH * NOTE_SIDE_INSET
     if note.is_hold:

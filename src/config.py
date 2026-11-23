@@ -15,6 +15,30 @@ CHART_EXTENSION = ".json"          # 默认保存为普通 JSON 文件
 LANE_COUNT = 6
 MOUSE_LANE_FIRST = 1          # 鼠标平面覆盖 6 轨中的中间四条（索引 1..4）
 MOUSE_LANE_LAST = 4
+# 6K 的轨道编号为 0..5；临时轨道插在第 1/2、2/3、3/4 条轨道之间（0 基），
+# 谱面文件中按 1.5 / 2.5 / 3.5 记录。9K 显示时共 9 条轨道。
+TEMPORARY_LANE_POSITIONS = (1.5, 2.5, 3.5)
+LANE_POSITIONS = (
+    0.0, 1.0, 1.5, 2.0, 2.5, 3.0, 3.5, 4.0, 5.0,
+)
+NINE_KEY_LANE_COUNT = 9
+
+# 轨道数改变：三条临时轨道共同的淡入 / 淡出事件与显示状态
+LANE_CHANGE_IN = "fade_in"
+LANE_CHANGE_OUT = "fade_out"
+LANE_CHANGE_TYPES = (LANE_CHANGE_IN, LANE_CHANGE_OUT)
+LANE_CHANGE_TYPE_LABELS = {
+    LANE_CHANGE_IN: "淡入",
+    LANE_CHANGE_OUT: "淡出",
+}
+LANE_CHANGE_STATE_ABSENT = "absent"
+LANE_CHANGE_STATE_FADING = "fading"
+LANE_CHANGE_STATE_PRESENT = "present"
+LANE_CHANGE_STATE_LABELS = {
+    LANE_CHANGE_STATE_ABSENT: "不存在",
+    LANE_CHANGE_STATE_FADING: "淡入淡出",
+    LANE_CHANGE_STATE_PRESENT: "已出现",
+}
 
 # 布局模式：编辑器里两个区域左右分开；演示模式下鼠标平面叠加到 6K 上
 LAYOUT_SPLIT = "split"

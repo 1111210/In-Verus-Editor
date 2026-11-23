@@ -16,6 +16,13 @@ from chart_io import load_chart, save_chart
 from editor_settings import EditorSettings
 from model.chart import Chart, Metadata
 from model.document import Document
+from model.lanes import (
+    LaneChangeEvent,
+    LaneChangeMap,
+    lane_display_index,
+    lane_position_index,
+    lane_span_length,
+)
 from model.notes import BoundaryCurve, LaneNote, MouseRegion, MouseSlide
 from model.speed import SpeedSegment
 from model.timing import BpmSegment, TimingMap
@@ -73,6 +80,22 @@ def build_demo_chart() -> Chart:
     # 长按 + 多轨组合
     hold_multi = LaneNote(chart.new_note_id("L"), 1, 4, 20.0, 22.0)
     chart.add(hold_multi)
+
+    # 临时轨道：三条轨道始终同时出现 / 消失，谱面开始时不存在
+    chart.lane_changes = LaneChangeMap(
+        [
+            LaneChangeEvent(config.LANE_CHANGE_IN, 0.0, 2.0),
+            LaneChangeEvent(config.LANE_CHANGE_OUT, 28.0, 30.0),
+            LaneChangeEvent(config.LANE_CHANGE_IN, 32.0, 34.0),
+            LaneChangeEvent(config.LANE_CHANGE_OUT, 72.0, 74.0),
+        ]
+    )
+    # 临时轨道上的物件：单轨与“原始轨道 + 临时轨道”的多轨组合
+    for lane, beat in ((1.5, 18.0), (2.5, 40.0), (3.5, 66.0)):
+        note = LaneNote(chart.new_note_id("L"), lane, lane, beat, beat)
+        chart.add(note)
+    temp_multi = LaneNote(chart.new_note_id("L"), 1, 1.5, 18.5, 18.5)
+    chart.add(temp_multi)
 
     # 24-28 拍：为“加速”速度组准备的物件（跨越变速点，便于观察特效）
     for lane, beat in ((3, 24.0), (2, 25.0), (4, 26.0), (1, 27.0)):
@@ -190,6 +213,39 @@ def selftest(verbose: bool = True) -> Tuple[bool, List[str]]:
     slide = next(n for n in chart.mouse_notes if isinstance(n, MouseSlide))
     check.ok(slide.direction in (-1, 1), "滑键方向由首尾位置决定")
 
+    # ---- 临时轨道与 9K 映射 ----
+    check.ok(lane_display_index(1.5, False) == 1, "6K 模式临时轨道折叠到左侧原始轨道")
+    check.ok(lane_display_index(1.5, True) == 2, "9K 模式 1.5 位于第 3 条轨道")
+    check.ok(lane_display_index(2.5, True) == 4, "9K 模式 2.5 位于第 5 条轨道")
+    check.ok(lane_display_index(3.5, True) == 6, "9K 模式 3.5 位于第 7 条轨道")
+    check.ok(lane_span_length(1, 2) == 3, "轨道 1..2 在 9K 中跨 3 条轨道")
+    check.ok(lane_position_index(1.5) == 2, "临时轨道 1.5 的合法位置下标为 2")
+    temp_mirror = LaneNote("L-mirror", 1, 1.5, 0.0, 0.0)
+    temp_mirror.mirrored()
+    check.ok(
+        (temp_mirror.lane_start, temp_mirror.lane_end) == (3.5, 4.0),
+        "含临时轨道的多轨物件沿中轴线镜像",
+    )
+    changes = chart.lane_changes
+    check.ok(changes.state_at(1.0) == config.LANE_CHANGE_STATE_FADING, "淡入中为过渡状态")
+    check.ok(changes.state_at(10.0) == config.LANE_CHANGE_STATE_PRESENT, "淡入后完全出现")
+    check.ok(changes.state_at(29.0) == config.LANE_CHANGE_STATE_FADING, "淡出中为过渡状态")
+    check.ok(changes.state_at(31.0) == config.LANE_CHANGE_STATE_ABSENT, "淡出后不存在")
+    check.ok(changes.validation_error() is None, "示例谱面的轨道数改变事件顺序合法")
+    segments = changes.segments(0.0, 40.0)
+    check.ok(
+        [state for _low, _high, state in segments]
+        == [
+            config.LANE_CHANGE_STATE_FADING,
+            config.LANE_CHANGE_STATE_PRESENT,
+            config.LANE_CHANGE_STATE_FADING,
+            config.LANE_CHANGE_STATE_ABSENT,
+            config.LANE_CHANGE_STATE_FADING,
+            config.LANE_CHANGE_STATE_PRESENT,
+        ],
+        "三条临时轨道按统一事件切分状态",
+    )
+
     # ---- 编辑命令 ----
     document = Document(chart)
     before = len(chart.all_notes())
@@ -246,6 +302,29 @@ def selftest(verbose: bool = True) -> Tuple[bool, List[str]]:
     check.ok(document.chart.find(new_note.id).group == config.DEFAULT_GROUP_ID, "删除速度组后物件回到默认组")
     check.ok(not document.chart.delete_group(config.DEFAULT_GROUP_ID), "默认组不可删除")
 
+    # ---- 轨道数改变可撤销 ----
+    original_changes = list(document.chart.lane_changes.events)
+    replacement = LaneChangeMap(
+        [LaneChangeEvent(config.LANE_CHANGE_IN, 30.0, 32.0)]
+    )
+    document.apply(
+        "测试轨道数改变",
+        lambda: setattr(document.chart, "lane_changes", replacement),
+    )
+    check.ok(len(document.chart.lane_changes) == 1, "修改轨道数改变")
+    document.undo()
+    check.ok(
+        list(document.chart.lane_changes.events) == original_changes,
+        "撤销轨道数改变",
+    )
+    document.redo()
+    check.ok(len(document.chart.lane_changes) == 1, "重做轨道数改变")
+    document.undo()
+    check.ok(
+        list(document.chart.lane_changes.events) == original_changes,
+        "再次撤销轨道数改变",
+    )
+
     # ---- 存档往返 ----
     folder = os.path.join(project_root(), "charts", "demo")
     path = os.path.join(folder, "_selftest.json")
@@ -253,6 +332,14 @@ def selftest(verbose: bool = True) -> Tuple[bool, List[str]]:
     written = save_chart(document.chart, path)
     reloaded, _raw = load_chart(written)
     check.ok(reloaded.to_dict() == document.chart.to_dict(), "保存/读取后谱面完全一致")
+    old_data = reloaded.to_dict()
+    old_data.pop("lane_changes", None)
+    old_chart = Chart.from_dict(old_data)
+    check.ok(old_chart.lane_changes.is_empty, "旧谱面没有轨道数改变字段时按全程 6K 加载")
+    check.ok(
+        all(isinstance(n.lane_start, float) for n in old_chart.lane_notes),
+        "旧谱面的整数轨道编号可正常加载",
+    )
     with open(written, "r", encoding="utf-8") as handle:
         json.load(handle)
     os.remove(written)

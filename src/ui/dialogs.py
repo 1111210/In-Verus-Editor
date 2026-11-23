@@ -17,6 +17,14 @@ import config
 from editor_settings import EditorSettings
 from model.chart import Chart, Metadata
 from model.document import Document
+from model.lanes import (
+    LaneChangeEvent,
+    LaneChangeMap,
+    lane_position_from_label,
+    lane_selection_labels,
+    lane_ui_text,
+    validate_lane_change_events,
+)
 from model.notes import (
     BoundaryCurve,
     ForbiddenRegion,
@@ -481,6 +489,176 @@ class BpmDialog(BaseDialog):
         offset = parse_float(self.e_offset.get(), 0.0)
         timing = TimingMap([BpmSegment(s.start_beat, s.bpm, s.beats_per_bar) for s in self.segments], offset)
         self.result = timing
+        self.destroy()
+
+
+class LaneChangeDialog(BaseDialog):
+    """谱面信息「轨道数改变设置…」：三条临时轨道共同的淡入 / 淡出事件。"""
+
+    title_text = "轨道数改变设置"
+
+    def __init__(
+        self,
+        parent: tk.Misc,
+        theme: Theme,
+        lane_changes: LaneChangeMap,
+        beat_hint: str = "",
+    ) -> None:
+        self.events: List[LaneChangeEvent] = list(lane_changes.events)
+        self.beat_hint = beat_hint
+        self._kind_labels = [
+            config.LANE_CHANGE_TYPE_LABELS[kind] for kind in config.LANE_CHANGE_TYPES
+        ]
+        super().__init__(parent, theme)
+
+    def _build(self) -> None:
+        body = self.body
+        table = ttk.Frame(body)
+        table.pack(fill="both", expand=True)
+        columns = ("kind", "start", "end")
+        self.tree = ttk.Treeview(
+            table, columns=columns, show="headings", height=9, selectmode="browse"
+        )
+        for key, text, width in (
+            ("kind", "类型", 110),
+            ("start", "开始拍", 120),
+            ("end", "结束拍", 120),
+        ):
+            self.tree.heading(key, text=text)
+            self.tree.column(key, width=width, anchor="center")
+        self.tree.pack(side="left", fill="both", expand=True)
+        scroll = ttk.Scrollbar(table, orient="vertical", command=self.tree.yview)
+        scroll.pack(side="right", fill="y")
+        self.tree.configure(yscrollcommand=scroll.set)
+        self.tree.bind("<<TreeviewSelect>>", self._on_select)
+
+        form = ttk.LabelFrame(body, text="编辑选中项", padding=8)
+        form.pack(fill="x", pady=(8, 0))
+        form.columnconfigure(1, weight=1)
+        self.c_kind = labeled_combo(
+            form, 0, "类型", self._kind_labels, self._kind_labels[0], width=10
+        )
+        self.e_start = labeled_entry(form, 1, "开始拍", "0", width=10)
+        self.e_end = labeled_entry(form, 1, "结束拍", "2", width=10, column=2)
+        buttons = ttk.Frame(body)
+        buttons.pack(fill="x", pady=(6, 0))
+        ttk.Button(buttons, text="新增/更新", command=self._upsert).pack(side="left")
+        ttk.Button(buttons, text="删除选中", command=self._delete).pack(side="left")
+        ttk.Label(
+            body,
+            text=(
+                "三条临时轨道始终同时淡入 / 淡出。谱面开始时它们不存在，"
+                "所以第一个事件必须是淡入；淡入与淡出必须交替且不能重叠。"
+            ),
+            style="Dim.TLabel",
+            wraplength=520,
+        ).pack(anchor="w", pady=(4, 0))
+        if self.beat_hint:
+            ttk.Label(body, text=self.beat_hint, style="Dim.TLabel").pack(
+                anchor="w", pady=(2, 0)
+            )
+        self._refresh()
+
+    # ---------------------------------------------------------- 表格逻辑
+    def _refresh(self, focus_start: Optional[float] = None) -> None:
+        self.tree.delete(*self.tree.get_children())
+        for index, event in enumerate(self.events):
+            self.tree.insert(
+                "",
+                "end",
+                iid=str(index),
+                values=(
+                    config.LANE_CHANGE_TYPE_LABELS.get(event.kind, event.kind),
+                    f"{event.start_beat:g}",
+                    f"{event.end_beat:g}",
+                ),
+            )
+        if not self.events:
+            return
+        target = 0
+        if focus_start is not None:
+            for index, event in enumerate(self.events):
+                if abs(event.start_beat - focus_start) <= 1e-9:
+                    target = index
+                    break
+        self.tree.selection_set(str(target))
+        self._load(target)
+
+    def _load(self, index: int) -> None:
+        event = self.events[index]
+        self.c_kind.set(config.LANE_CHANGE_TYPE_LABELS.get(event.kind, self._kind_labels[0]))
+        self.e_start.delete(0, "end")
+        self.e_start.insert(0, f"{event.start_beat:g}")
+        self.e_end.delete(0, "end")
+        self.e_end.insert(0, f"{event.end_beat:g}")
+
+    def _selected_index(self) -> Optional[int]:
+        selection = self.tree.selection()
+        if not selection:
+            return None
+        return int(selection[0])
+
+    def _on_select(self, _event=None) -> None:
+        index = self._selected_index()
+        if index is not None and 0 <= index < len(self.events):
+            self._load(index)
+
+    def _read_form(self) -> Optional[LaneChangeEvent]:
+        kind_index = self.c_kind.current()
+        kind = (
+            config.LANE_CHANGE_TYPES[kind_index]
+            if 0 <= kind_index < len(config.LANE_CHANGE_TYPES)
+            else config.LANE_CHANGE_IN
+        )
+        start = parse_float(self.e_start.get(), -1.0)
+        end = parse_float(self.e_end.get(), -1.0)
+        if not math.isfinite(start) or not math.isfinite(end) or start < 0 or end <= start + 1e-9:
+            messagebox.showerror(
+                "数值错误",
+                "开始拍需 ≥ 0，结束拍必须大于开始拍。",
+                parent=self,
+            )
+            return None
+        return LaneChangeEvent(kind, start, end)
+
+    def _upsert(self) -> None:
+        event = self._read_form()
+        if event is None:
+            return
+        # 起始拍相同就覆盖，没有就追加（与 BPM 设置一致）。
+        candidate = [
+            item
+            for item in self.events
+            if abs(item.start_beat - event.start_beat) > 1e-9
+        ]
+        candidate.append(event)
+        error = validate_lane_change_events(candidate)
+        if error:
+            messagebox.showerror("事件顺序错误", error, parent=self)
+            return
+        self.events = sorted(
+            candidate, key=lambda item: (item.start_beat, item.end_beat)
+        )
+        self._refresh(event.start_beat)
+
+    def _delete(self) -> None:
+        index = self._selected_index()
+        if index is None:
+            return
+        candidate = [item for position, item in enumerate(self.events) if position != index]
+        error = validate_lane_change_events(candidate)
+        if error:
+            messagebox.showwarning("不可删除", error, parent=self)
+            return
+        self.events = candidate
+        self._refresh()
+
+    def _ok(self) -> None:
+        error = validate_lane_change_events(self.events)
+        if error:
+            messagebox.showerror("事件顺序错误", error, parent=self)
+            return
+        self.result = LaneChangeMap(self.events)
         self.destroy()
 
 
@@ -1330,11 +1508,22 @@ class NoteEditDialog(BaseDialog):
             ttk.Label(body, text=f"{note.id} · 6K 下落式物件", style="Head.TLabel").grid(
                 row=0, column=0, columnspan=2, sticky="w", pady=(0, 6)
             )
-            self.e_lane_start = labeled_spin(body, 1, "开始轨道", note.lane_start + 1, 1, 6)
-            self.e_lane_end = labeled_spin(body, 2, "结束轨道", note.lane_end + 1, 1, 6)
+            labels = lane_selection_labels()
+            self.c_lane_start = labeled_combo(
+                body, 1, "开始轨道", labels, lane_ui_text(note.lane_start), width=16
+            )
+            self.c_lane_end = labeled_combo(
+                body, 2, "结束轨道", labels, lane_ui_text(note.lane_end), width=16
+            )
             self.e_beat_start = labeled_entry(body, 3, "开始拍", f"{note.beat_start:g}", width=14)
             self.e_beat_end = labeled_entry(body, 4, "结束拍", f"{note.beat_end:g}", width=14)
-            group_row = 5
+            ttk.Label(
+                body,
+                text="临时轨道在谱面文件中的编号：1.5 / 2.5 / 3.5（9K 模式第 3 / 5 / 7 轨）。",
+                style="Dim.TLabel",
+                wraplength=420,
+            ).grid(row=5, column=0, columnspan=2, sticky="w", pady=(2, 0))
+            group_row = 6
         elif isinstance(note, MouseRegion):
             label = "禁区" if isinstance(note, ForbiddenRegion) else "空域"
             ttk.Label(body, text=f"{note.id} · {label}", style="Head.TLabel").grid(
@@ -1396,8 +1585,12 @@ class NoteEditDialog(BaseDialog):
         ease_by_label = config.EASE_LABEL_TO_VALUE
         group_id = self._selected_group_id()
         if isinstance(note, LaneNote):
-            lane_start = max(1, min(6, parse_int(self.e_lane_start.get(), note.lane_start + 1))) - 1
-            lane_end = max(1, min(6, parse_int(self.e_lane_end.get(), note.lane_end + 1))) - 1
+            lane_start = lane_position_from_label(self.c_lane_start.get())
+            lane_end = lane_position_from_label(self.c_lane_end.get())
+            if lane_start is None:
+                lane_start = note.lane_start
+            if lane_end is None:
+                lane_end = note.lane_end
             if lane_start > lane_end:
                 lane_start, lane_end = lane_end, lane_start
             beat_start = parse_float(self.e_beat_start.get(), note.beat_start)
@@ -1527,6 +1720,7 @@ Ctrl + 滚轮  缩放
 ← / →  按网格步进
 PageUp / PageDown  半屏滚动
 空格  播放 / 暂停
+`  切换 6K / 9K 模式
 F10  最大化 / 还原窗口
 F11  无边框全屏切换
 

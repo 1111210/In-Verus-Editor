@@ -15,6 +15,7 @@ from typing import Any, Dict, List, Mapping, Optional, Tuple
 
 import config
 from model.chart import Chart
+from model.lanes import is_lane_position, is_temporary_lane
 
 
 class ChartDataError(ValueError):
@@ -22,13 +23,16 @@ class ChartDataError(ValueError):
 
 
 _ROOT_KEYS = {
-    "format", "version", "metadata", "timing", "speed_groups",
-    "lanes", "mouse",
+    "format", "version", "metadata", "timing", "lane_changes",
+    "speed_groups", "lanes", "mouse",
 }
 _METADATA_KEYS = {
     "title", "artist", "difficulty_name", "difficulty_level", "author", "audio_file",
 }
 _TIMING_KEYS = {"offset_ms", "bpm_segments"}
+_LANE_CHANGES_KEYS = {"events"}
+# lane 是旧版逐轨事件的字段；新格式的三条临时轨道共用同一份事件表。
+_LANE_CHANGE_EVENT_KEYS = {"lane", "type", "start_beat", "end_beat"}
 _BPM_KEYS = {"start_beat", "bpm", "beats_per_bar"}
 _GROUP_KEYS = {"id", "name", "segments", "note_ids"}
 _SPEED_KEYS = {"start_beat", "multiplier"}
@@ -95,6 +99,45 @@ def _inspect_chart_data(data: Dict[str, Any]) -> List[str]:
                         if key in segment and not isinstance(segment.get(key), (int, float)):
                             warnings.append(
                                 f"timing.bpm_segments[{index}].{key}：预期数字。"
+                            )
+
+    lane_changes = data.get("lane_changes")
+    if lane_changes is not None:
+        if not isinstance(lane_changes, dict):
+            warnings.append("<root>.lane_changes：预期对象，已忽略。")
+        else:
+            _unknown_keys(lane_changes, _LANE_CHANGES_KEYS, "lane_changes", warnings)
+            events = lane_changes.get("events")
+            if events is not None and not isinstance(events, list):
+                warnings.append("lane_changes.events：预期数组，已忽略。")
+            elif isinstance(events, list):
+                for index, event in enumerate(events):
+                    path = f"lane_changes.events[{index}]"
+                    if not isinstance(event, dict):
+                        warnings.append(f"{path}：预期对象，已跳过。")
+                        continue
+                    _unknown_keys(event, _LANE_CHANGE_EVENT_KEYS, path, warnings)
+                    lane = event.get("lane")
+                    if "lane" in event and not isinstance(lane, (int, float)):
+                        warnings.append(f"{path}.lane：预期数字。")
+                    elif isinstance(lane, (int, float)) and not is_temporary_lane(float(lane)):
+                        warnings.append(
+                            f"{path}.lane：不是临时轨道编号（1.5 / 2.5 / 3.5）。"
+                        )
+                    kind = event.get("type")
+                    if "type" in event and not isinstance(kind, str):
+                        warnings.append(f"{path}.type：预期字符串。")
+                    elif isinstance(kind, str) and kind not in config.LANE_CHANGE_TYPES:
+                        warnings.append(f"{path}.type：未识别的事件类型。")
+                    for key in ("start_beat", "end_beat"):
+                        if key in event and not isinstance(event.get(key), (int, float)):
+                            warnings.append(f"{path}.{key}：预期数字。")
+                    start = event.get("start_beat")
+                    end = event.get("end_beat")
+                    if isinstance(start, (int, float)) and isinstance(end, (int, float)):
+                        if float(end) <= float(start):
+                            warnings.append(
+                                f"{path}：结束拍必须大于开始拍。"
                             )
 
     groups = data.get("speed_groups")
@@ -164,6 +207,16 @@ def _inspect_chart_data(data: Dict[str, Any]) -> List[str]:
             for key in numeric_keys:
                 if key in note and not isinstance(note.get(key), (int, float)):
                     warnings.append(f"{path}.{key}：预期数字。")
+            if note_type == "lane":
+                for key in ("lane_start", "lane_end"):
+                    value = note.get(key)
+                    if not isinstance(value, (int, float)):
+                        continue
+                    if not is_lane_position(float(value)):
+                        warnings.append(
+                            f"{path}.{key}：不是合法轨道编号"
+                            f"（0..5 或 1.5 / 2.5 / 3.5），加载时会吸附到最近轨道。"
+                        )
             for curve_key in ("left", "right"):
                 curve = note.get(curve_key)
                 if curve is None:
@@ -187,6 +240,7 @@ def _has_recognized_root(data: Dict[str, Any]) -> bool:
         or isinstance(data.get("version"), (int, float))
         or isinstance(data.get("metadata"), dict)
         or isinstance(data.get("timing"), dict)
+        or isinstance(data.get("lane_changes"), dict)
         or isinstance(data.get("speed_groups"), list)
         or isinstance(data.get("lanes"), list)
         or isinstance(data.get("mouse"), list)

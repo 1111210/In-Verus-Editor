@@ -28,6 +28,8 @@ class EditorSettings:
     side_lane_highlight: bool = False
     show_past_notes: bool = False
     ignore_speed_groups: bool = False
+    nine_key_mode: bool = False
+    temporary_lane_highlight: bool = False
     invert_wheel_scroll: bool = False
     invert_wheel_zoom: bool = False
     music_volume: float = 1.0
@@ -57,6 +59,8 @@ class EditorSettings:
         self.side_lane_highlight = bool(self.side_lane_highlight)
         self.show_past_notes = bool(self.show_past_notes)
         self.ignore_speed_groups = bool(self.ignore_speed_groups)
+        self.nine_key_mode = bool(self.nine_key_mode)
+        self.temporary_lane_highlight = bool(self.temporary_lane_highlight)
         self.invert_wheel_scroll = bool(self.invert_wheel_scroll)
         self.invert_wheel_zoom = bool(self.invert_wheel_zoom)
         self.music_volume = max(0.0, min(1.0, float(self.music_volume)))
@@ -94,6 +98,8 @@ class EditorSettings:
             "side_lane_highlight": bool(self.side_lane_highlight),
             "show_past_notes": bool(self.show_past_notes),
             "ignore_speed_groups": bool(self.ignore_speed_groups),
+            "nine_key_mode": bool(self.nine_key_mode),
+            "temporary_lane_highlight": bool(self.temporary_lane_highlight),
             "invert_wheel_scroll": bool(self.invert_wheel_scroll),
             "invert_wheel_zoom": bool(self.invert_wheel_zoom),
             "music_volume": self.music_volume,
@@ -125,6 +131,10 @@ class EditorSettings:
             side_lane_highlight=bool(data.get("side_lane_highlight", False)),
             show_past_notes=bool(data.get("show_past_notes", False)),
             ignore_speed_groups=bool(data.get("ignore_speed_groups", False)),
+            nine_key_mode=bool(data.get("nine_key_mode", False)),
+            temporary_lane_highlight=bool(
+                data.get("temporary_lane_highlight", False)
+            ),
             invert_wheel_scroll=bool(data.get("invert_wheel_scroll", False)),
             invert_wheel_zoom=bool(data.get("invert_wheel_zoom", False)),
             music_volume=float(data.get("music_volume", 1.0)),

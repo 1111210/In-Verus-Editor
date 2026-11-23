@@ -16,6 +16,11 @@ from dataclasses import dataclass, replace
 from typing import Any, Dict, Tuple
 
 import config
+from .lanes import (
+    format_lane_number,
+    lane_span_length,
+    normalize_lane_position,
+)
 
 NOTE_LANE = "lane"
 NOTE_REGION = "region"
@@ -105,6 +110,9 @@ class LaneNote(Note):
     * lane_start == lane_end  -> 单轨按键
     * lane_start <  lane_end  -> 横跨相邻多轨的按键
     * beat_end  >  beat_start -> 长按（长度 = beat_end - beat_start）
+
+    轨道编号为 0..5；临时轨道 1.5 / 2.5 / 3.5 也按同样的区间表达，
+    因此横跨临时轨道的多轨物件无需额外字段。
     """
 
     kind = NOTE_LANE
@@ -112,22 +120,24 @@ class LaneNote(Note):
     def __init__(
         self,
         note_id: str,
-        lane_start: int,
-        lane_end: int,
+        lane_start: float,
+        lane_end: float,
         beat_start: float,
         beat_end: float | None = None,
         group: int = config.DEFAULT_GROUP_ID,
     ) -> None:
         super().__init__(note_id, group)
-        self.lane_start = int(min(lane_start, lane_end))
-        self.lane_end = int(max(lane_start, lane_end))
+        first = float(lane_start)
+        second = float(lane_end)
+        self.lane_start = min(first, second)
+        self.lane_end = max(first, second)
         self.beat_start = float(beat_start)
         self.beat_end = float(beat_start if beat_end is None else beat_end)
         self.normalize()
 
     def normalize(self) -> None:
-        self.lane_start = max(0, min(config.LANE_COUNT - 1, int(self.lane_start)))
-        self.lane_end = max(0, min(config.LANE_COUNT - 1, int(self.lane_end)))
+        self.lane_start = normalize_lane_position(self.lane_start)
+        self.lane_end = normalize_lane_position(self.lane_end)
         if self.lane_start > self.lane_end:
             self.lane_start, self.lane_end = self.lane_end, self.lane_start
         if self.beat_end < self.beat_start:
@@ -141,7 +151,7 @@ class LaneNote(Note):
 
     @property
     def is_multi(self) -> bool:
-        return self.lane_end > self.lane_start
+        return self.lane_end - self.lane_start > config.EPS
 
     @property
     def head_beat(self) -> float:
@@ -151,7 +161,7 @@ class LaneNote(Note):
     def tail_beat(self) -> float:
         return self.beat_end
 
-    def lane_span(self) -> Tuple[int, int]:
+    def lane_span(self) -> Tuple[float, float]:
         return self.lane_start, self.lane_end
 
     def shift(self, delta_beats: float) -> None:
@@ -169,15 +179,17 @@ class LaneNote(Note):
         )
 
     def mirrored(self) -> None:
-        a, b = 5 - self.lane_end, 5 - self.lane_start
+        # 轨道编号关于 2.5 对称：0 <-> 5、1 <-> 4、1.5 <-> 3.5、2 <-> 3。
+        a, b = 5.0 - self.lane_end, 5.0 - self.lane_start
         self.lane_start, self.lane_end = a, b
+        self.normalize()
 
     def to_dict(self) -> Dict[str, Any]:
         return {
             "id": self.id,
             "type": NOTE_LANE,
-            "lane_start": self.lane_start,
-            "lane_end": self.lane_end,
+            "lane_start": format_lane_number(self.lane_start),
+            "lane_end": format_lane_number(self.lane_end),
             "beat_start": round(self.beat_start, 9),
             "beat_end": round(self.beat_end, 9),
             "group": self.group,
@@ -384,7 +396,7 @@ def lane_stack_key(note: LaneNote) -> Tuple[int, int, float, float, float, str]:
     先按四大图层排序；同一图层内轨道数量更多先画（更靠下），
     再让持续时间更长先画，使持续时间较短的物件位于上层。
     """
-    lane_count = int(note.lane_end - note.lane_start + 1)
+    lane_count = lane_span_length(note.lane_start, note.lane_end)
     return (
         layer_rank(note),
         -lane_count,
@@ -417,8 +429,8 @@ def note_from_dict(data: Dict[str, Any]) -> Note:
     if kind == NOTE_LANE:
         return LaneNote(
             note_id,
-            int(data.get("lane_start", 0)),
-            int(data.get("lane_end", data.get("lane_start", 0))),
+            float(data.get("lane_start", 0)),
+            float(data.get("lane_end", data.get("lane_start", 0))),
             float(data.get("beat_start", 0.0)),
             float(data.get("beat_end", data.get("beat_start", 0.0))),
             group,

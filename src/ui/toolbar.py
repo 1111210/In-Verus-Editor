@@ -5,8 +5,8 @@
 * 文件   —— 新建 / 打开 / 保存 / 另存为
 * 编辑   —— 撤销 / 重做 / 剪切 / 复制 / 粘贴 / 镜像 / 删除 / 全选（编辑物件是顶栏独立按钮）
 * 放置   —— 选择、单轨、多轨、长按、空域、禁区、左右滑键（二级菜单里可勾选）
-* 视图   —— 缩放、时间网格细分、横向辅助网格、跳转、全屏
-* 谱面信息 —— 元数据、BPM 与偏移、速度组
+* 视图   —— 缩放、时间网格细分、横向辅助网格、9K 模式、临时轨道高亮、跳转、全屏
+* 谱面信息 —— 元数据、BPM 与偏移、轨道数改变、速度组
 * 其他设置 —— 设置、演示设置、修改快捷键
 
 不保留系统菜单栏；演示模式下工具栏会隐藏，此时可用 Esc 返回编辑。
@@ -254,6 +254,17 @@ class Toolbar(ttk.Frame):
                 checked=lambda: app.editor_settings.side_lane_highlight,
             ),
             Entry(
+                "9K 模式",
+                app.toggle_nine_key_mode,
+                checked=lambda: app.editor_settings.nine_key_mode,
+                accelerator_fn=lambda: app.shortcut_text("nine_key"),
+            ),
+            Entry(
+                "临时轨道高亮",
+                app.toggle_temporary_lane_highlight,
+                checked=lambda: app.editor_settings.temporary_lane_highlight,
+            ),
+            Entry(
                 "显示更早的物件",
                 app.toggle_show_past_notes,
                 checked=lambda: app.editor_settings.show_past_notes,
@@ -297,6 +308,7 @@ class Toolbar(ttk.Frame):
         chart_group = Group("谱面信息", [
             Entry("元数据设置…", app.edit_metadata, enabled=not_demo),
             Entry("BPM 与偏移…", app.edit_timing, enabled=not_demo),
+            Entry("轨道数改变设置…", app.edit_lane_changes, enabled=not_demo),
             Entry("速度组设置…", app.edit_speed_groups, enabled=not_demo),
         ])
         sound_group = Group("音效", [
